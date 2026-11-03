@@ -4,7 +4,7 @@ A small Go + Next.js app with Google login/signup, SQLite-backed users and refre
 
 ## Setup
 
-Requires Go 1.27.3 or newer and Node.js.
+Requires Go 1.27.3 or newer and Node.js 22.18 or newer (including native TypeScript support for the frontend tests).
 
 1. Create OAuth credentials in Google Cloud Console. Add `http://localhost:8080/auth/google/callback` as an authorized redirect URI.
 2. Copy `.env.example` to `.env` and fill in the Google credentials.
@@ -35,3 +35,5 @@ Set `APP_ENV=production`, `SECURE_SESSION_COOKIE=true`, HTTPS frontend/callback 
 Access tokens expire after 15 minutes and are checked against server-side sessions on every request. Sessions expire at most 30 days after login. Logout and refresh-token replay revoke the whole session immediately, including its access tokens. Storage failures return 503; failed logout preserves cookies so the user can retry. The frontend serializes refresh and logout across tabs with Web Locks where available, with a same-tab fallback queue.
 
 Run backend checks from [backend](./backend): `go test ./...`, `go vet ./...`, and `go run golang.org/x/vuln/cmd/govulncheck@latest ./...`. Run `CGO_ENABLED=1 go test -race ./...` where a C compiler is available.
+
+Run frontend checks from [frontend](./frontend): `npm ci`, `npm test`, `npm run typecheck`, `npm run build`, and `npm audit`. The frontend uses patched Next.js 16 and React 19; the obsolete `next lint` command was replaced with a type-check script. See the [Next.js upgrade guide](https://nextjs.org/docs/app/guides/upgrading/version-16) for framework changes.

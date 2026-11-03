@@ -1,0 +1,26 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Go build and test artifacts
+/bin/
+*.test
+*.out
+coverage/
+coverage.html
+
+# Dependency and tooling caches
+/vendor/
+.gocache/
+
+# Local SQLite database and journal files
+data/
+*.db
+*.db-*
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

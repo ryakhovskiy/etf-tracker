@@ -47,3 +47,13 @@ New Goose migrations create the portfolio tables and seed 21 stocks and ETFs. Ev
 Optional positive integer environment variables `MAX_USERS` (10), `MAX_PORTFOLIOS_PER_USER` (10), and `MAX_ITEMS_PER_PORTFOLIO` (30) override the defaults at API startup. Count checks and inserts use `BEGIN IMMEDIATE` transactions. Existing users can still sign in when signups are full. Add-item requests accept at most 30 ids per batch, including when the configured portfolio capacity is higher.
 
 Frontend tests include DOM interaction tests for portfolio limits, search cancellation, keyboard selection, and batch adds. Run them with `npm test` from [frontend](./frontend).
+
+## CSV imports
+
+Each portfolio has an **Import** tab for CSV and text files up to 1 MB and 5,000 data rows. The defaults read German Excel exports: semicolon delimiter, comma decimals, dot thousands separators, euro suffixes, and `DD.MM.YYYY` dates. Encoding detection accepts valid UTF-8 (including BOM) and otherwise uses Windows-1252. Reference files in both encodings live in [testdata/import](./testdata/import).
+
+Configure column mappings and parsing, review and edit the paginated preview, and decide whether to skip or import duplicates. Amount means units; Total € means money invested. Editing units or price recalculates the total; editing total recalculates units. A mismatch from the broker's original total is a warning. Known instruments are added to the portfolio automatically; unknown instruments require a valid ISIN. Imports obey the portfolio item limit and create one CSV transaction per date, preserving each row's units, price, and total.
+
+Configuration is saved per user in SQLite, either explicitly with **Save configuration** or atomically with a successful import. Files are never persisted. The import transaction creates instruments, portfolio items, transactions, and settings together; any failure rolls everything back. Migration 6 adds the settings table and instrument source.
+
+Authenticated endpoints are `GET/PUT /api/users/me/csv-settings`, `POST /api/portfolios/{id}/imports/parse` (multipart file and settings), `/imports/validate` (JSON rows), and `/imports` (JSON rows and settings). Parse and validation responses include a `revision`; send that revision with the final import to confirm the exact validated result. A changed result returns `409 IMPORT_STALE` with a fresh `error.preview` for review. JSON numbers are decimal strings with dot separators; dates use `YYYY-MM-DD`.

@@ -28,6 +28,7 @@ func NewHandler(cfg config.Config, store *database.Store, logger *slog.Logger) *
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerPortfolioRoutes(mux)
 	h.registerTransactionRoutes(mux)
+	h.registerImportRoutes(mux)
 	mux.HandleFunc("GET /auth/google", h.googleLogin)
 	mux.HandleFunc("GET /auth/google/callback", h.googleCallback)
 	mux.HandleFunc("GET /auth/me", h.me)

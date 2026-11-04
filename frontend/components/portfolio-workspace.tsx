@@ -9,10 +9,12 @@ import { PortfolioItems } from "./portfolio-items";
 import { PortfolioUpdatesProvider, type PortfolioTab } from "./portfolio-updates";
 import { TransactionDraftProvider } from "./transaction-draft";
 import { Transactions } from "./transactions";
+import { CSVImport } from "./csv-import";
 
 const tabs: { path: PortfolioTab; label: string }[] = [
   { path: "dashboard", label: "Dashboard" },
   { path: "transactions", label: "Transactions" },
+  { path: "import", label: "Import" },
   { path: "items", label: "Manage items" },
 ];
 
@@ -22,6 +24,7 @@ export function PortfolioPanels({ portfolio, activeTab }: { portfolio: Portfolio
   return <PortfolioUpdatesProvider activeTab={activeTab}><TransactionDraftProvider>
     <div hidden={activeTab !== "dashboard"} aria-label="Dashboard view"><Dashboard id={id} /></div>
     <div hidden={activeTab !== "transactions"} aria-label="Transactions view"><Transactions id={id} /></div>
+    <div hidden={activeTab !== "import"} aria-label="Import view"><CSVImport id={id} /></div>
     <div hidden={activeTab !== "items"} aria-label="Manage items view"><PortfolioItems initial={portfolio} /></div>
   </TransactionDraftProvider></PortfolioUpdatesProvider>;
 }

@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"strconv"
@@ -28,11 +27,13 @@ type Config struct {
 
 func Load() (Config, error) {
 
-	err := godotenv.Load(".env")
-	if err != nil {
-		err = godotenv.Load("../.env")
-		if err != nil {
-			log.Fatal("Error loading .env file")
+	// Environment variables are sufficient in deployments; a local file is optional.
+	if err := godotenv.Load(".env"); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return Config{}, err
+		}
+		if err := godotenv.Load("../.env"); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return Config{}, err
 		}
 	}
 

@@ -1,6 +1,6 @@
 # Holdings
 
-A small Go + Next.js app with Google login/signup, SQLite-backed users and refresh tokens, JWT access tokens, and an empty authenticated workspace.
+A small Go + Next.js app with Google login/signup, SQLite-backed users and refresh tokens, JWT access tokens, and private portfolios with a search-driven stock/ETF picker.
 
 ## Setup
 
@@ -37,3 +37,13 @@ Access tokens expire after 15 minutes and are checked against server-side sessio
 Run backend checks from [backend](./backend): `go test ./...`, `go vet ./...`, and `go run golang.org/x/vuln/cmd/govulncheck@latest ./...`. Run `CGO_ENABLED=1 go test -race ./...` where a C compiler is available.
 
 Run frontend checks from [frontend](./frontend): `npm ci`, `npm test`, `npm run typecheck`, `npm run build`, and `npm audit`. The frontend uses patched Next.js 16 and React 19; the obsolete `next lint` command was replaced with a type-check script. See the [Next.js upgrade guide](https://nextjs.org/docs/app/guides/upgrading/version-16) for framework changes.
+
+## Portfolios and instruments
+
+Signed-in users can create, rename, delete, and open their own portfolios. The portfolio picker searches a seeded instrument catalog by name, ticker, ISIN, or WKN after four characters. Select instruments and add them in one atomic batch. Portfolio membership removal is currently available through the API only.
+
+New Goose migrations create the portfolio tables and seed 21 stocks and ETFs. Every SQLite connection enables foreign keys; portfolio deletion cascades to its items. All `/api/portfolios` and `/api/instruments/search` routes require a valid session and hide other users’ portfolios with 404 responses.
+
+Optional positive integer environment variables `MAX_USERS` (10), `MAX_PORTFOLIOS_PER_USER` (10), and `MAX_ITEMS_PER_PORTFOLIO` (30) override the defaults at API startup. Count checks and inserts use `BEGIN IMMEDIATE` transactions. Existing users can still sign in when signups are full. Add-item requests accept at most 30 ids per batch, including when the configured portfolio capacity is higher.
+
+Frontend tests include DOM interaction tests for portfolio limits, search cancellation, keyboard selection, and batch adds. Run them with `npm test` from [frontend](./frontend).

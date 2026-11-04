@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { API_URL, authenticatedFetch, withSessionLock } from "../lib/session";
 
+import { Portfolios } from "../components/portfolios";
+
 type User = { name: string; email: string; picture?: string };
 
 export default function Home() {
@@ -29,7 +31,7 @@ export default function Home() {
 
   useEffect(() => {
     const oauthError = new URLSearchParams(window.location.search).get("error");
-    if (oauthError) setError(`Google sign-in was cancelled or failed: ${oauthError}.`);
+    if (oauthError) setError(oauthError === "signups_closed" ? "Signups are currently closed." : `Google sign-in was cancelled or failed: ${oauthError}.`);
     authenticatedFetch("/auth/me")
       .then((res) => { if (!res.ok) throw new Error(); return res.json(); })
       .then(setUser)
@@ -40,7 +42,7 @@ export default function Home() {
   if (loading) return <main className="loading"><span className="spinner" /></main>;
   if (!user) return <Login error={error} setError={setError} />;
 
-  return <main className="workspace"><header><span className="brand">holdings</span><div className="profile"><span>{user.name}</span><button onClick={signOut} disabled={signingOut}>{signingOut ? "Signing out…" : "Sign out"}</button></div></header>{error && <p className="error" role="alert">{error}</p>}<section className="empty-state" aria-label="Empty workspace"><div className="empty-mark">＋</div><h1>Your workspace is ready.</h1><p>Nothing here yet.</p></section></main>;
+  return <main className="workspace"><header><span className="brand">holdings</span><div className="profile"><span>{user.name}</span><button onClick={signOut} disabled={signingOut}>{signingOut ? "Signing out…" : "Sign out"}</button></div></header>{error && <p className="error" role="alert">{error}</p>}<Portfolios /></main>;
 }
 
 function Login({ error, setError }: { error: string; setError: (value: string) => void }) {

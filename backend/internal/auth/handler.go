@@ -26,6 +26,8 @@ func NewHandler(cfg config.Config, store *database.Store, logger *slog.Logger) *
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	h.registerPortfolioRoutes(mux)
+	h.registerTransactionRoutes(mux)
 	mux.HandleFunc("GET /auth/google", h.googleLogin)
 	mux.HandleFunc("GET /auth/google/callback", h.googleCallback)
 	mux.HandleFunc("GET /auth/me", h.me)
@@ -83,6 +85,11 @@ func (h *Handler) googleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.store.UpsertGoogleUser(r.Context(), profile.ID, profile.Email, profile.Name, profile.Picture)
 	if err != nil {
+		var limit *database.LimitError
+		if errors.As(err, &limit) && limit.Code == "USER_LIMIT_REACHED" {
+			http.Redirect(w, r, h.frontendURL+"/?error=signups_closed", http.StatusFound)
+			return
+		}
 		h.logger.Error("upsert user", "error", err)
 		http.Error(w, "could not save user", http.StatusInternalServerError)
 		return

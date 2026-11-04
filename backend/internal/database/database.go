@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -24,7 +25,10 @@ type User struct {
 	UpdatedAt time.Time
 }
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db     *sql.DB
+	limits Limits
+}
 
 func Open(path string) (*Store, error) {
 	if path != ":memory:" {
@@ -37,12 +41,20 @@ func Open(path string) (*Store, error) {
 			return nil, err
 		}
 	}
-	db, err := sql.Open("sqlite", path)
+	limits, err := loadLimits()
+	if err != nil {
+		return nil, err
+	}
+	separator := "?"
+	if strings.Contains(path, "?") {
+		separator = "&"
+	}
+	db, err := sql.Open("sqlite", path+separator+"_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	store := &Store{db: db}
+	store := &Store{db: db, limits: limits}
 	if err := store.configure(context.Background()); err != nil {
 		db.Close()
 		return nil, err
@@ -102,11 +114,26 @@ func (s *Store) configure(ctx context.Context) error {
 func (s *Store) UpsertGoogleUser(ctx context.Context, googleID, email, name, picture string) (User, error) {
 	now := time.Now().UTC().Unix()
 	id := googleID
-	_, err := s.db.ExecContext(ctx, `
+	err := s.write(ctx, func(conn *sql.Conn) error {
+		var exists, current int
+		if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM users WHERE google_id = ?", googleID).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&current); err != nil {
+				return err
+			}
+			if current >= s.limits.Users {
+				return limitError("USER_LIMIT_REACHED", s.limits.Users, current)
+			}
+		}
+		_, err := conn.ExecContext(ctx, `
 INSERT INTO users (id, google_id, email, name, picture, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(google_id) DO UPDATE SET email=excluded.email, name=excluded.name, picture=excluded.picture, updated_at=excluded.updated_at`,
-		id, googleID, email, name, picture, now, now)
+			id, googleID, email, name, picture, now, now)
+		return err
+	})
 	if err != nil {
 		return User{}, fmt.Errorf("upsert user: %w", err)
 	}

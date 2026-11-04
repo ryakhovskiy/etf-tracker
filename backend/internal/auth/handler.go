@@ -7,13 +7,16 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"time"
 
 	"holdings/backend/internal/config"
 	"holdings/backend/internal/database"
 	"holdings/backend/internal/httpapi"
+	"holdings/backend/internal/marketdata"
 )
 
 type Handler struct {
+	figi        marketdata.Service
 	frontendURL string
 	google      *googleClient
 	store       *database.Store
@@ -22,13 +25,30 @@ type Handler struct {
 }
 
 func NewHandler(cfg config.Config, store *database.Store, logger *slog.Logger) *Handler {
-	return &Handler{frontendURL: cfg.FrontendURL, google: newGoogleClient(cfg), store: store, tokens: newTokenManager(cfg, store), logger: logger}
+	codes := cfg.OpenFIGIExchCodes
+	if len(codes) == 0 {
+		codes = []string{"GR", "GY"}
+	}
+	size := cfg.ExternalCacheSize
+	if size == 0 {
+		size = 1000
+	}
+	ttl := cfg.ExternalCacheTTL
+	if ttl == 0 {
+		ttl = 24 * time.Hour
+	}
+	var provider marketdata.Provider = marketdata.Mock{}
+	if cfg.MarketdataMode == "live" {
+		provider = marketdata.NewLive(cfg.OpenFIGIAPIKey, marketdata.NewCache(size, ttl))
+	}
+	return &Handler{figi: marketdata.Service{Provider: provider, Codes: codes}, frontendURL: cfg.FrontendURL, google: newGoogleClient(cfg), store: store, tokens: newTokenManager(cfg, store), logger: logger}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerPortfolioRoutes(mux)
 	h.registerTransactionRoutes(mux)
 	h.registerImportRoutes(mux)
+	h.registerOnlineRoutes(mux)
 	mux.HandleFunc("GET /auth/google", h.googleLogin)
 	mux.HandleFunc("GET /auth/google/callback", h.googleCallback)
 	mux.HandleFunc("GET /auth/me", h.me)

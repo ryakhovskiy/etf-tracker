@@ -29,6 +29,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer store.Close()
+	logger.Info("market data configured", "mode", cfg.MarketdataMode, "exchanges", cfg.OpenFIGIExchCodes)
 
 	authHandler := auth.NewHandler(cfg, store, logger)
 	mux := http.NewServeMux()

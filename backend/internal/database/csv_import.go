@@ -85,7 +85,7 @@ func (s *Store) validateImport(ctx context.Context, conn *sql.Conn, user string,
 		return result, csvError("At most 5,000 rows are allowed.")
 	}
 	byISIN, byWKN := map[string]Instrument{}, map[string]Instrument{}
-	rs, err := conn.QueryContext(ctx, `SELECT id,type,name,ticker,isin,wkn,EXISTS(SELECT 1 FROM portfolio_items WHERE portfolio_id=? AND instrument_id=i.id) FROM instruments i`, id)
+	rs, err := conn.QueryContext(ctx, `SELECT id,type,name,ticker,COALESCE(isin,''),wkn,EXISTS(SELECT 1 FROM portfolio_items WHERE portfolio_id=? AND instrument_id=i.id) FROM instruments i`, id)
 	if err != nil {
 		return result, err
 	}
@@ -95,7 +95,9 @@ func (s *Store) validateImport(ctx context.Context, conn *sql.Conn, user string,
 			rs.Close()
 			return result, err
 		}
-		byISIN[strings.ToUpper(v.ISIN)] = v
+		if v.ISIN != "" {
+			byISIN[strings.ToUpper(v.ISIN)] = v
+		}
 		if v.WKN != nil {
 			byWKN[strings.ToUpper(*v.WKN)] = v
 		}

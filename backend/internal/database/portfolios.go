@@ -22,6 +22,9 @@ type PortfolioDetail struct {
 	ItemLimit     int     `json:"itemLimit"`
 }
 type Instrument struct {
+	FIGI        string  `json:"figi,omitempty"`
+	ExchCode    string  `json:"exchCode,omitempty"`
+	Currency    string  `json:"currency,omitempty"`
 	ID          int64   `json:"id"`
 	Type        string  `json:"type"`
 	Name        string  `json:"name"`
@@ -228,17 +231,17 @@ func (s *Store) Search(ctx context.Context, user, q string, portfolio int64) ([]
 		}
 	}
 	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
-	rows, err := conn.QueryContext(ctx, `SELECT id,type,name,ticker,isin,wkn,EXISTS(SELECT 1 FROM portfolio_items WHERE portfolio_id=? AND instrument_id=i.id) FROM instruments i
- WHERE ticker LIKE ? ESCAPE '\' OR isin LIKE ? ESCAPE '\' OR wkn LIKE ? ESCAPE '\' OR name LIKE ? ESCAPE '\'
+	rows, err := conn.QueryContext(ctx, `SELECT id,type,name,ticker,COALESCE(isin,''),wkn,COALESCE(figi,''),COALESCE(exch_code,''),EXISTS(SELECT 1 FROM portfolio_items WHERE portfolio_id=? AND instrument_id=i.id) FROM instruments i
+ WHERE ticker LIKE ? ESCAPE '\' OR isin LIKE ? ESCAPE '\' OR wkn LIKE ? ESCAPE '\' OR name LIKE ? ESCAPE '\' OR figi LIKE ? ESCAPE '\'
  ORDER BY CASE WHEN ticker=? COLLATE NOCASE OR isin=? COLLATE NOCASE OR wkn=? COLLATE NOCASE THEN 0
- WHEN ticker LIKE ? ESCAPE '\' OR isin LIKE ? ESCAPE '\' OR wkn LIKE ? ESCAPE '\' OR name LIKE ? ESCAPE '\' THEN 1 ELSE 2 END, name ASC LIMIT 10`, portfolio, "%"+escaped+"%", "%"+escaped+"%", "%"+escaped+"%", "%"+escaped+"%", q, q, q, escaped+"%", escaped+"%", escaped+"%", escaped+"%")
+ WHEN ticker LIKE ? ESCAPE '\' OR isin LIKE ? ESCAPE '\' OR wkn LIKE ? ESCAPE '\' OR name LIKE ? ESCAPE '\' THEN 1 ELSE 2 END, name ASC LIMIT 10`, portfolio, "%"+escaped+"%", "%"+escaped+"%", "%"+escaped+"%", "%"+escaped+"%", "%"+escaped+"%", q, q, q, escaped+"%", escaped+"%", escaped+"%", escaped+"%")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var i Instrument
-		if err := rows.Scan(&i.ID, &i.Type, &i.Name, &i.Ticker, &i.ISIN, &i.WKN, &i.InPortfolio); err != nil {
+		if err := rows.Scan(&i.ID, &i.Type, &i.Name, &i.Ticker, &i.ISIN, &i.WKN, &i.FIGI, &i.ExchCode, &i.InPortfolio); err != nil {
 			return nil, err
 		}
 		result = append(result, i)

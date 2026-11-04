@@ -7,6 +7,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	"holdings/backend/internal/marketdata"
 
 	"github.com/joho/godotenv"
 )
@@ -14,6 +17,11 @@ import (
 const developmentJWTSecret = "local-development-jwt-secret-change-me"
 
 type Config struct {
+	MarketdataMode      string
+	OpenFIGIAPIKey      string
+	OpenFIGIExchCodes   []string
+	ExternalCacheSize   int
+	ExternalCacheTTL    time.Duration
 	Environment         string
 	ServerAddress       string
 	FrontendURL         string
@@ -51,6 +59,35 @@ func Load() (Config, error) {
 		DatabasePath:        value("DATABASE_PATH", "data/holdings.db"),
 		JWTSecret:           []byte(value("JWT_SECRET", developmentJWTSecret)),
 		SecureSessionCookie: secureCookie,
+	}
+	cfg.MarketdataMode = value("MARKETDATA_MODE", "mock")
+	if cfg.MarketdataMode != "mock" && cfg.MarketdataMode != "live" {
+		return Config{}, errors.New("MARKETDATA_MODE must be mock or live")
+	}
+	if os.Getenv("CI") != "" && os.Getenv("CI") != "false" && cfg.MarketdataMode == "live" {
+		return Config{}, errors.New("CI requires MARKETDATA_MODE=mock")
+	}
+	cfg.OpenFIGIAPIKey = os.Getenv("OPENFIGI_API_KEY")
+	cfg.OpenFIGIExchCodes = strings.Split(value("OPENFIGI_EXCH_CODES", "GR,GY"), ",")
+	if len(cfg.OpenFIGIExchCodes) > 3 {
+		return Config{}, errors.New("OPENFIGI_EXCH_CODES requires 1–3 German codes")
+	}
+	seen := map[string]bool{}
+	for i, code := range cfg.OpenFIGIExchCodes {
+		code = marketdata.Normalize(code)
+		if !marketdata.GermanCodes[code] || seen[code] {
+			return Config{}, errors.New("OPENFIGI_EXCH_CODES contains an invalid or duplicate German code")
+		}
+		seen[code] = true
+		cfg.OpenFIGIExchCodes[i] = code
+	}
+	cfg.ExternalCacheSize, err = strconv.Atoi(value("EXTERNAL_CACHE_SIZE", "1000"))
+	if err != nil || cfg.ExternalCacheSize < 1 {
+		return Config{}, errors.New("EXTERNAL_CACHE_SIZE must be a positive integer")
+	}
+	cfg.ExternalCacheTTL, err = time.ParseDuration(value("EXTERNAL_CACHE_TTL", "24h"))
+	if err != nil || cfg.ExternalCacheTTL <= 0 {
+		return Config{}, errors.New("EXTERNAL_CACHE_TTL must be a positive duration")
 	}
 
 	if len(cfg.JWTSecret) < 16 {

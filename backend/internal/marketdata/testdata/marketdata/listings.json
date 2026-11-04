@@ -1,0 +1,5 @@
+[
+ {"figi":"BBG000BSJ2D9","name":"SAP SE","ticker":"SAP","exchCode":"GR","securityType":"Common Stock","securityType2":"Common Stock"},
+ {"figi":"BBG000BSJ3M2","name":"SAP SE","ticker":"SAP","exchCode":"GY","securityType":"Common Stock","securityType2":"Common Stock"},
+ {"figi":"BBG000Q0X7G3","name":"HSBC MSCI WORLD UCITS ETF","ticker":"H4ZJ","exchCode":"GR","securityType":"ETP","securityType2":"Mutual Fund"}
+]

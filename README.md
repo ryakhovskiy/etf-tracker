@@ -11,7 +11,7 @@ Requires Go 1.27.3 or newer and Node.js 22.18 or newer (including native TypeScr
 3. Start the API:
 
    ```sh
-   cd backend && set -a && source ../.env && set +a && go run ./cmd/api
+   cd backend && go run ./cmd/api
    ```
 
 4. Start the web app in a second terminal:

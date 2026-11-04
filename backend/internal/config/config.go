@@ -3,10 +3,13 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/joho/godotenv"
 )
 
 const developmentJWTSecret = "local-development-jwt-secret-change-me"
@@ -24,6 +27,15 @@ type Config struct {
 }
 
 func Load() (Config, error) {
+
+	err := godotenv.Load(".env")
+	if err != nil {
+		err = godotenv.Load("../.env")
+		if err != nil {
+			log.Fatal("Error loading .env file")
+		}
+	}
+
 	secureCookie, err := boolValue("SECURE_SESSION_COOKIE", false)
 	if err != nil {
 		return Config{}, err
@@ -68,7 +80,10 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-func (c Config) IsProduction() bool { return c.Environment == "production" || c.Environment == "prod" }
+func (c Config) IsProduction() bool {
+	var env = strings.ToLower(c.Environment)
+	return env == "production" || env == "prod"
+}
 
 func isHTTPS(rawURL string) bool {
 	u, err := url.Parse(rawURL)

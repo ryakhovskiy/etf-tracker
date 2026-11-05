@@ -30,7 +30,15 @@ func (h *Handler) registerTransactionRoutes(mux *http.ServeMux) {
 						return
 					}
 				}
-				value, err = h.store.Transactions(r.Context(), user, id, page)
+				pageSize := 50
+				if raw := r.URL.Query().Get("pageSize"); raw != "" {
+					pageSize, err = strconv.Atoi(raw)
+					if err != nil || pageSize < 1 || pageSize > 250 {
+						apiError(w, 400, "INVALID_PAGE_SIZE", "Page size must be between 1 and 250.")
+						return
+					}
+				}
+				value, err = h.store.Transactions(r.Context(), user, id, page, pageSize)
 			}
 			if err != nil {
 				storeError(w, err)

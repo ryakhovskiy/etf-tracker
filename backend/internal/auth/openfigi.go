@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"holdings/backend/internal/database"
 	"holdings/backend/internal/httpapi"
 	"holdings/backend/internal/marketdata"
 )
@@ -31,6 +33,24 @@ func (h *Handler) registerOnlineRoutes(mux *http.ServeMux) {
 				return
 			}
 		}
+		if r.URL.Query().Get("provider") == "av" {
+			_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Minute))
+			if marketdata.Classify(q) != "KEYWORD" {
+				apiError(w, 400, "INVALID_QUERY", "Alpha Vantage fallback supports keyword queries only.")
+				return
+			}
+			result, err := h.av.Search(r.Context(), user, q)
+			if err != nil {
+				marketError(w, err)
+				return
+			}
+			if err = h.store.MatchOnline(r.Context(), user, id, result.Results); err != nil {
+				storeError(w, err)
+				return
+			}
+			httpapi.JSON(w, 200, result)
+			return
+		}
 		result, err := h.figi.Lookup(r.Context(), q)
 		if err != nil {
 			if errors.Is(err, marketdata.ErrRateLimited) {
@@ -51,9 +71,15 @@ func (h *Handler) registerOnlineRoutes(mux *http.ServeMux) {
 		if !decodeBody(w, r, &row) {
 			return
 		}
-		instrument, err := h.store.SaveOnlineInstrument(r.Context(), row)
+		var instrument database.Instrument
+		var err error
+		if row.Source == "ALPHAVANTAGE" {
+			instrument, err = h.store.SaveAVInstrument(r.Context(), user, row)
+		} else {
+			instrument, err = h.store.SaveOnlineInstrument(r.Context(), row)
+		}
 		if err != nil {
-			storeError(w, err)
+			marketError(w, err)
 			return
 		}
 		httpapi.JSON(w, 200, instrument)

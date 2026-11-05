@@ -34,3 +34,26 @@ func TestProductionConfiguration(t *testing.T) {
 		t.Fatalf("origin normalization: %v %v", cfg.FrontendURL, err)
 	}
 }
+
+func TestAlphaConfiguration(t *testing.T) {
+	t.Setenv("MARKETDATA_MODE", "live")
+	t.Setenv("CI", "")
+	t.Setenv("ALPHAVANTAGE_API_KEY", "")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "ALPHAVANTAGE_API_KEY") {
+		t.Fatal("live accepted missing key", err)
+	}
+	t.Setenv("ALPHAVANTAGE_API_KEY", "test-key")
+	if _, err := Load(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MARKETDATA_MODE", "mock")
+	t.Setenv("ALPHAVANTAGE_API_KEY", "")
+	for _, tc := range []struct{ key, value string }{{"AV_MAX_PER_DAY", "0"}, {"AV_MAX_PER_MINUTE", "-1"}, {"AV_MAX_PER_USER_PER_DAY", "no"}, {"AV_LIMIT_BACKOFF", "0s"}, {"FRANKFURTER_BASE_URL", "file:///tmp"}} {
+		t.Run(tc.key, func(t *testing.T) {
+			t.Setenv(tc.key, tc.value)
+			if _, err := Load(); err == nil {
+				t.Fatal("invalid config accepted")
+			}
+		})
+	}
+}

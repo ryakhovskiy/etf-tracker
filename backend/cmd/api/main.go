@@ -32,6 +32,7 @@ func main() {
 	logger.Info("market data configured", "mode", cfg.MarketdataMode, "exchanges", cfg.OpenFIGIExchCodes)
 
 	authHandler := auth.NewHandler(cfg, store, logger)
+	defer authHandler.Close()
 	mux := http.NewServeMux()
 	authHandler.RegisterRoutes(mux)
 	mux.HandleFunc("GET /health", health)

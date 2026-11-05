@@ -32,7 +32,7 @@ func TestTransactionDecimals(t *testing.T) {
 		}
 	}
 	for _, tc := range []struct{ amount, price, quantity string }{{"1.00", "128.0000", "0.007813"}, {"1000000.00", "1.0000", "1000000.000000"}, {"1000000.00", "1000000.0000", "1.000000"}} {
-		if _, err := validateTransaction(TransactionInput{Date: "2025-01-01", Lines: []TransactionLine{{1, tc.amount, tc.price, tc.quantity}}}); err != nil {
+		if _, err := validateTransaction(TransactionInput{Date: "2025-01-01", Lines: []TransactionLine{{InstrumentID: 1, Amount: tc.amount, Price: tc.price, Quantity: tc.quantity}}}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -59,7 +59,9 @@ func TestTransactionLifecycleAndPerformance(t *testing.T) {
 		}
 		return id
 	}
-	l := func(i int64, a, p, q string) TransactionLine { return TransactionLine{i, a, p, q} }
+	l := func(i int64, a, p, q string) TransactionLine {
+		return TransactionLine{InstrumentID: i, Amount: a, Price: p, Quantity: q}
+	}
 	first := commit("2025-01-01", l(1, "20", "10", "2"), l(2, "20", "20", "1"))
 	commit("2025-01-10", l(1, "20", "20", "1"), l(1, "120", "40", "3")) // weighted price = 35, held = 6, value = 210
 	later := commit("2025-03-01", l(3, "15", "5", "3"))
@@ -125,8 +127,8 @@ func TestTransactionValidationAtomicAndPagination(t *testing.T) {
 	ctx := context.Background()
 	p, _ := s.SavePortfolio(ctx, "alice", 0, "Savings")
 	s.AddItems(ctx, "alice", p.ID, []int64{1, 2})
-	good := TransactionLine{1, "10", "5", "2"}
-	for _, in := range []TransactionInput{{Date: "2099-01-01", Lines: []TransactionLine{good}}, {Date: "1989-12-31", Lines: []TransactionLine{good}}, {Date: "2025-01-01", Lines: []TransactionLine{good, {3, "10", "5", "2"}}}, {Date: "2025-01-01", Lines: []TransactionLine{{1, "10", "5", "3"}}}, {Date: "2025-01-01", Lines: []TransactionLine{{1, "1000000.01", "5", "2"}}}, {Date: "2025-01-01", Lines: []TransactionLine{{1, "10", "0", "2"}}}} {
+	good := TransactionLine{InstrumentID: 1, Amount: "10", Price: "5", Quantity: "2"}
+	for _, in := range []TransactionInput{{Date: "2099-01-01", Lines: []TransactionLine{good}}, {Date: "1989-12-31", Lines: []TransactionLine{good}}, {Date: "2025-01-01", Lines: []TransactionLine{good, {InstrumentID: 3, Amount: "10", Price: "5", Quantity: "2"}}}, {Date: "2025-01-01", Lines: []TransactionLine{{InstrumentID: 1, Amount: "10", Price: "5", Quantity: "3"}}}, {Date: "2025-01-01", Lines: []TransactionLine{{InstrumentID: 1, Amount: "1000000.01", Price: "5", Quantity: "2"}}}, {Date: "2025-01-01", Lines: []TransactionLine{{InstrumentID: 1, Amount: "10", Price: "0", Quantity: "2"}}}} {
 		if _, err := s.CreateTransaction(ctx, "alice", p.ID, in); err == nil {
 			t.Fatal("accepted invalid", in)
 		}
@@ -140,7 +142,7 @@ func TestTransactionValidationAtomicAndPagination(t *testing.T) {
 	if _, err := s.db.Exec(`CREATE TRIGGER fail_second BEFORE INSERT ON transaction_lines WHEN NEW.instrument_id=2 BEGIN SELECT RAISE(ABORT,'test'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateTransaction(ctx, "alice", p.ID, TransactionInput{Date: "2025-01-01", Lines: []TransactionLine{good, {2, "10", "5", "2"}}}); err == nil {
+	if _, err := s.CreateTransaction(ctx, "alice", p.ID, TransactionInput{Date: "2025-01-01", Lines: []TransactionLine{good, {InstrumentID: 2, Amount: "10", Price: "5", Quantity: "2"}}}); err == nil {
 		t.Fatal("expected database failure")
 	}
 	s.db.QueryRow("SELECT COUNT(*) FROM transactions").Scan(&n)
@@ -153,12 +155,20 @@ func TestTransactionValidationAtomicAndPagination(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	page, err := s.Transactions(ctx, "alice", p.ID, 1)
+	page, err := s.Transactions(ctx, "alice", p.ID, 1, 50)
 	if err != nil || len(page.Lines) != 50 || page.Total != 51 || page.Lines[0].TransactionID != 51 {
 		t.Fatalf("%+v %v", page, err)
 	}
-	page, err = s.Transactions(ctx, "alice", p.ID, 2)
+	page, err = s.Transactions(ctx, "alice", p.ID, 2, 50)
 	if err != nil || len(page.Lines) != 1 {
 		t.Fatalf("%+v %v", page, err)
+	}
+	page, err = s.Transactions(ctx, "alice", p.ID, 2, 25)
+	if err != nil || len(page.Lines) != 25 || page.Total != 51 || page.Lines[0].TransactionID != 26 {
+		t.Fatalf("custom page size: %+v %v", page, err)
+	}
+	page, err = s.Transactions(ctx, "alice", p.ID, 1, 100)
+	if err != nil || len(page.Lines) != 51 {
+		t.Fatalf("large page size: %+v %v", page, err)
 	}
 }

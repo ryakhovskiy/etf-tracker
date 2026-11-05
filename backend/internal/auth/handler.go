@@ -16,6 +16,9 @@ import (
 )
 
 type Handler struct {
+	av          *marketdata.AVGateway
+	fx          *marketdata.FXService
+	jobs        *priceJobs
 	figi        marketdata.Service
 	frontendURL string
 	google      *googleClient
@@ -41,7 +44,17 @@ func NewHandler(cfg config.Config, store *database.Store, logger *slog.Logger) *
 	if cfg.MarketdataMode == "live" {
 		provider = marketdata.NewLive(cfg.OpenFIGIAPIKey, marketdata.NewCache(size, ttl))
 	}
-	return &Handler{figi: marketdata.Service{Provider: provider, Codes: codes}, frontendURL: cfg.FrontendURL, google: newGoogleClient(cfg), store: store, tokens: newTokenManager(cfg, store), logger: logger}
+	var avTransport marketdata.AVTransport = marketdata.MockAV{}
+	var fxProvider marketdata.FXProvider = marketdata.MockFX{}
+	fxKey := cfg.FXProvider
+	if fxKey == "" {
+		fxKey = "ECB"
+	}
+	if cfg.MarketdataMode == "live" {
+		avTransport = &marketdata.AVHTTP{HTTP: &http.Client{Timeout: 10 * time.Second}, BaseURL: "https://www.alphavantage.co/query", Key: cfg.AlphaVantageAPIKey}
+		fxProvider = &marketdata.Frankfurter{HTTP: &http.Client{Timeout: 10 * time.Second}, BaseURL: cfg.FrankfurterBaseURL, Provider: fxKey, Cache: marketdata.NewCache(1, 24*time.Hour)}
+	}
+	return &Handler{av: marketdata.NewAVGateway(store, avTransport, marketdata.NewCache(size, ttl), cfg.AVLimits), fx: &marketdata.FXService{Store: store, Provider: fxProvider, ProviderKey: fxKey, Now: time.Now}, jobs: &priceJobs{entries: map[string]*priceJob{}}, figi: marketdata.Service{Provider: provider, Codes: codes}, frontendURL: cfg.FrontendURL, google: newGoogleClient(cfg), store: store, tokens: newTokenManager(cfg, store), logger: logger}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -49,12 +62,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerTransactionRoutes(mux)
 	h.registerImportRoutes(mux)
 	h.registerOnlineRoutes(mux)
+	h.registerAlphaRoutes(mux)
 	mux.HandleFunc("GET /auth/google", h.googleLogin)
 	mux.HandleFunc("GET /auth/google/callback", h.googleCallback)
 	mux.HandleFunc("GET /auth/me", h.me)
 	mux.HandleFunc("POST /auth/refresh", h.refresh)
 	mux.HandleFunc("POST /auth/logout", h.logout)
 }
+func (h *Handler) Close() { h.av.Close() }
 
 func (h *Handler) googleLogin(w http.ResponseWriter, r *http.Request) {
 	if h.google.clientID == "" || h.google.clientSecret == "" {

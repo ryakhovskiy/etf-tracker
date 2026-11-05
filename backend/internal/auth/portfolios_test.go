@@ -151,6 +151,10 @@ func TestTransactionAPI(t *testing.T) {
 	request("POST", path+"/transactions", `{"date":"2025-01-01","lines":[{"instrumentId":1,"amount":"20,00","price":"10","quantity":"2"}]}`, 400)
 	request("POST", path+"/transactions", `{"date":"2025-01-01","lines":[{"instrumentId":1,"amount":20,"price":"10","quantity":"2"}]}`, 400)
 	request("GET", path+"/transactions?page=0", "", 400)
+	for _, size := range []string{"0", "251", "-1", "abc"} {
+		request("GET", path+"/transactions?pageSize="+size, "", 400)
+	}
+	request("GET", path+"/transactions?pageSize=25", "", 200)
 	for _, endpoint := range []string{"saving-plan", "transactions", "performance"} {
 		request("GET", path+"/"+endpoint, "", 200)
 	}

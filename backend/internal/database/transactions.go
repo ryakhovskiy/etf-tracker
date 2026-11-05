@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"holdings/backend/internal/marketdata"
 	"math/big"
 	"regexp"
 	"strings"
@@ -25,6 +26,11 @@ func invalidField(field, message string) error {
 }
 
 type TransactionLine struct {
+	QuoteID      int64  `json:"quoteId,omitempty"`
+	OrigPrice    string `json:"origPrice,omitempty"`
+	OrigCurrency string `json:"origCurrency,omitempty"`
+	FXRate       string `json:"fxRate,omitempty"`
+	FXRateDate   string `json:"fxRateDate,omitempty"`
 	InstrumentID int64  `json:"instrumentId"`
 	Amount       string `json:"amount"`
 	Price        string `json:"price"`
@@ -87,8 +93,8 @@ type savedLine struct {
 }
 
 func validateTransaction(in TransactionInput) ([]savedLine, error) {
-	date, err := time.Parse("2006-01-02", in.Date)
-	if err != nil || in.Date < "1990-01-01" || date.After(time.Now().UTC()) {
+	_, err := time.Parse("2006-01-02", in.Date)
+	if err != nil || in.Date < "1990-01-01" || in.Date > marketdata.BerlinDay(time.Now()) {
 		return nil, invalidField("date", "Choose a date from 1990-01-01 through today.")
 	}
 	if len(in.Lines) == 0 || len(in.Lines) > 100 {
@@ -155,7 +161,7 @@ func (s *Store) CreateTransaction(ctx context.Context, user string, id int64, in
 			return err
 		}
 		for _, l := range lines {
-			if _, err := conn.ExecContext(ctx, "INSERT INTO transaction_lines(transaction_id,instrument_id,amount_eur_e2,quantity_e6,price_eur_e4) VALUES (?,?,?,?,?)", txID, l.InstrumentID, l.a, l.q, l.p); err != nil {
+			if _, err := conn.ExecContext(ctx, `INSERT INTO transaction_lines(transaction_id,instrument_id,amount_eur_e2,quantity_e6,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,fx_rate_date) VALUES (?,?,?,?,?,(SELECT orig_price_e4 FROM price_quotes WHERE id=? AND instrument_id=? AND price_eur_e4=? AND fx_rate_e8 IS NOT NULL),(SELECT orig_currency FROM price_quotes WHERE id=? AND instrument_id=? AND price_eur_e4=? AND fx_rate_e8 IS NOT NULL),(SELECT fx_rate_e8 FROM price_quotes WHERE id=? AND instrument_id=? AND price_eur_e4=?),(SELECT fx_rate_date FROM price_quotes WHERE id=? AND instrument_id=? AND price_eur_e4=? AND fx_rate_e8 IS NOT NULL))`, txID, l.InstrumentID, l.a, l.q, l.p, l.QuoteID, l.InstrumentID, l.p, l.QuoteID, l.InstrumentID, l.p, l.QuoteID, l.InstrumentID, l.p, l.QuoteID, l.InstrumentID, l.p); err != nil {
 				return err
 			}
 		}
@@ -165,6 +171,12 @@ func (s *Store) CreateTransaction(ctx context.Context, user string, id int64, in
 }
 
 type SavingPlanItem struct {
+	AVSymbol      string `json:"avSymbol,omitempty"`
+	AVCurrency    string `json:"avCurrency,omitempty"`
+	AVRegion      string `json:"avRegion,omitempty"`
+	AVLinkedByYou bool   `json:"avLinkedByYou"`
+	AVLinkedAt    string `json:"avLinkedAt,omitempty"`
+	QuoteID       int64  `json:"quoteId,omitempty"`
 	InstrumentID  int64  `json:"instrumentId"`
 	Ticker        string `json:"ticker"`
 	Name          string `json:"name"`
@@ -177,7 +189,7 @@ func (s *Store) SavingPlan(ctx context.Context, user string, id int64) ([]Saving
 	if _, err := s.Portfolio(ctx, user, id); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.ticker,i.name,COALESCE(l.amount_eur_e2,0),COALESCE(l.price_eur_e4,0),COALESCE(t.trade_date,'') FROM portfolio_items pi JOIN instruments i ON i.id=pi.instrument_id LEFT JOIN transaction_lines l ON l.id=(SELECT ll.id FROM transaction_lines ll JOIN transactions tt ON tt.id=ll.transaction_id WHERE tt.portfolio_id=pi.portfolio_id AND ll.instrument_id=i.id ORDER BY tt.trade_date DESC,tt.created_at DESC,tt.id DESC,ll.id DESC LIMIT 1) LEFT JOIN transactions t ON t.id=l.transaction_id WHERE pi.portfolio_id=? ORDER BY i.id`, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.ticker,i.name,COALESCE(l.amount_eur_e2,0),COALESCE(l.price_eur_e4,0),COALESCE(t.trade_date,''),COALESCE(i.av_symbol,''),COALESCE(i.av_currency,''),COALESCE(i.av_region,''),COALESCE(i.av_linked_by= ?,0),COALESCE(i.av_linked_at,'') FROM portfolio_items pi JOIN instruments i ON i.id=pi.instrument_id LEFT JOIN transaction_lines l ON l.id=(SELECT ll.id FROM transaction_lines ll JOIN transactions tt ON tt.id=ll.transaction_id WHERE tt.portfolio_id=pi.portfolio_id AND ll.instrument_id=i.id ORDER BY tt.trade_date DESC,tt.created_at DESC,tt.id DESC,ll.id DESC LIMIT 1) LEFT JOIN transactions t ON t.id=l.transaction_id WHERE pi.portfolio_id=? ORDER BY i.id`, user, id)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +199,7 @@ func (s *Store) SavingPlan(ctx context.Context, user string, id int64) ([]Saving
 		var v SavingPlanItem
 		var a, p int64
 		var date string
-		if err := rows.Scan(&v.InstrumentID, &v.Ticker, &v.Name, &a, &p, &date); err != nil {
+		if err := rows.Scan(&v.InstrumentID, &v.Ticker, &v.Name, &a, &p, &date, &v.AVSymbol, &v.AVCurrency, &v.AVRegion, &v.AVLinkedByYou, &v.AVLinkedAt); err != nil {
 			return nil, err
 		}
 		v.DefaultAmount = decimalString(a, 2)
@@ -199,7 +211,14 @@ func (s *Store) SavingPlan(ctx context.Context, user string, id int64) ([]Saving
 		}
 		result = append(result, v)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if err := s.applyQuoteDefaults(ctx, result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 type TransactionRow struct {
@@ -217,7 +236,7 @@ func (s *Store) transactionRows(ctx context.Context, user string, id int64) ([]T
 	if _, err := s.Portfolio(ctx, user, id); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT l.id,t.id,t.trade_date,i.id,i.ticker,i.name,t.source,l.amount_eur_e2,l.quantity_e6,l.price_eur_e4 FROM transactions t JOIN transaction_lines l ON l.transaction_id=t.id JOIN instruments i ON i.id=l.instrument_id WHERE t.portfolio_id=? ORDER BY t.trade_date,t.created_at,t.id,l.id`, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT l.id,t.id,t.trade_date,i.id,i.ticker,i.name,t.source,l.amount_eur_e2,l.quantity_e6,l.price_eur_e4,l.orig_price_e4,COALESCE(l.orig_currency,''),l.fx_rate_e8,COALESCE(l.fx_rate_date,'') FROM transactions t JOIN transaction_lines l ON l.transaction_id=t.id JOIN instruments i ON i.id=l.instrument_id WHERE t.portfolio_id=? ORDER BY t.trade_date,t.created_at,t.id,l.id`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -225,12 +244,19 @@ func (s *Store) transactionRows(ctx context.Context, user string, id int64) ([]T
 	result := []TransactionRow{}
 	for rows.Next() {
 		var v TransactionRow
-		if err := rows.Scan(&v.ID, &v.TransactionID, &v.Date, &v.InstrumentID, &v.Ticker, &v.Name, &v.Source, &v.a, &v.q, &v.p); err != nil {
+		var orig, rate sql.NullInt64
+		if err := rows.Scan(&v.ID, &v.TransactionID, &v.Date, &v.InstrumentID, &v.Ticker, &v.Name, &v.Source, &v.a, &v.q, &v.p, &orig, &v.OrigCurrency, &rate, &v.FXRateDate); err != nil {
 			return nil, err
 		}
 		v.Amount = decimalString(v.a, 2)
 		v.Quantity = decimalString(v.q, 6)
 		v.Price = decimalString(v.p, 4)
+		if orig.Valid {
+			v.OrigPrice = decimalString(orig.Int64, 4)
+		}
+		if rate.Valid {
+			v.FXRate = decimalString(rate.Int64, 8)
+		}
 		result = append(result, v)
 	}
 	return result, rows.Err()
@@ -242,7 +268,7 @@ type TransactionPage struct {
 	Page  int              `json:"page"`
 }
 
-func (s *Store) Transactions(ctx context.Context, user string, id int64, page int) (TransactionPage, error) {
+func (s *Store) Transactions(ctx context.Context, user string, id int64, page, pageSize int) (TransactionPage, error) {
 	all, err := s.transactionRows(ctx, user, id)
 	if err != nil {
 		return TransactionPage{}, err
@@ -257,8 +283,8 @@ func (s *Store) Transactions(ctx context.Context, user string, id int64, page in
 		ordered = append(ordered, all[start:end]...)
 		end = start
 	}
-	start := min((page-1)*50, len(ordered))
-	return TransactionPage{ordered[start:min(start+50, len(ordered))], len(ordered), page}, nil
+	start := min((page-1)*pageSize, len(ordered))
+	return TransactionPage{ordered[start:min(start+pageSize, len(ordered))], len(ordered), page}, nil
 }
 func (s *Store) DeleteTransaction(ctx context.Context, user string, id, txID int64) error {
 	return s.write(ctx, func(conn *sql.Conn) error {

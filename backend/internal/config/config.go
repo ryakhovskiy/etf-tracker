@@ -17,6 +17,10 @@ import (
 const developmentJWTSecret = "local-development-jwt-secret-change-me"
 
 type Config struct {
+	AlphaVantageAPIKey  string
+	AVLimits            marketdata.AVLimits
+	FrankfurterBaseURL  string
+	FXProvider          string
 	MarketdataMode      string
 	OpenFIGIAPIKey      string
 	OpenFIGIExchCodes   []string
@@ -60,14 +64,42 @@ func Load() (Config, error) {
 		JWTSecret:           []byte(value("JWT_SECRET", developmentJWTSecret)),
 		SecureSessionCookie: secureCookie,
 	}
+
 	cfg.MarketdataMode = value("MARKETDATA_MODE", "mock")
 	if cfg.MarketdataMode != "mock" && cfg.MarketdataMode != "live" {
 		return Config{}, errors.New("MARKETDATA_MODE must be mock or live")
 	}
+
 	if os.Getenv("CI") != "" && os.Getenv("CI") != "false" && cfg.MarketdataMode == "live" {
 		return Config{}, errors.New("CI requires MARKETDATA_MODE=mock")
 	}
+
 	cfg.OpenFIGIAPIKey = os.Getenv("OPENFIGI_API_KEY")
+	cfg.AlphaVantageAPIKey = os.Getenv("ALPHAVANTAGE_API_KEY")
+	if cfg.MarketdataMode == "live" && cfg.AlphaVantageAPIKey == "" {
+		return Config{}, errors.New("ALPHAVANTAGE_API_KEY is required in live mode")
+	}
+	for _, entry := range []struct {
+		key      string
+		fallback string
+		out      *int
+	}{{"AV_MAX_PER_MINUTE", "5", &cfg.AVLimits.Minute}, {"AV_MAX_PER_DAY", "25", &cfg.AVLimits.Day}, {"AV_MAX_PER_USER_PER_DAY", "10", &cfg.AVLimits.User}} {
+		*entry.out, err = strconv.Atoi(value(entry.key, entry.fallback))
+		if err != nil || *entry.out < 1 {
+			return Config{}, fmt.Errorf("%s must be a positive integer", entry.key)
+		}
+	}
+
+	cfg.AVLimits.Backoff, err = time.ParseDuration(value("AV_LIMIT_BACKOFF", "1h"))
+	if err != nil || cfg.AVLimits.Backoff <= 0 {
+		return Config{}, errors.New("AV_LIMIT_BACKOFF must be a positive duration")
+	}
+	cfg.FrankfurterBaseURL = value("FRANKFURTER_BASE_URL", "https://api.frankfurter.dev/v2")
+	fxURL, e := url.Parse(cfg.FrankfurterBaseURL)
+	if e != nil || fxURL.Hostname() == "" || (fxURL.Scheme != "http" && fxURL.Scheme != "https") || fxURL.User != nil || fxURL.RawQuery != "" || fxURL.Fragment != "" {
+		return Config{}, errors.New("FRANKFURTER_BASE_URL must be an HTTP(S) URL")
+	}
+	cfg.FXProvider = value("FX_PROVIDER", "ECB")
 	cfg.OpenFIGIExchCodes = strings.Split(value("OPENFIGI_EXCH_CODES", "GR,GY"), ",")
 	if len(cfg.OpenFIGIExchCodes) > 3 {
 		return Config{}, errors.New("OPENFIGI_EXCH_CODES requires 1–3 German codes")
@@ -93,6 +125,7 @@ func Load() (Config, error) {
 	if len(cfg.JWTSecret) < 16 {
 		return Config{}, errors.New("JWT_SECRET must be at least 16 characters")
 	}
+
 	if cfg.IsProduction() {
 		if os.Getenv("JWT_SECRET") == "" || string(cfg.JWTSecret) == developmentJWTSecret || string(cfg.JWTSecret) == "replace-with-a-long-random-value" {
 			return Config{}, errors.New("JWT_SECRET must be explicitly set to a random secret in production")

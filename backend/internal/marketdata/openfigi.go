@@ -218,6 +218,10 @@ func (Mock) Map(ctx context.Context, jobs []MappingJob) ([]Response, error) {
 }
 
 type Result struct {
+	AVSymbol             string `json:"avSymbol,omitempty"`
+	Region               string `json:"region,omitempty"`
+	MatchScore           string `json:"matchScore,omitempty"`
+	Source               string `json:"source,omitempty"`
 	FIGI                 string `json:"figi"`
 	Ticker               string `json:"ticker"`
 	ExchCode             string `json:"exchCode"`

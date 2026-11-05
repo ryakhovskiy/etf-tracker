@@ -15,7 +15,7 @@ const { Portfolios } = await import('../components/portfolios.tsx');
 const { AppRouterContext } = await import('next/dist/shared/lib/app-router-context.shared-runtime.js');
 afterEach(() => cleanup());
 const apple = { id: 1, ticker: 'AAPL', name: 'Apple Inc.', type: 'STOCK', isin: 'US0378331005', wkn: '865985', inPortfolio: false };
-const other = { ...apple, id: 2, ticker: 'MSFT', name: 'Microsoft Corp.' };
+const other = { ...apple, id: 2, ticker: 'MSFT', name: 'Microsoft Corp.', isin: 'US5949181045', wkn: '870747' };
 const initial = { id: 1, name: 'Growth', instrumentIds: [], itemLimit: 30 };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status });
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));

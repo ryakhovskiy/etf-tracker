@@ -75,14 +75,14 @@ const tabView=(tab='transactions',id='1',push=()=>{})=>React.createElement(
 
 test('tab navigation preserves edited fields, cleared inputs, validation and date while reconciling items',async t=>{
  let items=[item,other,{...item,instrumentId:3,ticker:'THIRD'}];let loads=0;
- t.mock.method(globalThis,'fetch',async()=>{loads++;return json(items);});
+ t.mock.method(globalThis,'fetch',async(url)=>{if(url.includes('/market-data/budget'))return json({globalRemaining:25,userRemaining:10,nextSlotAt:new Date().toISOString()});loads++;return json(items);});
  const view=render(tabView());await screen.findByLabelText('AAPL amount');
  fireEvent.change(screen.getByLabelText('Transaction date'),{target:{value:'2025-04-03'}});
  fireEvent.change(screen.getByLabelText('AAPL price'),{target:{value:'20'}});
  fireEvent.change(screen.getByLabelText('AAPL quantity'),{target:{value:'3,5'}});
  fireEvent.change(screen.getByLabelText('MSFT price'),{target:{value:'invalid'}});
  fireEvent.change(screen.getByLabelText('THIRD amount'),{target:{value:''}});
- view.rerender(tabView('dashboard'));assert.equal(screen.queryByLabelText('AAPL amount'),null);
+ view.rerender(tabView('dashboard'));assert.ok(screen.queryByLabelText('AAPL amount')===null);
  view.rerender(tabView());await waitFor(()=>assert.equal(loads,2));
  assert.equal(screen.getByLabelText('Transaction date').value,'2025-04-03');
  assert.equal(screen.getByLabelText('AAPL amount').value,'70,00');
@@ -96,7 +96,7 @@ test('tab navigation preserves edited fields, cleared inputs, validation and dat
  items=[{...item,name:'Apple updated'},other,{...item,instrumentId:4,ticker:'NEW'}];
  view.rerender(tabView());await screen.findByText('Apple updated');
  assert.equal(screen.getByLabelText('AAPL amount').value,'70,00');
- assert.equal(screen.queryByLabelText('THIRD amount'),null);
+ assert.ok(screen.queryByLabelText('THIRD amount')===null);
  assert.equal(screen.getByLabelText('NEW amount').value,'20,00');
 });
 
@@ -234,4 +234,21 @@ test('tab links switch immediately before the route resolves and follow browser 
  view.rerender(tree('/portfolios/1/dashboard'));
  assert.equal(screen.getByRole('link', { name: 'Dashboard', exact: true }).getAttribute('aria-current'), 'page');
  assert.equal(view.container.querySelector('[aria-label="Dashboard view"]').hidden, false);
+});
+
+test('dashboard sends selected page size, resets to page one and aligns configurable columns',async t=>{
+ const requests=[];
+ t.mock.method(globalThis,'fetch',async url=>{requests.push(url);return workspaceFetch(url);});
+ render(React.createElement(Dashboard,{id:'1'}));await screen.findByRole('button',{name:'Delete transaction 1'});
+ fireEvent.click(screen.getByRole('button',{name:'Next'}));await screen.findByText('Page 2 of 2');
+ await waitFor(()=>assert.equal(screen.getByLabelText('Rows per page').disabled,false));
+ fireEvent.change(screen.getByLabelText('Rows per page'),{target:{value:'100'}});
+ await screen.findByText('Page 1 of 1');assert.ok(requests.some(url=>url.includes('pageSize=100&page=1')));
+ assert.equal(screen.getByRole('button',{name:'Next'}).disabled,true);
+ fireEvent.click(screen.getByText('Columns',{exact:true}));
+ fireEvent.click(screen.getByRole('checkbox',{name:'Name',exact:true}));assert.ok(screen.queryByRole('columnheader',{name:'Name',exact:true})===null);
+ assert.equal(document.querySelector('.transaction-group td').colSpan,6);
+ fireEvent.click(screen.getByRole('button',{name:'Move Ticker left'}));
+ assert.equal(screen.getAllByRole('columnheader')[0].textContent,'Ticker');
+ assert.equal(document.querySelector('tbody tr:not(.transaction-group) td').textContent,'AAPL');
 });

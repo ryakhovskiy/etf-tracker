@@ -26,8 +26,9 @@ type User struct {
 }
 
 type Store struct {
-	db     *sql.DB
-	limits Limits
+	stopCleanup context.CancelFunc
+	db          *sql.DB
+	limits      Limits
 }
 
 func Open(path string) (*Store, error) {
@@ -63,6 +64,24 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := store.CleanupAV(context.Background(), time.Now()); err != nil {
+		db.Close()
+		return nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	store.stopCleanup = cancel
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				_ = store.CleanupAV(ctx, now)
+			}
+		}
+	}()
 	return store, nil
 }
 
@@ -95,7 +114,12 @@ func secureDatabaseFiles(path string) error {
 	return nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.stopCleanup != nil {
+		s.stopCleanup()
+	}
+	return s.db.Close()
+}
 
 func (s *Store) configure(ctx context.Context) error {
 	for _, statement := range []string{

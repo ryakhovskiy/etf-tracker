@@ -32,6 +32,7 @@ func auditHandler(t *testing.T, path string) (*Handler, http.Handler) {
 	t.Cleanup(func() { store.Close() })
 	cfg := config.Config{FrontendURL: "https://app.example.com", GoogleClientID: "client", GoogleClientSecret: "secret", GoogleRedirectURL: "https://api.example.com/auth/google/callback", JWTSecret: []byte("audit-secret-with-at-least-32-bytes"), SecureSessionCookie: true}
 	h := NewHandler(cfg, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	t.Cleanup(h.Close)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	return h, httpapi.SecurityHeaders(httpapi.CORS(mux, cfg.FrontendURL), true)

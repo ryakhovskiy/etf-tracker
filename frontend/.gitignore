@@ -12,6 +12,7 @@ coverage/
 .env
 .env.*
 !.env.example
+next-env.d.ts
 
 # TypeScript and tooling caches
 *.tsbuildinfo
@@ -29,4 +30,3 @@ pnpm-debug.log*
 .vscode/
 .DS_Store
 Thumbs.db
-next-env.d.ts

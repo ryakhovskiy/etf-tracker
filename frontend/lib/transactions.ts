@@ -3,7 +3,10 @@ Decimal.set({ precision: 40, rounding: Decimal.ROUND_HALF_UP });
 export type PlanItem = { instrumentId: number; ticker: string; name: string; defaultAmount: string; defaultPrice: string; priceSource: string; avSymbol?: string; avCurrency?: string; avRegion?: string; avLinkedByYou?: boolean; avLinkedAt?: string; quoteId?: number };
 export type Line = { instrumentId: number; amount: string; price: string; quantity: string; quoteId?: number };
 export type PlanRow = PlanItem & Line & { errors: Partial<Record<"amount" | "price" | "quantity", string>> };
-export type Performance = { dates: string[]; series: { instrumentId: number; name: string; values: string[] }[]; totals: string[]; invested: string };
+export type Valuation = { value: string; performance: string; performancePct: string | null };
+export type CurrentItem = { instrumentId: number; units: string; priceEur: string; value: string; source: "QUOTE" | "PURCHASE"; reason?: "NO_SYMBOL" | "NO_QUOTE" | "PURCHASE_NEWER"; quoteDate?: string; fxRate: string | null; fxRateDate: string | null };
+export type CurrentValuation = Valuation & { asOfFrom: string; asOfTo: string; lastFetchedAt: string; partial: boolean; chartPoint: boolean; items: CurrentItem[] };
+export type Performance = { atPurchase: Valuation; current: CurrentValuation | null; dates: string[]; series: { instrumentId: number; name: string; values: string[] }[]; totals: string[]; invested: string };
 export type TransactionRow = Line & { id: number; transactionId: number; date: string; ticker: string; name: string; source: string };
 export const today = () => new Intl.DateTimeFormat("sv-SE",{timeZone:"Europe/Berlin",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
 export function decimal(raw: string, places: number, zero = false): Decimal {
@@ -50,7 +53,18 @@ export function total(rows: PlanRow[]) { return rows.reduce((sum,row) => {try{re
 export function hasPrice(raw: string) { try { return decimal(raw,4,true).gt(0); } catch { return false; } }
 export function chartData(performance: Performance) {
  // Recharts needs numeric SVG coordinates; all arithmetic and displayed values retain decimal strings.
- return performance.dates.map((date,i) => Object.fromEntries([["date",Date.parse(`${date}T00:00:00Z`)], ...performance.series.map(s=>[`i${s.instrumentId}`,new Decimal(s.values[i]).toNumber()]),["total",performance.totals[i]]]));
+ const current = performance.current;
+ const extra = !!current?.chartPoint;
+ const points: Record<string, string | number | boolean | null>[] = performance.dates.map((date,i) => Object.fromEntries([
+  ["date",Date.parse(`${date}T00:00:00Z`)], ["isCurrent", false],
+  ...performance.series.flatMap(s => [[`i${s.instrumentId}`,new Decimal(s.values[i] ?? "0").toNumber()], [`c${s.instrumentId}`,extra && i === performance.dates.length-1 ? new Decimal(s.values[i] ?? "0").toNumber() : null]]),
+  ["total",performance.totals[i]]
+ ]));
+ if (extra && current) points.push(Object.fromEntries([
+  ["date", Date.parse(`${current.asOfTo}T00:00:00Z`)], ["isCurrent", true], ["total", current.value],
+  ...performance.series.flatMap(s => [[`i${s.instrumentId}`, null], [`c${s.instrumentId}`, new Decimal(current.items.find(item => item.instrumentId === s.instrumentId)?.value ?? "0").toNumber()]])
+ ]));
+ return points;
 }
 export function fetchDateAllowed(date:string,now=new Date()) {
  const berlin=new Intl.DateTimeFormat("sv-SE",{timeZone:"Europe/Berlin",year:"numeric",month:"2-digit",day:"2-digit"}).format(now);

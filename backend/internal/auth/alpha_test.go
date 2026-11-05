@@ -307,3 +307,92 @@ func TestAlphaReusedQuoteUsesFXOfTransactionDate(t *testing.T) {
 		t.Fatal("committed line lost the transaction date's FX", lines, err)
 	}
 }
+
+func TestHoldingsPriorityUsesLimitedBudgetAndReusesSharedQuotes(t *testing.T) {
+	for _, scope := range []string{"user", "global"} {
+		t.Run(scope, func(t *testing.T) {
+			h, handler := auditHandler(t, ":memory:")
+			cookies := auditLogin(t, h, handler)
+			ctx := context.Background()
+			user := "google-user-1"
+			h.av.Limits.Minute = 1000000
+			if scope == "user" {
+				h.av.Limits.User = 1
+			} else {
+				h.av.Limits.Day = 1
+			}
+			p, err := h.store.SavePortfolio(ctx, user, 0, "Priority")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = h.store.AddItems(ctx, user, p.ID, []int64{1, 2, 3, 4, 5}); err != nil {
+				t.Fatal(err)
+			}
+			for _, id := range []int64{1, 2, 3, 5} {
+				if err = h.store.LinkSymbol(ctx, user, id, fmt.Sprintf("S%d", id), "EUR", ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err = h.store.CreateTransaction(ctx, user, p.ID, database.TransactionInput{Date: "2025-01-01", Lines: []database.TransactionLine{
+				{InstrumentID: 1, Amount: "10", Price: "10", Quantity: "1"},
+				{InstrumentID: 2, Amount: "1000", Price: "10", Quantity: "100"},
+				{InstrumentID: 3, Amount: "500", Price: "10", Quantity: "50"},
+				{InstrumentID: 4, Amount: "50", Price: "10", Quantity: "5"},
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			if err = h.store.SaveQuote(ctx, &marketdata.Quote{InstrumentID: 3, Price: "10.0000", OrigPrice: "10.0000", Currency: "EUR", QuoteDate: "2026-11-03", FetchedAt: time.Now()}, "S3"); err != nil {
+				t.Fatal(err)
+			}
+			var calls atomic.Int32
+			h.av.Transport = avTestTransport(func(ctx context.Context, fn, symbol string) ([]byte, error) {
+				calls.Add(1)
+				if symbol != "S2" {
+					t.Errorf("budget spent on %s, expected highest holding S2", symbol)
+				}
+				return marketdata.MockAV{}.Call(ctx, fn, symbol)
+			})
+			path := fmt.Sprintf("/api/portfolios/%d", p.ID)
+			date := marketdata.BerlinDay(time.Now())
+			body := fmt.Sprintf(`{"date":%q,"instrumentIds":[1,3,4,2,5],"priority":"HOLDINGS_VALUE"}`, date)
+			job := waitPriceJob(t, handler, startPriceJob(t, handler, path, body, cookies), cookies)
+			if len(job.Items) != 4 {
+				t.Fatal("unheld item was included", job.Items)
+			}
+			for i, want := range []struct {
+				id     int64
+				status string
+			}{{2, "OK"}, {3, "FRESH"}, {4, "NO_SYMBOL"}, {1, "RATE_LIMITED"}} {
+				if job.Items[i].InstrumentID != want.id || job.Items[i].Status != want.status {
+					t.Fatalf("%d: %+v", i, job.Items[i])
+				}
+			}
+			perf, err := h.store.Performance(ctx, user, p.ID)
+			if err != nil || perf.Current == nil || !perf.Current.Partial {
+				t.Fatal(perf.Current, err)
+			}
+			for _, item := range perf.Current.Items {
+				if item.InstrumentID == 1 && (item.Source != "PURCHASE" || item.Reason != "NO_QUOTE") {
+					t.Fatal(item)
+				}
+			}
+			budget, err := h.store.AVBudget(ctx, user, time.Now(), h.av.Limits)
+			if err != nil || budget.NextSlotAt.Before(time.Now().Add(23*time.Hour)) {
+				t.Fatal("missing daily retry time", budget, err)
+			}
+			w := featureRequest(handler, "GET", path+"/price-fetch/estimate?date="+date+"&instrumentIds=2,3", "", cookies...)
+			if w.Code != 200 || !strings.Contains(w.Body.String(), `"requestsNeeded":0`) {
+				t.Fatal(w.Code, w.Body.String())
+			}
+			free := fmt.Sprintf(`{"date":%q,"instrumentIds":[2,3],"priority":"HOLDINGS_VALUE"}`, date)
+			again := waitPriceJob(t, handler, startPriceJob(t, handler, path, free, cookies), cookies)
+			if calls.Load() != 1 || again.Items[0].Status != "FRESH" || again.Items[1].Status != "FRESH" {
+				t.Fatal("fresh quotes used budget", calls.Load(), again.Items)
+			}
+			w = featureRequest(handler, "POST", path+"/price-fetch-jobs", fmt.Sprintf(`{"date":%q,"instrumentIds":[1],"priority":"UNKNOWN"}`, date), cookies...)
+			if w.Code != 400 {
+				t.Fatal(w.Code, w.Body.String())
+			}
+		})
+	}
+}

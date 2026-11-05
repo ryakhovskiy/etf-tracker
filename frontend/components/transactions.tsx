@@ -17,7 +17,7 @@ export function Transactions({id}:{id:string}){
   if(!active())return;
   setDraft(current=>({date:preserve?current.date:today(),rows:items.map(item=>{
    const previous=preserve?current.rows?.find(row=>row.instrumentId===item.instrumentId):undefined;
-   if(previous&&recoverPrices&&item.quoteId)return {...editRow({...previous,...item},"price",item.defaultPrice),quoteId:item.quoteId};
+   if(previous&&(recoverPrices||(previous.price.replace(",", ".")===previous.defaultPrice&&previous.quoteId!==item.quoteId))&&item.quoteId)return {...editRow({...previous,...item},"price",item.defaultPrice),quoteId:item.quoteId};
    return previous?{...planRow(item),amount:previous.amount,price:previous.price,quantity:previous.quantity,errors:previous.errors,quoteId:previous.quoteId}:planRow(item);
   })}));
  });

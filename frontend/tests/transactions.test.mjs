@@ -252,3 +252,51 @@ test('dashboard sends selected page size, resets to page one and aligns configur
  assert.equal(screen.getAllByRole('columnheader')[0].textContent,'Ticker');
  assert.equal(document.querySelector('tbody tr:not(.transaction-group) td').textContent,'AAPL');
 });
+
+for(const editedPrice of [false,true])test(`dashboard fetch updates transaction defaults while preserving ${editedPrice?'edited prices':'edited amounts'}`,async t=>{
+ let fetched=false;
+ const budget={globalRemaining:25,userRemaining:10,userLimit:10,nextSlotAt:new Date().toISOString()};
+ const current={value:'50.00',performance:'30.00',performancePct:'150.00',asOfFrom:'2026-11-04',asOfTo:'2026-11-04',lastFetchedAt:'2026-11-04T13:32:00Z',partial:false,chartPoint:true,items:[{instrumentId:1,units:'2',priceEur:'25.0000',value:'50.00',source:'QUOTE',quoteDate:'2026-11-04',fxRate:null,fxRateDate:null}]};
+ t.mock.method(globalThis,'fetch',async(url,init)=>{
+  if(url.includes('/saving-plan'))return json([{...item,avSymbol:'AAPL',...(fetched?{defaultPrice:'25.0000',quoteId:7,priceSource:'Fetched 04.11.2026'}:{})}]);
+  if(url.includes('/performance'))return json({...performance,current:fetched?current:null});
+  if(url.includes('/market-data/budget'))return json(budget);
+  if(url.includes('/estimate'))return json({requestsNeeded:fetched?0:1,fresh:fetched?[1]:[],noSymbol:[],budget});
+  if(url.endsWith('/price-fetch-jobs'))return json({jobId:'dashboard-job'},202);
+  if(url.includes('/price-fetch-jobs/dashboard-job')){fetched=true;return json({status:'DONE',nextRequestAt:new Date().toISOString(),items:[{instrumentId:1,status:'OK',priceEur:'25.0000',quoteId:7}]});}
+  return workspaceFetch(url);
+ });
+ const view=render(panelView('dashboard'));
+ const dashboard=view.container.querySelector('[aria-label="Dashboard view"]');
+ const transactions=view.container.querySelector('[aria-label="Transactions view"]');
+ await within(transactions).findByLabelText('AAPL price');
+ fireEvent.change(within(transactions).getByLabelText('AAPL amount'),{target:{value:'75'}});
+ if(editedPrice)fireEvent.change(within(transactions).getByLabelText('AAPL price'),{target:{value:'15'}});
+ fireEvent.click(await within(dashboard).findByRole('button',{name:'Fetch current value (uses 1 requests)'}));
+ await within(dashboard).findByText('Current performance',{exact:true});
+ await within(transactions).findByText('Fetched 04.11.2026');
+ assert.equal(within(transactions).getByLabelText('AAPL price').value,editedPrice?'15':'25,0000');
+ assert.equal(within(transactions).getByLabelText('AAPL amount').value,'75');
+ assert.equal(within(transactions).getByLabelText('AAPL quantity').value,editedPrice?'5,000000':'3,000000');
+});
+
+test('fetching quotes in Transactions refreshes current value in the mounted dashboard',async t=>{
+ let fetched=false;
+ const budget={globalRemaining:25,userRemaining:10,userLimit:10,nextSlotAt:new Date().toISOString()};
+ t.mock.method(globalThis,'fetch',async(url,init)=>{
+  if(url.includes('/saving-plan'))return json([{...item,avSymbol:'AAPL',...(fetched?{defaultPrice:'25.0000',quoteId:7,priceSource:'Fetched 04.11.2026'}:{})}]);
+  if(url.includes('/performance'))return json({...performance,current:fetched?{value:'50.00',performance:'30.00',performancePct:'150.00',asOfFrom:'2026-11-04',asOfTo:'2026-11-04',lastFetchedAt:'2026-11-04T13:32:00Z',partial:false,chartPoint:true,items:[{instrumentId:1,units:'2',priceEur:'25.0000',value:'50.00',source:'QUOTE',quoteDate:'2026-11-04',fxRate:null,fxRateDate:null}]}:null});
+  if(url.includes('/market-data/budget'))return json(budget);
+  if(url.includes('/estimate'))return json({requestsNeeded:fetched?0:1,fresh:fetched?[1]:[],noSymbol:[],budget});
+  if(url.endsWith('/price-fetch-jobs'))return json({jobId:'transaction-job'},202);
+  if(url.includes('/price-fetch-jobs/transaction-job')){fetched=true;return json({status:'DONE',nextRequestAt:new Date().toISOString(),items:[{instrumentId:1,status:'OK',priceEur:'25.0000',quoteId:7}]});}
+  return workspaceFetch(url);
+ });
+ const view=render(panelView('transactions'));
+ const transactions=view.container.querySelector('[aria-label="Transactions view"]');
+ const dashboard=view.container.querySelector('[aria-label="Dashboard view"]');
+ fireEvent.click(await within(transactions).findByRole('button',{name:'Fetch prices (uses 1 requests)'}));
+ await within(transactions).findByText('1/1 · Done');
+ await within(dashboard).findByText('Current performance',{exact:true});
+ assert.equal(within(transactions).getByLabelText('AAPL price').value,'25,0000');
+});

@@ -36,11 +36,13 @@ func (s *Store) AVBudget(ctx context.Context, user string, now time.Time, l mark
 			b.BlockedUntil = &t
 		}
 	}
+
 	var last string
 	err = s.db.QueryRowContext(ctx, "SELECT requested_at FROM av_requests ORDER BY requested_at DESC LIMIT 1").Scan(&last)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return b, err
 	}
+
 	if last != "" {
 		t, e := time.Parse(time.RFC3339Nano, last)
 		if e != nil {
@@ -60,6 +62,38 @@ func (s *Store) AVBudget(ctx context.Context, user string, now time.Time, l mark
 			return b, e
 		}
 		b.NextSlotAt = maxTime(b.NextSlotAt, t.Add(time.Minute))
+	}
+	// Daily limits can outlast the minute slot. Report when enough requests expire
+	// for another call, including when a configured limit was lowered.
+	for _, quota := range []struct {
+		remaining, limit int
+		personal         bool
+	}{
+		{b.GlobalRemaining, l.Day, false}, {b.UserRemaining, l.User, true},
+	} {
+		if quota.remaining > 0 {
+			continue
+		}
+		query := "SELECT requested_at FROM av_requests WHERE requested_at>?"
+		args := []any{now.UTC().Add(-24 * time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00")}
+		if quota.personal {
+			query += " AND user_id=?"
+			args = append(args, user)
+		}
+		query += " ORDER BY requested_at DESC LIMIT 1 OFFSET ?"
+		args = append(args, quota.limit-1)
+		var stamp string
+		if err := s.db.QueryRowContext(ctx, query, args...).Scan(&stamp); err != nil {
+			return b, err
+		}
+		t, err := time.Parse(time.RFC3339Nano, stamp)
+		if err != nil {
+			return b, err
+		}
+		b.NextSlotAt = maxTime(b.NextSlotAt, t.Add(24*time.Hour))
+	}
+	if b.BlockedUntil != nil {
+		b.NextSlotAt = maxTime(b.NextSlotAt, *b.BlockedUntil)
 	}
 	return b, nil
 }

@@ -70,8 +70,9 @@ func parseDecimal(raw string, scale int) (int64, error) {
 func halfUp(r *big.Rat) *big.Int {
 	q, rem := new(big.Int), new(big.Int)
 	q.QuoRem(r.Num(), r.Denom(), rem)
+	rem.Abs(rem)
 	if new(big.Int).Mul(rem, big.NewInt(2)).Cmp(r.Denom()) >= 0 {
-		q.Add(q, big.NewInt(1))
+		q.Add(q, big.NewInt(int64(r.Sign())))
 	}
 	return q
 }
@@ -80,11 +81,16 @@ func decimalString(n int64, scale int) string {
 	return s[:len(s)-scale] + "." + s[len(s)-scale:]
 }
 func money(r *big.Rat) string {
-	s := halfUp(new(big.Rat).Mul(r, big.NewRat(100, 1))).String()
+	n := halfUp(new(big.Rat).Mul(r, big.NewRat(100, 1)))
+	sign := ""
+	if n.Sign() < 0 {
+		sign = "-"
+	}
+	s := new(big.Int).Abs(n).String()
 	if len(s) < 3 {
 		s = strings.Repeat("0", 3-len(s)) + s
 	}
-	return s[:len(s)-2] + "." + s[len(s)-2:]
+	return sign + s[:len(s)-2] + "." + s[len(s)-2:]
 }
 
 type savedLine struct {
@@ -301,68 +307,4 @@ func (s *Store) DeleteTransaction(ctx context.Context, user string, id, txID int
 		}
 		return err
 	})
-}
-
-type PerformanceSeries struct {
-	InstrumentID int64    `json:"instrumentId"`
-	Name         string   `json:"name"`
-	Values       []string `json:"values"`
-}
-type Performance struct {
-	Dates    []string            `json:"dates"`
-	Series   []PerformanceSeries `json:"series"`
-	Totals   []string            `json:"totals"`
-	Invested string              `json:"invested"`
-}
-
-func (s *Store) Performance(ctx context.Context, user string, id int64) (Performance, error) {
-	lines, err := s.transactionRows(ctx, user, id)
-	result := Performance{Dates: []string{}, Series: []PerformanceSeries{}, Totals: []string{}, Invested: "0.00"}
-	if err != nil {
-		return result, err
-	}
-	indices := map[int64]int{}
-	held := map[int64]*big.Int{}
-	prices := map[int64]*big.Rat{}
-	invested := new(big.Int)
-	for _, l := range lines {
-		if _, ok := indices[l.InstrumentID]; !ok {
-			indices[l.InstrumentID] = len(result.Series)
-			result.Series = append(result.Series, PerformanceSeries{l.InstrumentID, l.Name, []string{}})
-			held[l.InstrumentID] = new(big.Int)
-			prices[l.InstrumentID] = new(big.Rat)
-		}
-	}
-	for start := 0; start < len(lines); {
-		end := start
-		weighted := map[int64]*big.Int{}
-		quantities := map[int64]*big.Int{}
-		for end < len(lines) && lines[end].Date == lines[start].Date {
-			l := lines[end]
-			if weighted[l.InstrumentID] == nil {
-				weighted[l.InstrumentID] = new(big.Int)
-				quantities[l.InstrumentID] = new(big.Int)
-			}
-			weighted[l.InstrumentID].Add(weighted[l.InstrumentID], new(big.Int).Mul(big.NewInt(l.q), big.NewInt(l.p)))
-			quantities[l.InstrumentID].Add(quantities[l.InstrumentID], big.NewInt(l.q))
-			held[l.InstrumentID].Add(held[l.InstrumentID], big.NewInt(l.q))
-			invested.Add(invested, big.NewInt(l.a))
-			end++
-		}
-		for item, w := range weighted {
-			prices[item] = new(big.Rat).SetFrac(w, new(big.Int).Mul(quantities[item], big.NewInt(10000)))
-		}
-		result.Dates = append(result.Dates, lines[start].Date)
-		total := new(big.Rat)
-		for i := range result.Series {
-			item := result.Series[i].InstrumentID
-			value := new(big.Rat).Mul(new(big.Rat).SetFrac(held[item], big.NewInt(1000000)), prices[item])
-			result.Series[i].Values = append(result.Series[i].Values, money(value))
-			total.Add(total, value)
-		}
-		result.Totals = append(result.Totals, money(total))
-		start = end
-	}
-	result.Invested = money(new(big.Rat).SetFrac(invested, big.NewInt(100)))
-	return result, nil
 }

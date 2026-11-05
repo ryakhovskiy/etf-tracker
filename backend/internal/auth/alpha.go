@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,8 +32,9 @@ type priceJobs struct {
 	entries map[string]*priceJob
 }
 type fetchInput struct {
-	Date string  `json:"date"`
-	IDs  []int64 `json:"instrumentIds"`
+	Date     string  `json:"date"`
+	IDs      []int64 `json:"instrumentIds"`
+	Priority string  `json:"priority,omitempty"`
 }
 
 func marketError(w http.ResponseWriter, err error) {
@@ -57,7 +59,7 @@ func (h *Handler) fetchRows(ctx context.Context, user string, id int64, in fetch
 	if !marketdata.AllowedDate(in.Date, time.Now()) {
 		return nil, &database.ValidationError{Code: "VALIDATION_ERROR", Message: "Fetched prices are current prices; enter historical prices manually.", Fields: map[string]string{"date": "Choose today or the previous weekday."}}
 	}
-	if len(in.IDs) > 100 {
+	if (in.Priority != "" && in.Priority != "HOLDINGS_VALUE") || len(in.IDs) > 100 {
 		return nil, database.ErrInvalid
 	}
 	byID := map[int64]database.SavingPlanItem{}
@@ -75,6 +77,20 @@ func (h *Handler) fetchRows(ctx context.Context, user string, id int64, in fetch
 			selected = append(selected, row)
 			seen[id] = true
 		}
+	}
+	if in.Priority == "HOLDINGS_VALUE" {
+		values, err := h.store.HoldingsValues(ctx, user, id)
+		if err != nil {
+			return nil, err
+		}
+		held := selected[:0]
+		for _, row := range selected {
+			if _, ok := values[row.InstrumentID]; ok {
+				held = append(held, row)
+			}
+		}
+		selected = held
+		sort.SliceStable(selected, func(i, j int) bool { return values[selected[i].InstrumentID].Cmp(values[selected[j].InstrumentID]) > 0 })
 	}
 	return selected, nil
 }

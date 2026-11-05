@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
 import { api, APIError, OnlineInstrument } from "../lib/api";
 import { editRow, fetchedSource, fetchDateAllowed, PlanRow } from "../lib/transactions";
 import { Modal } from "./portfolios";
+import { usePortfolioUpdates } from "./portfolio-updates";
 
 type Budget = { globalRemaining: number; userRemaining: number; userLimit: number; nextSlotAt: string; blockedUntil?: string };
 type Estimate = { requestsNeeded: number; fresh: number[]; noSymbol: number[]; budget: Budget };
@@ -13,6 +14,7 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
  id: string; date: string; rows: PlanRow[]; selected: number[];
  setRows: Dispatch<SetStateAction<PlanRow[] | null>>; reload: Reload; busy: boolean; onFetching: (fetching: boolean) => void;
 }) {
+ const { changed } = usePortfolioUpdates();
  const [budget, setBudget] = useState<Budget | null>(null);
  const [estimate, setEstimate] = useState<Estimate | null>(null);
  const [jobId, setJobId] = useState<string | null>(null);
@@ -21,8 +23,8 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
  const [starting, setStarting] = useState(false);
  const [now, setNow] = useState(Date.now());
  // Draft setters belong to the parent; polling always uses their current versions.
- const callbacks = useRef({ setRows, reload, onFetching });
- callbacks.current = { setRows, reload, onFetching };
+ const callbacks = useRef({ setRows, reload, onFetching, changed });
+ callbacks.current = { setRows, reload, onFetching, changed };
  const ids = selected.filter(id => rows.some(r => r.instrumentId === id && r.avSymbol)).sort((a, b) => a - b).join(",");
  const symbols = rows.map(r => `${r.instrumentId}:${r.avSymbol ?? ""}`).join(",");
  const allowed = fetchDateAllowed(date);
@@ -67,6 +69,7 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
     if (next.status === "DONE") {
      sessionStorage.removeItem(storageKey); setJobId(null);
      await refreshBudget();
+     callbacks.current.changed();
     } else if (active) timer = setTimeout(poll, 2000);
    } catch (e) {
     if (!active) return;
@@ -74,7 +77,7 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
     setError(err.status === 404 ? "Fetch interrupted. Prices fetched so far were saved." : err.message);
     if (err.status === 404) {
      sessionStorage.removeItem(storageKey); setJobId(null);
-     try { await callbacks.current.reload(true); await refreshBudget(); } catch (recoveryError) { if (active) setError(`Fetch interrupted. ${(recoveryError as Error).message}`); }
+     try { await callbacks.current.reload(true); await refreshBudget(); callbacks.current.changed(); } catch (recoveryError) { if (active) setError(`Fetch interrupted. ${(recoveryError as Error).message}`); }
     } else timer = setTimeout(poll, 2000);
    }
   };
@@ -103,6 +106,7 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
  </div>;
 }
 export function SymbolLink({ row, reload }: { row: PlanRow; reload: Reload }) {
+ const { changed } = usePortfolioUpdates();
  const [open, setOpen] = useState(false);
  const [confirm, setConfirm] = useState(false);
  const [results, setResults] = useState<OnlineInstrument[] | null>(null);
@@ -116,13 +120,13 @@ export function SymbolLink({ row, reload }: { row: PlanRow; reload: Reload }) {
  };
  const link = async (r: OnlineInstrument) => {
   setBusy(true); setError("");
-  try { await api(`/api/instruments/${row.instrumentId}/av-symbol`, { method: "PUT", body: JSON.stringify({ avSymbol: r.avSymbol, currency: r.currency, region: r.region }) }); await reload(); setOpen(false); }
+  try { await api(`/api/instruments/${row.instrumentId}/av-symbol`, { method: "PUT", body: JSON.stringify({ avSymbol: r.avSymbol, currency: r.currency, region: r.region }) }); await reload(); changed(); setOpen(false); }
   catch (e) { setError((e as Error).message); }
   finally { setBusy(false); }
  };
  const unlink = async () => {
   setBusy(true); setError("");
-  try { await api(`/api/instruments/${row.instrumentId}/av-symbol`, { method: "DELETE" }); await reload(); setConfirm(false); }
+  try { await api(`/api/instruments/${row.instrumentId}/av-symbol`, { method: "DELETE" }); await reload(); changed(); setConfirm(false); }
   catch (e) { setError((e as Error).message); }
   finally { setBusy(false); }
  };

@@ -2,11 +2,15 @@ package marketdata_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -353,5 +357,133 @@ func TestAVHTTPKeyIsNeverReturned(t *testing.T) {
 	_, err := client.Call(context.Background(), "GLOBAL_QUOTE", "SAP")
 	if !errors.Is(err, md.ErrUpstream) || strings.Contains(err.Error(), secret) {
 		t.Fatal("key leaked", err)
+	}
+}
+
+func TestAVSearchTermAndMockSearch(t *testing.T) {
+	for _, tc := range []struct{ ticker, name, want string }{
+		{"IE00B3VVMM84", "Vanguard FTSE Emerging Markets UCITS ETF Distributing", "Vanguard FTSE Emerging Markets"},
+		{"IE00B4X9L533", "HSBC MSCI World UCITS ETF USD", "HSBC MSCI World"},
+		{"A0RPWH", "iShares Core MSCI World UCITS ETF (Acc)", "iShares Core MSCI World"},
+		{"ISPA.DE", "iShares STOXX Global Select Dividend 100 UCITS ETF (DE)", "ISPA"},
+		{"xd5e.de", "Xtrackers MSCI EMU UCITS ETF", "XD5E"},
+		{"SAP.DEX", "SAP SE", "SAP.DEX"},
+		{"EUNL", "iShares Core MSCI World UCITS ETF (Acc)", "EUNL"},
+	} {
+		if got := md.AVSearchTerm(tc.ticker, tc.name); got != tc.want {
+			t.Errorf("AVSearchTerm(%q) = %q, want %q", tc.ticker, got, tc.want)
+		}
+	}
+	search := func(q string) []string {
+		t.Helper()
+		b, err := md.MockAV{}.Call(context.Background(), "SYMBOL_SEARCH", q)
+		var out struct {
+			Matches []map[string]string `json:"bestMatches"`
+		}
+		if err != nil || json.Unmarshal(b, &out) != nil {
+			t.Fatal(err, string(b))
+		}
+		symbols := []string{}
+		for _, m := range out.Matches {
+			symbols = append(symbols, m["1. symbol"])
+		}
+		return symbols
+	}
+	for q, want := range map[string]string{"Vanguard FTSE Emerging Markets": "", "SAP": "SAP.DEX,SAP", "apple": "AAPL", "xd5e": "XD5E.DEX", "xtrackers euro": "XD5E.DEX", "tesco": "TSCO.LON,TSCDF,TSCDY,TCO2.FRK,TCO0.FRK"} {
+		if got := strings.Join(search(q), ","); got != want {
+			t.Errorf("mock search %q = %q, want %q", q, got, want)
+		}
+	}
+}
+
+// TestAVHTTPRealDemoResponses replays the verbatim responses of Alpha Vantage's
+// public demo requests through the live client and gateway:
+//
+//	https://www.alphavantage.co/query?function=SYMBOL_SEARCH&keywords=tesco&apikey=demo
+//	https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=IBM&apikey=demo
+func TestAVHTTPRealDemoResponses(t *testing.T) {
+	fixture := func(name string) string {
+		b, err := os.ReadFile("testdata/marketdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	var requests []*url.URL
+	client := &md.AVHTTP{BaseURL: "https://www.alphavantage.co/query", Key: "demo", HTTP: &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		requests = append(requests, r.URL)
+		switch r.URL.Query().Get("function") {
+		case "SYMBOL_SEARCH":
+			return response(200, fixture("alpha-search-tesco.json")), nil
+		case "GLOBAL_QUOTE":
+			return response(200, fixture("alpha-quote-ibm.json")), nil
+		}
+		return response(404, ""), nil
+	})}}
+	sameRequest := func(got *url.URL, example string) {
+		t.Helper()
+		want, _ := url.Parse(example)
+		if got.Scheme != want.Scheme || got.Host != want.Host || got.Path != want.Path || !reflect.DeepEqual(got.Query(), want.Query()) {
+			t.Fatalf("request %s, want %s", got, example)
+		}
+	}
+	s := store(t)
+	ctx := context.Background()
+	g := fakeGateway(s, client, time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC))
+
+	res, err := g.Search(ctx, "alice", "tesco")
+	if err != nil || len(requests) != 1 {
+		t.Fatal(err, requests)
+	}
+	sameRequest(requests[0], "https://www.alphavantage.co/query?function=SYMBOL_SEARCH&keywords=tesco&apikey=demo")
+	got := []string{}
+	for _, r := range res.Results {
+		if r.Type != "STOCK" || r.Source != "ALPHAVANTAGE" || r.Ticker != r.AVSymbol {
+			t.Fatalf("%+v", r)
+		}
+		got = append(got, strings.Join([]string{r.AVSymbol, r.Name, r.Currency, r.Region, r.MatchScore}, "|"))
+	}
+	// EUR listings first, then by match score.
+	want := []string{
+		"TCO2.FRK|TESCO PLC ADR/1 LS-05|EUR|Frankfurt|0.5455",
+		"TCO0.FRK|TESCO PLC LS-0633333|EUR|Frankfurt|0.5455",
+		"TSCO.LON|Tesco PLC|GBX|United Kingdom|0.7273",
+		"TSCDF|Tesco plc|USD|United States|0.7143",
+		"TSCDY|Tesco plc|USD|United States|0.7143",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("results\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+
+	if err = s.LinkSymbol(ctx, "alice", 1, "IBM", "USD", "United States"); err != nil {
+		t.Fatal(err)
+	}
+	q, fresh, err := g.Quote(ctx, "alice", "IBM", "USD", 1, &md.FXRate{Date: "2026-11-04", Rate: 92310000})
+	if err != nil || fresh || len(requests) != 2 {
+		t.Fatal(q, fresh, err, requests)
+	}
+	sameRequest(requests[1], "https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=IBM&apikey=demo")
+	// 254.3200 USD x 0.9231 = 234.762792 -> 234.7628 EUR (half-up).
+	if q.OrigPrice != "254.3200" || q.Currency != "USD" || q.Price != "234.7628" || q.FXRate != "0.92310000" || q.FXRateDate != "2026-11-04" || q.QuoteDate != "2026-11-04" || q.ID == 0 {
+		t.Fatalf("%+v", q)
+	}
+}
+
+// The demo key answers other queries with HTTP 200 and an "Information" notice
+// that is not a rate limit: report it as a rejected request without pausing AV.
+func TestAVDemoKeyInformationIsRejectedNotRateLimited(t *testing.T) {
+	notice, err := os.ReadFile("testdata/marketdata/alpha-demo-information.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := store(t)
+	g := fakeGateway(s, avFunc(func(context.Context, string, string) ([]byte, error) { return notice, nil }), time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC))
+	_, err = g.Search(context.Background(), "alice", "vanguard")
+	if !errors.Is(err, md.ErrAVRejected) || !errors.Is(err, md.ErrUpstream) {
+		t.Fatal(err)
+	}
+	b, err := s.AVBudget(context.Background(), "alice", g.Now(), g.Limits)
+	if err != nil || b.BlockedUntil != nil || b.UserRemaining != g.Limits.User-1 {
+		t.Fatal("notice must spend its request but not pause AV", b, err)
 	}
 }

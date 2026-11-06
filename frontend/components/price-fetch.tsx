@@ -110,11 +110,12 @@ export function SymbolLink({ row, reload }: { row: PlanRow; reload: Reload }) {
  const [open, setOpen] = useState(false);
  const [confirm, setConfirm] = useState(false);
  const [results, setResults] = useState<OnlineInstrument[] | null>(null);
+ const [term, setTerm] = useState("");
  const [busy, setBusy] = useState(false);
  const [error, setError] = useState("");
  const search = async () => {
   setBusy(true); setError("");
-  try { const found = await api<{ results: OnlineInstrument[] }>(`/api/instruments/${row.instrumentId}/av-symbol/search`); setResults(found.results); }
+  try { const found = await api<{ results: OnlineInstrument[] }>(`/api/instruments/${row.instrumentId}/av-symbol/search?q=${encodeURIComponent(term.trim())}`); setResults(found.results); }
   catch (e) { setError((e as Error).message); }
   finally { setBusy(false); window.dispatchEvent(new window.Event("av-budget-changed")); }
  };
@@ -131,10 +132,14 @@ export function SymbolLink({ row, reload }: { row: PlanRow; reload: Reload }) {
   finally { setBusy(false); }
  };
  return <>
-  {row.avSymbol ? <><span>{row.avSymbol}</span><small>{row.avLinkedByYou ? "Linked by you" : `Linked by another user · ${row.avLinkedAt?.slice(0, 10).split("-").reverse().join(".") ?? ""}`}</small><button type="button" onClick={() => setConfirm(true)}>Unlink</button></> : <button type="button" onClick={() => { setResults(null); setError(""); setOpen(true); }}>Link symbol</button>}
+  {row.avSymbol ? <><span>{row.avSymbol}</span><small>{row.avLinkedByYou ? "Linked by you" : `Linked by another user · ${row.avLinkedAt?.slice(0, 10).split("-").reverse().join(".") ?? ""}`}</small><button type="button" onClick={() => setConfirm(true)}>Unlink</button></> : <button type="button" onClick={() => { setResults(null); setError(""); setTerm(row.avSearchTerm ?? row.ticker); setOpen(true); }}>Link symbol</button>}
   {open && <Modal title={`Link symbol for ${row.ticker}`} close={() => { if (!busy) setOpen(false); }}>
-   <p>Search Alpha Vantage for {row.ticker}. Uses 1 request; cached searches are free. EUR listings appear first.</p>
-   <button type="button" disabled={busy} onClick={search}>Search symbols (uses 1 request)</button>
+   <p>Search Alpha Vantage by ticker or name; ISINs and WKNs are not supported. Each new search uses 1 request; repeated searches are free. EUR listings appear first.</p>
+   <form onSubmit={e => { e.preventDefault(); if (term.trim() && !busy) void search(); }}>
+    <label htmlFor={`av-term-${row.instrumentId}`}>Search term</label>
+    <input id={`av-term-${row.instrumentId}`} value={term} maxLength={100} disabled={busy} onChange={e => setTerm(e.target.value)}/>
+    <button type="submit" disabled={busy || !term.trim()}>Search symbols (uses 1 request)</button>
+   </form>
    {results?.map(r => <button type="button" disabled={busy} key={r.avSymbol} onClick={() => void link(r)}>{r.ticker} · {r.name} · {r.currency} · {r.region}</button>)}
    {results?.length === 0 && <p>No symbols found.</p>}{error && <p role="alert">{error}</p>}
   </Modal>}

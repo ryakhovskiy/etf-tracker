@@ -182,6 +182,7 @@ type SavingPlanItem struct {
 	AVRegion      string `json:"avRegion,omitempty"`
 	AVLinkedByYou bool   `json:"avLinkedByYou"`
 	AVLinkedAt    string `json:"avLinkedAt,omitempty"`
+	AVSearchTerm  string `json:"avSearchTerm,omitempty"`
 	QuoteID       int64  `json:"quoteId,omitempty"`
 	InstrumentID  int64  `json:"instrumentId"`
 	Ticker        string `json:"ticker"`
@@ -207,6 +208,9 @@ func (s *Store) SavingPlan(ctx context.Context, user string, id int64) ([]Saving
 		var date string
 		if err := rows.Scan(&v.InstrumentID, &v.Ticker, &v.Name, &a, &p, &date, &v.AVSymbol, &v.AVCurrency, &v.AVRegion, &v.AVLinkedByYou, &v.AVLinkedAt); err != nil {
 			return nil, err
+		}
+		if v.AVSymbol == "" {
+			v.AVSearchTerm = marketdata.AVSearchTerm(v.Ticker, v.Name)
 		}
 		v.DefaultAmount = decimalString(a, 2)
 		v.PriceSource = "None"

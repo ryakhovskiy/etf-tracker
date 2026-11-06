@@ -1,6 +1,6 @@
 import Decimal from "decimal.js";
 Decimal.set({ precision: 40, rounding: Decimal.ROUND_HALF_UP });
-export type PlanItem = { instrumentId: number; ticker: string; name: string; defaultAmount: string; defaultPrice: string; priceSource: string; avSymbol?: string; avCurrency?: string; avRegion?: string; avLinkedByYou?: boolean; avLinkedAt?: string; quoteId?: number };
+export type PlanItem = { instrumentId: number; ticker: string; name: string; defaultAmount: string; defaultPrice: string; priceSource: string; avSymbol?: string; avCurrency?: string; avRegion?: string; avLinkedByYou?: boolean; avLinkedAt?: string; avSearchTerm?: string; quoteId?: number };
 export type Line = { instrumentId: number; amount: string; price: string; quantity: string; quoteId?: number };
 export type PlanRow = PlanItem & Line & { errors: Partial<Record<"amount" | "price" | "quantity", string>> };
 export type Valuation = { value: string; performance: string; performancePct: string | null };

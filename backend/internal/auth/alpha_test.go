@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -394,5 +395,71 @@ func TestHoldingsPriorityUsesLimitedBudgetAndReusesSharedQuotes(t *testing.T) {
 				t.Fatal(w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestAlphaSymbolSearchTerm(t *testing.T) {
+	h, handler := auditHandler(t, ":memory:")
+	cookies := auditLogin(t, h, handler)
+	ctx := context.Background()
+	user := "google-user-1"
+	h.av.Limits.Minute = 1000000 // spacing is covered by the gateway tests
+	var sent []string
+	h.av.Transport = avTestTransport(func(ctx context.Context, fn, q string) ([]byte, error) {
+		sent = append(sent, q)
+		return marketdata.MockAV{}.Call(ctx, fn, q)
+	})
+	// Seeded instrument 19 has its ISIN as ticker; 21 has a Yahoo-style ".DE" ticker.
+	p, err := h.store.SavePortfolio(ctx, user, 0, "ETFs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.store.AddItems(ctx, user, p.ID, []int64{19, 21}); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := h.store.SavingPlan(ctx, user, p.ID)
+	if err != nil || plan[0].AVSearchTerm != "Vanguard FTSE Emerging Markets" || plan[1].AVSearchTerm != "XD5E" {
+		t.Fatalf("%+v %v", plan, err)
+	}
+	search := func(path string, status int) marketdata.Results {
+		t.Helper()
+		w := featureRequest(handler, "GET", path, "", cookies...)
+		var out marketdata.Results
+		if w.Code != status || (status == 200 && json.Unmarshal(w.Body.Bytes(), &out) != nil) {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Body.String())
+		}
+		return out
+	}
+	if r := search("/api/instruments/19/av-symbol/search", 200); len(r.Results) != 0 {
+		t.Fatal("unrelated mock results", r.Results)
+	}
+	search("/api/instruments/19/av-symbol/search?q=IE00B3VVMM84", 400)
+	search("/api/instruments/19/av-symbol/search?q="+strings.Repeat("x", 101), 400)
+	if r := search("/api/instruments/21/av-symbol/search", 200); len(r.Results) != 1 || r.Results[0].AVSymbol != "XD5E.DEX" {
+		t.Fatal(r.Results)
+	}
+	if r := search("/api/instruments/19/av-symbol/search?q=%20sap%20", 200); len(r.Results) != 2 || r.Results[0].AVSymbol != "SAP.DEX" {
+		t.Fatal(r.Results)
+	}
+	if strings.Join(sent, "|") != "Vanguard FTSE Emerging Markets|XD5E|sap" {
+		t.Fatal("AV keywords", sent)
+	}
+	b, err := h.store.AVBudget(ctx, user, time.Now(), h.av.Limits)
+	if err != nil || b.UserRemaining != h.av.Limits.User-3 {
+		t.Fatal("rejected searches must not spend budget", b, err)
+	}
+}
+
+func TestAlphaRejectedSearchExplainsAPIKey(t *testing.T) {
+	h, handler := auditHandler(t, ":memory:")
+	cookies := auditLogin(t, h, handler)
+	notice, err := os.ReadFile("../marketdata/testdata/marketdata/alpha-demo-information.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.av.Transport = avTestTransport(func(context.Context, string, string) ([]byte, error) { return notice, nil })
+	w := featureRequest(handler, "GET", "/api/instruments/19/av-symbol/search?q=vanguard", "", cookies...)
+	if w.Code != 502 || !strings.Contains(w.Body.String(), `"code":"UPSTREAM_ERROR"`) || !strings.Contains(w.Body.String(), "ALPHAVANTAGE_API_KEY") {
+		t.Fatal(w.Code, w.Body.String())
 	}
 }

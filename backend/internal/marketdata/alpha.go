@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +18,10 @@ import (
 
 var ErrAVLimit = errors.New("AV_RATE_LIMITED")
 var ErrAVUserLimit = errors.New("AV_USER_LIMIT_REACHED")
+
+// ErrAVRejected is an UPSTREAM_ERROR where AV answered with a Note/Information
+// notice that is not a limit, e.g. the demo key used outside its examples.
+var ErrAVRejected = fmt.Errorf("%w: Alpha Vantage rejected the request", ErrUpstream)
 var ErrFXUnavailable = errors.New("FX_RATE_UNAVAILABLE")
 var ErrFXUnsupported = errors.New("FX_UNSUPPORTED_CURRENCY")
 
@@ -232,6 +238,9 @@ func (g *AVGateway) execute(c avCall) avReply {
 	if _, ok := body["Error Message"]; ok {
 		return avReply{err: ErrUpstream}
 	}
+	if body["Note"] != nil || body["Information"] != nil {
+		return avReply{err: ErrAVRejected}
+	}
 	if c.function == "SYMBOL_SEARCH" {
 		var payload struct {
 			Matches []json.RawMessage `json:"bestMatches"`
@@ -434,13 +443,74 @@ func AllowedDate(date string, now time.Time) bool {
 	return date == BerlinDay(now) || date == prev.Format("2006-01-02")
 }
 
-// MockAV uses embedded fixtures and never has an HTTP client.
+// MockAV uses embedded fixtures and never has an HTTP client. Searches return
+// the fixture matches whose symbol starts with the keywords or whose name
+// contains every keyword, like a (much smaller) Alpha Vantage index.
 type MockAV struct{}
 
 func (MockAV) Call(ctx context.Context, function, query string) ([]byte, error) {
-	name := "alpha-search.json"
 	if function == "GLOBAL_QUOTE" {
-		name = "alpha-quote.json"
+		return fixtures.ReadFile("testdata/marketdata/alpha-quote.json")
 	}
-	return fixtures.ReadFile("testdata/marketdata/" + name)
+	// alpha-search-tesco.json is the verbatim response of the public demo request
+	// function=SYMBOL_SEARCH&keywords=tesco&apikey=demo.
+	var all []map[string]string
+	for _, name := range []string{"alpha-search.json", "alpha-search-tesco.json"} {
+		b, err := fixtures.ReadFile("testdata/marketdata/" + name)
+		if err != nil {
+			return nil, err
+		}
+		var page struct {
+			Matches []map[string]string `json:"bestMatches"`
+		}
+		if err = json.Unmarshal(b, &page); err != nil {
+			return nil, err
+		}
+		all = append(all, page.Matches...)
+	}
+	q := strings.ToLower(strings.TrimSpace(query))
+	matches := []map[string]string{}
+	for _, m := range all {
+		name, hit := strings.ToLower(m["2. name"]), q != ""
+		for _, word := range strings.Fields(q) {
+			hit = hit && strings.Contains(name, word)
+		}
+		if hit || (q != "" && strings.HasPrefix(strings.ToLower(m["1. symbol"]), q)) {
+			matches = append(matches, m)
+		}
+	}
+	return json.Marshal(map[string]any{"bestMatches": matches})
+}
+
+var (
+	exchangeSuffix = regexp.MustCompile(`^([A-Z0-9]+)\.[A-Z]{1,2}$`)
+	parenthesized  = regexp.MustCompile(`\([^)]*\)`)
+	fundNoise      = map[string]bool{"UCITS": true, "ETF": true, "ACC": true, "DIST": true, "ACCUMULATING": true, "DISTRIBUTING": true, "USD": true, "EUR": true, "GBP": true, "1C": true, "1D": true, "INC": true, "CORP": true, "SE": true, "AG": true, "PLC": true}
+)
+
+// AVSearchTerm derives default SYMBOL_SEARCH keywords. Alpha Vantage matches
+// symbols and names, not ISINs/WKNs, and uses its own exchange suffixes
+// (".DEX", not Yahoo's ".DE"). Identifier tickers fall back to the name
+// without share-class noise, which users can still edit before searching.
+func AVSearchTerm(ticker, name string) string {
+	t := strings.ToUpper(strings.TrimSpace(ticker))
+	if t != "" && Classify(t) == "KEYWORD" {
+		if m := exchangeSuffix.FindStringSubmatch(t); m != nil {
+			return m[1]
+		}
+		return t
+	}
+	words := []string{}
+	for _, w := range strings.Fields(parenthesized.ReplaceAllString(name, " ")) {
+		if fundNoise[strings.ToUpper(strings.Trim(w, ".,"))] {
+			continue
+		}
+		if words = append(words, w); len(words) == 5 {
+			break
+		}
+	}
+	if len(words) == 0 {
+		return t
+	}
+	return strings.Join(words, " ")
 }

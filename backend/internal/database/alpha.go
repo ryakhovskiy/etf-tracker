@@ -293,13 +293,15 @@ func (s *Store) UnlinkSymbol(ctx context.Context, id int64) error {
 		return err
 	})
 }
-func (s *Store) InstrumentTicker(ctx context.Context, id int64) (string, error) {
-	var ticker string
-	err := s.db.QueryRowContext(ctx, "SELECT ticker FROM instruments WHERE id=?", id).Scan(&ticker)
+
+// AVSearchTerm returns the default Alpha Vantage search keywords for an instrument.
+func (s *Store) AVSearchTerm(ctx context.Context, id int64) (string, error) {
+	var ticker, name string
+	err := s.db.QueryRowContext(ctx, "SELECT ticker,name FROM instruments WHERE id=?", id).Scan(&ticker, &name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
 	}
-	return ticker, err
+	return marketdata.AVSearchTerm(ticker, name), err
 }
 func (s *Store) SaveAVInstrument(ctx context.Context, user string, r marketdata.Result) (Instrument, error) {
 	var out Instrument

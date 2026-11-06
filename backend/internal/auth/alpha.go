@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"holdings/backend/internal/database"
 	"holdings/backend/internal/httpapi"
@@ -45,6 +47,8 @@ func marketError(w http.ResponseWriter, err error) {
 		apiError(w, 409, "ALREADY_LINKED", "This instrument is already linked.")
 	case errors.Is(err, database.ErrSymbolInUse):
 		apiError(w, 409, "SYMBOL_IN_USE", "This symbol is already linked to another instrument.")
+	case errors.Is(err, marketdata.ErrAVRejected):
+		apiError(w, 502, "UPSTREAM_ERROR", "Alpha Vantage rejected the request. Check ALPHAVANTAGE_API_KEY; the demo key only answers its example queries.")
 	case errors.Is(err, marketdata.ErrUpstream):
 		apiError(w, 502, "UPSTREAM_ERROR", "Market data provider unavailable.")
 	default:
@@ -217,13 +221,26 @@ func (h *Handler) registerAlphaRoutes(mux *http.ServeMux) {
 		if !ok {
 			return
 		}
-		ticker, err := h.store.InstrumentTicker(r.Context(), id)
+		term, err := h.store.AVSearchTerm(r.Context(), id)
 		if err != nil {
 			storeError(w, err)
 			return
 		}
+		// Users may refine the keywords; the instrument-derived term is the default.
+		if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
+			term = q
+		}
+		if utf8.RuneCountInString(term) > 100 || strings.ContainsFunc(term, unicode.IsControl) {
+			apiError(w, 400, "INVALID_QUERY", "Enter a search term of at most 100 characters.")
+			return
+		}
+		// AV searches symbols and names; identifiers would only waste a request.
+		if marketdata.Classify(term) != "KEYWORD" {
+			apiError(w, 400, "INVALID_QUERY", "Alpha Vantage cannot search ISINs or WKNs. Search by ticker or name.")
+			return
+		}
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Minute))
-		result, err := h.av.Search(r.Context(), user, ticker)
+		result, err := h.av.Search(r.Context(), user, term)
 		if err != nil {
 			marketError(w, err)
 			return

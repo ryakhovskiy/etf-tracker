@@ -17,6 +17,7 @@ import (
 	"holdings/backend/internal/config"
 	"holdings/backend/internal/database"
 	"holdings/backend/internal/httpapi"
+	"holdings/backend/internal/marketdata"
 )
 
 type auditTransport func(*http.Request) (*http.Response, error)
@@ -30,7 +31,7 @@ func auditHandler(t *testing.T, path string) (*Handler, http.Handler) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	cfg := config.Config{FrontendURL: "https://app.example.com", GoogleClientID: "client", GoogleClientSecret: "secret", GoogleRedirectURL: "https://api.example.com/auth/google/callback", JWTSecret: []byte("audit-secret-with-at-least-32-bytes"), SecureSessionCookie: true}
+	cfg := config.Config{FrontendURL: "https://app.example.com", GoogleClientID: "client", GoogleClientSecret: "secret", GoogleRedirectURL: "https://api.example.com/auth/google/callback", JWTSecret: []byte("audit-secret-with-at-least-32-bytes"), SecureSessionCookie: true, MarketdataPrimary: marketdata.ProviderAlphaVantage}
 	h := NewHandler(cfg, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	t.Cleanup(h.Close)
 	mux := http.NewServeMux()

@@ -195,7 +195,7 @@ test('committing refreshes the mounted dashboard and displays its success messag
  await within(dashboard).findByText(/40,00\s€/);
  view.rerender(panelView('dashboard', router));
  assert.ok(await screen.findByText('Transaction committed successfully.'));
- assert.equal(screen.queryByText('Loading dashboard…'), null);
+ assert.ok(screen.queryByText('Loading dashboard…') === null);
 });
 
 test('adding items refreshes the mounted transaction form without losing its edits', async t => {

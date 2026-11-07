@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,6 +17,11 @@ import (
 func apiError(w http.ResponseWriter, status int, code, message string) {
 	httpapi.JSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
 }
+
+// errorLog receives failures that are about to become 5xx responses; NewHandler
+// replaces it with the application logger.
+var errorLog = slog.Default()
+
 func storeError(w http.ResponseWriter, err error) {
 	var limit *database.LimitError
 	var validation *database.ValidationError
@@ -36,6 +42,7 @@ func storeError(w http.ResponseWriter, err error) {
 	case errors.Is(err, database.ErrInvalid):
 		apiError(w, 400, "INVALID_ITEMS", err.Error())
 	default:
+		errorLog.Error("request failed with an internal error", "error", err.Error())
 		apiError(w, 500, "INTERNAL_ERROR", "Could not complete the request.")
 	}
 }
@@ -170,6 +177,9 @@ func (h *Handler) registerPortfolioRoutes(mux *http.ServeMux) {
 		if err != nil {
 			storeError(w, err)
 			return
+		}
+		for _, instrument := range body.IDs {
+			h.profileInBackground(instrument)
 		}
 		httpapi.JSON(w, 200, result)
 	}))

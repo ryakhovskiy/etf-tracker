@@ -16,14 +16,14 @@ var ErrAlreadyLinked = errors.New("ALREADY_LINKED")
 func (s *Store) AVBudget(ctx context.Context, user string, now time.Time, l marketdata.AVLimits) (marketdata.Budget, error) {
 	b := marketdata.Budget{NextSlotAt: now, UserLimit: l.User}
 	var global, personal int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(CASE WHEN user_id=? THEN 1 ELSE 0 END),0) FROM av_requests WHERE requested_at>?`, user, now.UTC().Add(-24*time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00")).Scan(&global, &personal)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(CASE WHEN user_id=? THEN 1 ELSE 0 END),0) FROM provider_requests WHERE provider='ALPHAVANTAGE' AND requested_at>?`, user, now.UTC().Add(-24*time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00")).Scan(&global, &personal)
 	if err != nil {
 		return b, err
 	}
 	b.GlobalRemaining = max(0, l.Day-global)
 	b.UserRemaining = max(0, l.User-personal)
 	var blocked string
-	err = s.db.QueryRowContext(ctx, "SELECT v FROM av_state WHERE k='blocked_until'").Scan(&blocked)
+	err = s.db.QueryRowContext(ctx, "SELECT v FROM provider_state WHERE provider='ALPHAVANTAGE' AND k='blocked_until'").Scan(&blocked)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return b, err
 	}
@@ -38,7 +38,7 @@ func (s *Store) AVBudget(ctx context.Context, user string, now time.Time, l mark
 	}
 
 	var last string
-	err = s.db.QueryRowContext(ctx, "SELECT requested_at FROM av_requests ORDER BY requested_at DESC LIMIT 1").Scan(&last)
+	err = s.db.QueryRowContext(ctx, "SELECT requested_at FROM provider_requests WHERE provider='ALPHAVANTAGE' ORDER BY requested_at DESC LIMIT 1").Scan(&last)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return b, err
 	}
@@ -52,7 +52,7 @@ func (s *Store) AVBudget(ctx context.Context, user string, now time.Time, l mark
 	}
 	// Preserve a full sliding-window bound when settings change across restarts.
 	var oldest string
-	err = s.db.QueryRowContext(ctx, `SELECT requested_at FROM av_requests WHERE requested_at>? ORDER BY requested_at DESC LIMIT 1 OFFSET ?`, now.UTC().Add(-time.Minute).Format("2006-01-02T15:04:05.000000000Z07:00"), l.Minute-1).Scan(&oldest)
+	err = s.db.QueryRowContext(ctx, `SELECT requested_at FROM provider_requests WHERE provider='ALPHAVANTAGE' AND requested_at>? ORDER BY requested_at DESC LIMIT 1 OFFSET ?`, now.UTC().Add(-time.Minute).Format("2006-01-02T15:04:05.000000000Z07:00"), l.Minute-1).Scan(&oldest)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return b, err
 	}
@@ -74,7 +74,7 @@ func (s *Store) AVBudget(ctx context.Context, user string, now time.Time, l mark
 		if quota.remaining > 0 {
 			continue
 		}
-		query := "SELECT requested_at FROM av_requests WHERE requested_at>?"
+		query := "SELECT requested_at FROM provider_requests WHERE provider='ALPHAVANTAGE' AND requested_at>?"
 		args := []any{now.UTC().Add(-24 * time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00")}
 		if quota.personal {
 			query += " AND user_id=?"
@@ -106,7 +106,7 @@ func maxTime(a, b time.Time) time.Time {
 func (s *Store) ReserveAV(ctx context.Context, user, function string, now time.Time, l marketdata.AVLimits) error {
 	return s.write(ctx, func(c *sql.Conn) error {
 		var blocked string
-		err := c.QueryRowContext(ctx, "SELECT v FROM av_state WHERE k='blocked_until'").Scan(&blocked)
+		err := c.QueryRowContext(ctx, "SELECT v FROM provider_state WHERE provider='ALPHAVANTAGE' AND k='blocked_until'").Scan(&blocked)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
@@ -120,7 +120,7 @@ func (s *Store) ReserveAV(ctx context.Context, user, function string, now time.T
 			}
 		}
 		var global, personal int
-		if err = c.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(CASE WHEN user_id=? THEN 1 ELSE 0 END),0) FROM av_requests WHERE requested_at>?`, user, now.UTC().Add(-24*time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00")).Scan(&global, &personal); err != nil {
+		if err = c.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(CASE WHEN user_id=? THEN 1 ELSE 0 END),0) FROM provider_requests WHERE provider='ALPHAVANTAGE' AND requested_at>?`, user, now.UTC().Add(-24*time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00")).Scan(&global, &personal); err != nil {
 			return err
 		}
 		if global >= l.Day {
@@ -129,16 +129,16 @@ func (s *Store) ReserveAV(ctx context.Context, user, function string, now time.T
 		if personal >= l.User {
 			return marketdata.ErrAVUserLimit
 		}
-		_, err = c.ExecContext(ctx, "INSERT INTO av_requests(requested_at,user_id,function) VALUES(?,?,?)", now.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"), user, function)
+		_, err = c.ExecContext(ctx, "INSERT INTO provider_requests(provider,requested_at,user_id,function) VALUES('ALPHAVANTAGE',?,?,?)", now.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"), user, function)
 		return err
 	})
 }
 func (s *Store) BlockAV(ctx context.Context, until time.Time) error {
-	_, err := s.db.ExecContext(ctx, "INSERT INTO av_state(k,v) VALUES('blocked_until',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", until.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"))
+	_, err := s.db.ExecContext(ctx, "INSERT INTO provider_state(provider,k,v) VALUES('ALPHAVANTAGE','blocked_until',?) ON CONFLICT(provider,k) DO UPDATE SET v=excluded.v", until.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"))
 	return err
 }
 func (s *Store) CleanupAV(ctx context.Context, now time.Time) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM av_requests WHERE requested_at<?", now.UTC().Add(-48*time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00"))
+	_, err := s.db.ExecContext(ctx, "DELETE FROM provider_requests WHERE requested_at<?", now.UTC().Add(-48*time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00"))
 	return err
 }
 func scanQuote(row interface{ Scan(...any) error }) (*marketdata.Quote, error) {
@@ -146,7 +146,7 @@ func scanQuote(row interface{ Scan(...any) error }) (*marketdata.Quote, error) {
 	var p, orig int64
 	var rate sql.NullInt64
 	var fetched string
-	err := row.Scan(&q.ID, &q.InstrumentID, &p, &orig, &q.Currency, &rate, &q.FXRateDate, &q.QuoteDate, &fetched)
+	err := row.Scan(&q.ID, &q.InstrumentID, &p, &orig, &q.Currency, &rate, &q.FXRateDate, &q.QuoteDate, &fetched, &q.Provider)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -162,14 +162,34 @@ func scanQuote(row interface{ Scan(...any) error }) (*marketdata.Quote, error) {
 	return q, err
 }
 
-const quoteColumns = `id,instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,COALESCE(fx_rate_date,''),quote_date,fetched_at`
+const quoteColumns = `id,instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,COALESCE(fx_rate_date,''),quote_date,fetched_at,provider`
 
+// FreshQuote returns the newest quote of any provider if it is still fresh. A
+// Eulerpool stock quote stays fresh for the quote TTL; ETF closes and Alpha
+// Vantage quotes for the Berlin calendar day.
 func (s *Store) FreshQuote(ctx context.Context, id int64, now time.Time) (*marketdata.Quote, error) {
 	q, err := scanQuote(s.db.QueryRowContext(ctx, "SELECT "+quoteColumns+" FROM price_quotes WHERE instrument_id=? ORDER BY fetched_at DESC,id DESC LIMIT 1", id))
 	if err != nil || q == nil {
 		return q, err
 	}
+	if q.Provider == marketdata.ProviderEulerpool {
+		var typ string
+		if err = s.db.QueryRowContext(ctx, "SELECT type FROM instruments WHERE id=?", id).Scan(&typ); err != nil {
+			return nil, err
+		}
+		if typ == "STOCK" {
+			if age := now.Sub(q.FetchedAt); age >= 0 && age < s.quoteTTL() {
+				return q, nil
+			}
+			return nil, nil
+		}
+	}
 	if marketdata.BerlinDay(q.FetchedAt) != marketdata.BerlinDay(now) {
+		return nil, nil
+	}
+	// A Yahoo quote may be a historical close fetched today; only a quote for
+	// today or the previous trading day counts as a current price.
+	if q.Provider == marketdata.ProviderYahoo && !marketdata.AllowedDate(q.QuoteDate, now) {
 		return nil, nil
 	}
 	return q, nil
@@ -180,8 +200,13 @@ func (s *Store) SaveQuote(ctx context.Context, q *marketdata.Quote, symbol strin
 		if err := c.QueryRowContext(ctx, "SELECT COALESCE(av_symbol,'') FROM instruments WHERE id=?", q.InstrumentID).Scan(&current); err != nil {
 			return err
 		}
-		if current != symbol {
+		// Eulerpool quotes are keyed by ISIN, not by an Alpha Vantage symbol.
+		if (q.Provider == "" || q.Provider == marketdata.ProviderAlphaVantage) && current != symbol {
 			return ErrAlreadyLinked
+		}
+		provider := q.Provider
+		if provider == "" {
+			provider = marketdata.ProviderAlphaVantage
 		}
 		p, err := marketdata.Scaled(q.Price, 4)
 		if err != nil {
@@ -199,7 +224,7 @@ func (s *Store) SaveQuote(ctx context.Context, q *marketdata.Quote, symbol strin
 			}
 			rate = r
 		}
-		res, err := c.ExecContext(ctx, `INSERT INTO price_quotes(instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,fx_rate_date,quote_date,fetched_at) VALUES(?,?,?,?,?,?,?,?)`, q.InstrumentID, p, orig, q.Currency, rate, q.FXRateDate, q.QuoteDate, q.FetchedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"))
+		res, err := c.ExecContext(ctx, `INSERT INTO price_quotes(instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,fx_rate_date,quote_date,fetched_at,provider) VALUES(?,?,?,?,?,?,?,?,?)`, q.InstrumentID, p, orig, q.Currency, rate, q.FXRateDate, q.QuoteDate, q.FetchedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"), provider)
 		if err != nil {
 			return err
 		}
@@ -373,6 +398,12 @@ func (s *Store) applyQuoteDefaults(ctx context.Context, items []SavingPlanItem) 
 		v.QuoteID = q.ID
 		d, _ := time.Parse("2006-01-02", q.QuoteDate)
 		v.PriceSource = "Fetched " + d.Format("02.01.2006")
+		switch q.Provider {
+		case marketdata.ProviderEulerpool:
+			v.PriceSource += " · Eulerpool"
+		case marketdata.ProviderYahoo:
+			v.PriceSource += " · Yahoo Finance"
+		}
 		if q.FXRate != "" {
 			rate, err := marketdata.Scaled(q.FXRate, 4)
 			if err != nil {
@@ -380,9 +411,7 @@ func (s *Store) applyQuoteDefaults(ctx context.Context, items []SavingPlanItem) 
 			}
 			fxDate, _ := time.Parse("2006-01-02", q.FXRateDate)
 			currency := q.Currency
-			if currency == "GBX" || currency == "GBp" {
-				currency = "GBP"
-			}
+			currency = marketdata.MajorUnit(currency)
 			v.PriceSource += " · 1 " + currency + " = " + strings.ReplaceAll(marketdata.Fixed(rate, 4), ".", ",") + " € (ECB " + fxDate.Format("02.01.2006") + ")"
 		}
 	}

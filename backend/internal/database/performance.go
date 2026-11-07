@@ -20,6 +20,7 @@ type CurrentItem struct {
 	Source       string  `json:"source"`
 	Reason       string  `json:"reason,omitempty"`
 	QuoteDate    string  `json:"quoteDate,omitempty"`
+	Provider     string  `json:"provider,omitempty"`
 	FXRate       *string `json:"fxRate"`
 	FXRateDate   *string `json:"fxRateDate"`
 }
@@ -83,7 +84,7 @@ func (s *Store) currentValuation(ctx context.Context, lines []TransactionRow, p 
 		units := new(big.Rat).SetFrac(held, big.NewInt(1000000))
 		item := CurrentItem{InstrumentID: id, Units: units.FloatString(6), PriceEUR: purchase.Price, Source: "PURCHASE"}
 		if q != nil && q.QuoteDate >= purchase.Date {
-			item.Source, item.PriceEUR, item.QuoteDate = "QUOTE", q.Price, q.QuoteDate
+			item.Source, item.PriceEUR, item.QuoteDate, item.Provider = "QUOTE", q.Price, q.QuoteDate, q.Provider
 			if q.FXRate != "" {
 				rate, date := q.FXRate, q.FXRateDate
 				item.FXRate, item.FXRateDate = &rate, &date

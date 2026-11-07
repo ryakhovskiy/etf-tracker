@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -29,6 +30,7 @@ type Store struct {
 	stopCleanup context.CancelFunc
 	db          *sql.DB
 	limits      Limits
+	quoteTTLNS  atomic.Int64
 }
 
 func Open(path string) (*Store, error) {

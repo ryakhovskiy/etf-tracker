@@ -1,0 +1,1 @@
+{"quotes":[{"isin":"US0378331005","ticker":"AAPL","name":"Apple Inc","currency":"USD","price":349.510009765625,"timestamp":1793802600,"change":5.34,"changePct":1.55}],"errors":[{"isin":"IE00B4L5Y983","error":"ISIN not found"},{"isin":"IE00BK5BQT80","error":"ISIN not found"},{"isin":"DE000A0F5UH1","error":"ISIN not found"}]}

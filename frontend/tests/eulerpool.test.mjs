@@ -1,0 +1,351 @@
+import assert from 'node:assert/strict';
+import { test, afterEach } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
+import React from 'react';
+
+const dom = new JSDOM('<!doctype html><html lang="en"><body></body></html>', { url: 'http://localhost/' });
+for (const key of ['window', 'document', 'HTMLElement', 'Node', 'MutationObserver', 'HTMLDialogElement', 'sessionStorage', 'Element']) globalThis[key] = dom.window[key];
+globalThis.self = dom.window;
+Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
+HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+HTMLDialogElement.prototype.close = function () { this.open = false; };
+const { render, screen, fireEvent, waitFor, cleanup, act } = await import('@testing-library/react');
+const { InstrumentPicker } = await import('../components/instrument-picker.tsx');
+const { Transactions } = await import('../components/transactions.tsx');
+const { TransactionDraftProvider } = await import('../components/transaction-draft.tsx');
+const { AppRouterContext } = await import('next/dist/shared/lib/app-router-context.shared-runtime.js');
+const { formatAum, formatPercent, formatDate, highlightParts } = await import('../lib/etf.ts');
+const axe = (await import('axe-core')).default;
+afterEach(() => { cleanup(); sessionStorage.clear(); });
+
+const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8');
+const json = (body, status = 200) => new Response(JSON.stringify(body), { status });
+const initial = { id: 1, name: 'Test', itemCount: 0, instrumentIds: [], itemLimit: 30, createdAt: '' };
+const hsbcLocal = { id: 17, ticker: 'IE00B4X9L533', name: 'HSBC MSCI World UCITS ETF USD', type: 'ETF', isin: 'IE00B4X9L533', wkn: 'A1C9KK', inPortfolio: false };
+const apple = { id: 1, ticker: 'AAPL', name: 'Apple Inc.', type: 'STOCK', isin: 'US0378331005', wkn: '865985', inPortfolio: false };
+const euler = (rows, extra = {}) => ({ provider: 'EULERPOOL', results: rows.map(r => ({ source: 'EULERPOOL', inPortfolio: false, ...r })), ...extra });
+const online = [
+  { isin: 'IE000UQND7H4', ticker: 'HMWA.L', name: 'HSBC MSCI WORLD UCITS ETF', type: 'ETF', currency: 'USD' },
+  { isin: 'DE0007164600', ticker: 'SAP.DE', name: 'SAP SE', type: 'STOCK', currency: 'EUR', existingInstrumentId: 7, inPortfolio: true },
+];
+const type = value => fireEvent.change(screen.getByRole('combobox'), { target: { value } });
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+function mockFetch(t, handler) {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => { calls.push({ url, init }); return handler(url, init) ?? json([]); });
+  return calls;
+}
+const mountPicker = (props = {}) => render(React.createElement(InstrumentPicker, { initial: { ...initial, ...props } }));
+const isOnline = url => url.includes('/search/online');
+
+test('formatters follow the German display conventions', () => {
+  assert.equal(formatAum('121400000000'), '121,4 Mrd. €');
+  assert.equal(formatAum('950000000'), '950,0 Mio. €');
+  assert.equal(formatAum(''), '—');
+  assert.equal(formatPercent('0.2'), '0,20 %');
+  assert.equal(formatDate('2010-12-08'), '08.12.2010');
+  assert.deepEqual(highlightParts('HSBC MSCI World', 'msci'), [{ text: 'HSBC ', match: false }, { text: 'MSCI', match: true }, { text: ' World', match: false }]);
+  assert.deepEqual(highlightParts('Apple', ''), [{ text: 'Apple', match: false }]);
+});
+
+test('Search button sits right of the input, is disabled below 4 characters, and shows a spinner without changing its label', async t => {
+  let release;
+  mockFetch(t, url => isOnline(url) ? new Promise(resolve => { release = () => resolve(json(euler(online))); }) : json([]));
+  mountPicker();
+  const input = screen.getByRole('combobox');
+  const button = screen.getByRole('button', { name: 'Search' });
+  assert.ok(button.parentElement.classList.contains('search-bar'));
+  assert.ok(button.previousElementSibling.contains(input), 'button follows the input in the same row');
+  assert.equal(input.getAttribute('placeholder'), 'Name, ticker, ISIN or WKN');
+  assert.equal(button.disabled, true);
+  type('hsb'); assert.equal(button.disabled, true);
+  type('hsbc'); assert.equal(button.disabled, false);
+  assert.ok(button.querySelector('.icon') !== null && button.querySelector('.spin') === null);
+  fireEvent.click(button);
+  await waitFor(() => assert.equal(button.getAttribute('aria-busy'), 'true'));
+  assert.ok(button.querySelector('.spin') !== null);
+  assert.ok(button.textContent.includes('Search'), 'label stays while searching');
+  await act(async () => release());
+  await waitFor(() => assert.equal(button.getAttribute('aria-busy'), 'false'));
+  assert.ok(button.querySelector('.spin') === null);
+});
+
+test('Enter runs the online search, Enter on a highlighted row selects it, and the clear button resets', async t => {
+  const calls = mockFetch(t, url => isOnline(url) ? json(euler(online)) : url.includes('/instruments/search') ? json([hsbcLocal]) : url.endsWith('/api/instruments') ? json({ ...apple, id: 99 }) : json([]));
+  mountPicker();
+  const input = screen.getByRole('combobox');
+  assert.ok(screen.queryByRole('button', { name: 'Clear search' }) === null);
+  type('hsbc');
+  await screen.findByRole('option', { name: /IE00B4X9L533/ });
+  assert.equal(calls.filter(c => isOnline(c.url)).length, 0, 'typing alone never searches online');
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await screen.findByRole('option', { name: /HMWA\.L/ });
+  assert.equal(calls.filter(c => isOnline(c.url)).length, 1);
+  assert.ok(calls.find(c => isOnline(c.url)).url.includes('q=hsbc'));
+  fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+  assert.equal(input.value, '');
+  assert.ok(screen.queryByRole('listbox') === null);
+  assert.ok(document.activeElement === input);
+});
+
+test('dropdown groups local and online results with pills, highlight, currency chip, info icon and attribution', async t => {
+  mockFetch(t, url => isOnline(url) ? json(euler(online)) : url.includes('/instruments/search') ? json([hsbcLocal]) : json([]));
+  mountPicker();
+  type('hsbc');
+  await screen.findByRole('option', { name: /IE00B4X9L533/ });
+  assert.ok(screen.queryByText('Online · Eulerpool') === null, 'online section is hidden until Search');
+  fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  await screen.findByText('Online · Eulerpool');
+  assert.ok(screen.getByText('In your database') !== null);
+  const groups = screen.getAllByRole('group');
+  assert.deepEqual(groups.map(g => g.getAttribute('aria-labelledby') !== null), [true, true]);
+  const local = screen.getByRole('option', { name: /IE00B4X9L533/ });
+  assert.ok(local.textContent.includes('ETF'));
+  assert.ok(local.querySelector('mark') !== null && local.querySelector('mark').textContent.toLowerCase() === 'hsbc');
+  assert.ok(/IE00B4X9L533 · A1C9KK/.test(local.querySelector('.option-meta').textContent));
+  const row = screen.getByRole('option', { name: /HMWA\.L/ });
+  assert.ok(row.querySelector('.chip').textContent === 'USD');
+  assert.ok(row.querySelector('.pill-etf') !== null);
+  // The in-portfolio stock is disabled and says why.
+  const sap = screen.getByRole('option', { name: /SAP\.DE/ });
+  assert.equal(sap.getAttribute('aria-disabled'), 'true');
+  assert.ok(sap.textContent.includes('✓ In portfolio'));
+  assert.ok(sap.querySelector('.pill-stock').textContent === 'Stock');
+  // ⓘ only for ETFs that exist in the database (they have a profile endpoint).
+  assert.ok(local.querySelector('.info-button') !== null);
+  assert.ok(row.querySelector('.info-button') === null);
+  assert.ok(sap.querySelector('.info-button') === null);
+  assert.ok(screen.getByText('Data by Eulerpool') !== null);
+});
+
+test('disabled rows cannot be clicked, keyboard navigation skips them, and multiple picks keep the dropdown open', async t => {
+  let posts = 0;
+  const calls = mockFetch(t, (url, init) => isOnline(url) ? json(euler(online)) : url.includes('/instruments/search') ? json([hsbcLocal]) : init?.method === 'POST' && url.endsWith('/api/instruments') ? json({ ...hsbcLocal, wkn: null, id: 50 + posts++, isin: JSON.parse(init.body).isin, name: JSON.parse(init.body).name }) : json([]));
+  mountPicker();
+  type('hsbc'); await screen.findByRole('option', { name: /IE00B4X9L533/ });
+  fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  await screen.findByRole('option', { name: /HMWA\.L/ });
+  fireEvent.click(screen.getByRole('option', { name: /SAP\.DE/ }));
+  assert.equal(calls.filter(c => c.init?.method === 'POST').length, 0);
+  const input = screen.getByRole('combobox');
+  fireEvent.keyDown(input, { key: 'ArrowDown' });
+  assert.equal(input.getAttribute('aria-activedescendant'), 'instrument-17');
+  fireEvent.keyDown(input, { key: 'ArrowDown' });
+  assert.ok(input.getAttribute('aria-activedescendant').startsWith('instrument-online--'), 'skips the disabled SAP row');
+  fireEvent.keyDown(input, { key: 'ArrowDown' });
+  assert.equal(input.getAttribute('aria-activedescendant'), 'instrument-17', 'wraps around');
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await waitFor(() => assert.ok(screen.getByRole('table') !== null));
+  fireEvent.click(screen.getByRole('option', { name: /HMWA\.L/ }));
+  await waitFor(() => assert.equal(screen.getAllByRole('row').length, 3));
+  assert.ok(screen.getByRole('listbox') !== null, 'dropdown stays open');
+  const post = calls.find(c => c.init?.method === 'POST' && c.url.endsWith('/api/instruments'));
+  assert.equal(JSON.parse(post.init.body).source, 'EULERPOOL');
+});
+
+test('loading skeleton, empty state with the Alpha Vantage offer, error with retry and warning banner', async t => {
+  let mode = 'pending', release;
+  const calls = mockFetch(t, url => {
+    if (!isOnline(url)) return json([]);
+    if (url.includes('provider=av')) return json({ results: [] });
+    if (mode === 'pending') return new Promise(resolve => { release = () => resolve(json({ provider: 'OPENFIGI', results: [] })); });
+    if (mode === 'error') return json({ error: { code: 'UPSTREAM_ERROR', message: 'x' } }, 502);
+    if (mode === 'warn') return json({ provider: 'OPENFIGI', warnings: ['EULERPOOL_UNAVAILABLE'], results: [{ figi: 'BBG000', ticker: 'HSBC', name: 'HSBC Holdings', type: 'STOCK', currency: 'EUR', exchCode: 'GR', isin: 'GB0005405286', inPortfolio: false }] });
+    return json(euler(online));
+  });
+  mountPicker();
+  type('zzzz'); await screen.findByText(/No results for/);
+  assert.ok(screen.queryByRole('button', { name: 'Try Alpha Vantage (1 request)' }) === null, 'no AV offer before any online search');
+  fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  await waitFor(() => assert.equal(document.querySelectorAll('.skeleton-row').length, 3));
+  assert.equal(document.querySelector('.skeleton').getAttribute('aria-hidden'), 'true');
+  await act(async () => release());
+  const av = await screen.findByRole('button', { name: 'Try Alpha Vantage (1 request)' });
+  assert.ok(screen.getByText(/No results for/) !== null);
+  assert.equal(calls.filter(c => c.url.includes('provider=av')).length, 0, 'AV is only offered, never called');
+  fireEvent.click(av);
+  await waitFor(() => assert.equal(calls.filter(c => c.url.includes('provider=av')).length, 1));
+  // Error state with Retry.
+  mode = 'error';
+  fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  const alert = await screen.findByRole('alert');
+  assert.ok(/unavailable/.test(alert.textContent));
+  mode = 'ok';
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  await screen.findByRole('option', { name: /HMWA\.L/ });
+  // Warning banner above fallback results.
+  mode = 'warn';
+  fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  await screen.findByText('Eulerpool unavailable, showing OpenFIGI results');
+  assert.ok(screen.getByText('Online · OpenFIGI') !== null);
+  assert.ok(screen.queryByText('Data by Eulerpool') === null, 'attribution only with Eulerpool data');
+  assert.ok(screen.queryByRole('button', { name: 'Try Alpha Vantage (1 request)' }) === null, 'AV is not offered while results exist');
+});
+
+test('the Alpha Vantage offer is withheld for ISIN and WKN queries and when Eulerpool answered', async t => {
+  mockFetch(t, url => isOnline(url) ? json({ provider: 'OPENFIGI', results: [] }) : json([]));
+  mountPicker();
+  type('IE00B4X9L533'); fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  await screen.findByText(/No results for/); await act(() => delay(20));
+  assert.ok(screen.queryByRole('button', { name: 'Try Alpha Vantage (1 request)' }) === null);
+  cleanup();
+  mockFetch(t, url => isOnline(url) ? json({ provider: 'EULERPOOL', results: [] }) : json([]));
+  mountPicker();
+  type('nothing'); fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  await screen.findByText(/No results for/); await act(() => delay(20));
+  assert.ok(screen.queryByRole('button', { name: 'Try Alpha Vantage (1 request)' }) === null);
+});
+
+test('Escape and outside clicks close the dropdown and focus returns to the input', async t => {
+  mockFetch(t, url => url.includes('/instruments/search') ? json([apple]) : json([]));
+  mountPicker();
+  const input = screen.getByRole('combobox');
+  type('appl'); await screen.findByRole('option', { name: /AAPL/ });
+  assert.equal(input.getAttribute('aria-expanded'), 'true');
+  screen.getByRole('button', { name: 'Search' }).focus();
+  fireEvent.keyDown(input, { key: 'Escape' });
+  assert.ok(screen.queryByRole('listbox') === null);
+  assert.ok(document.activeElement === input);
+  assert.equal(input.getAttribute('aria-expanded'), 'false');
+  fireEvent.focus(input); assert.ok(screen.getByRole('listbox') !== null);
+  fireEvent.pointerDown(document.body); assert.ok(screen.queryByRole('listbox') === null);
+});
+
+test('combobox semantics: controls, activedescendant, groups, live announcement, and no axe violations', async t => {
+  mockFetch(t, url => isOnline(url) ? json(euler(online)) : url.includes('/instruments/search') ? json([hsbcLocal]) : json([]));
+  const { container } = mountPicker();
+  const input = screen.getByRole('combobox');
+  assert.equal(input.getAttribute('aria-autocomplete'), 'list');
+  type('hsbc'); await screen.findByRole('option', { name: /IE00B4X9L533/ });
+  fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  await screen.findByRole('option', { name: /HMWA\.L/ });
+  const list = screen.getByRole('listbox');
+  assert.equal(input.getAttribute('aria-controls'), list.id);
+  assert.ok(list.id.length > 0);
+  fireEvent.keyDown(input, { key: 'ArrowDown' });
+  const active = document.getElementById(input.getAttribute('aria-activedescendant'));
+  assert.ok(active !== null && active.getAttribute('role') === 'option');
+  const live = [...document.querySelectorAll('[aria-live="polite"]')].map(n => n.textContent);
+  assert.ok(live.includes('3 results'), `announced: ${live.join('|')}`);
+  const result = await axe.run(container, { rules: { 'color-contrast': { enabled: false } } });
+  assert.deepEqual(result.violations.map(v => `${v.id}: ${v.nodes.map(n => n.failureSummary).join(' ; ')}`), []);
+});
+
+test('ETF info panel loads or refreshes the profile and credits Eulerpool', async t => {
+  const profile = { instrumentId: 17, isin: 'IE00B4X9L533', etfCompany: 'HSBC', trackingIndex: 'MSCI World Index', assetClass: 'Equity', domicile: 'IE', expenseRatio: '0.15', aumEur: '121400000000', dividendYield: '', inceptionDate: '2010-12-08', currency: 'GBP', website: 'https://www.assetmanagement.hsbc.co.uk/en/funds/x', fetchedAt: '2026-11-04T10:00:00Z', stale: false };
+  const calls = mockFetch(t, (url, init) => {
+    if (url.includes('/instruments/search')) return json([hsbcLocal]);
+    if (url.endsWith('/instruments/17/etf-profile')) return json({ error: { code: 'NOT_FOUND', message: 'none' } }, 404);
+    if (url.endsWith('/instruments/17/etf-profile/refresh') && init.method === 'POST') return json(profile);
+    return json([]);
+  });
+  mountPicker();
+  type('hsbc'); await screen.findByRole('option', { name: /IE00B4X9L533/ });
+  fireEvent.click(screen.getByRole('option', { name: /IE00B4X9L533/ }).querySelector('.info-button'));
+  await screen.findByText('121,4 Mrd. €');
+  assert.ok(screen.getByText('0,15 %') !== null && screen.getByText('MSCI World Index') !== null && screen.getByText('08.12.2010') !== null);
+  assert.ok(screen.getByText('Updated 04.11.2026 · Data by Eulerpool') !== null);
+  assert.ok(calls.some(c => c.url.endsWith('/etf-profile/refresh')), 'missing profile is fetched on demand');
+  assert.equal(screen.getByRole('link', { name: 'assetmanagement.hsbc.co.uk' }).getAttribute('rel'), 'noopener noreferrer');
+  assert.ok(screen.queryByRole('option', { name: /IE00B4X9L533/ }) !== null, 'opening the panel does not close the dropdown');
+  assert.ok(screen.getByRole('dialog', { hidden: true }) !== null);
+});
+
+test('stylesheet: dark-mode tokens, reduced motion, mobile icon-only button and 44px controls', () => {
+  assert.ok(/@media\(prefers-color-scheme:dark\)\{\.search-picker[^}]*--surface:/.test(css), 'dark tokens for the picker');
+  assert.ok(/@media\(prefers-reduced-motion:reduce\)\{[^}]*\.search-dropdown[^}]*animation:none/.test(css));
+  assert.ok(/@media\(max-width:480px\)\{.*?\.search-button \.label\{display:none\}/.test(css));
+  assert.ok(/\.search-field\{[^}]*height:44px;[^}]*border-radius:12px/.test(css));
+  assert.ok(/\.search-button\{[^}]*height:44px[^}]*border-radius:12px/.test(css));
+  assert.ok(/\.search-field:focus-within\{[^}]*0 0 0 3px var\(--focus-ring\)/.test(css));
+  assert.ok(/\.search-dropdown\{[^}]*min-width:360px[^}]*max-height:420px[^}]*border-radius:12px[^}]*animation:dropdown-in 150ms/.test(css));
+  assert.ok(/\.option\{[^}]*height:56px/.test(css));
+  assert.ok(/\.search-button:active:not\(:disabled\)\{transform:scale\(\.98\)\}/.test(css));
+  assert.ok(/\.search-button:hover:not\(:disabled\)\{filter:brightness\(\.94\)\}/.test(css));
+});
+
+// --- price fetching ---
+const stock = { instrumentId: 1, isin: 'US0378331005', type: 'STOCK', ticker: 'AAPL', name: 'Apple Inc.', defaultPrice: '10.0000', defaultAmount: '20.00', priceSource: 'None' };
+const etf = { instrumentId: 2, isin: 'IE00B4X9L533', type: 'ETF', ticker: 'HMWD', name: 'HSBC MSCI World', defaultPrice: '', defaultAmount: '20.00', priceSource: 'None' };
+const budget = () => ({ globalRemaining: 25, userRemaining: 10, userLimit: 10, nextSlotAt: new Date().toISOString() });
+const mountTx = () => render(React.createElement(AppRouterContext.Provider, { value: { push() {} } }, React.createElement(TransactionDraftProvider, null, React.createElement(Transactions, { id: '1' }))));
+
+test('prices: Eulerpool cost on the main button, and the Alpha Vantage backup only for NEEDS_BACKUP items, only on click', async t => {
+  let backupJob = false;
+  const calls = mockFetch(t, (url, init) => {
+    if (url.endsWith('/saving-plan')) return json([{ ...stock, avSymbol: undefined }, { ...etf, avSymbol: 'HMWD.LON', avCurrency: 'USD' }]);
+    if (url.includes('/market-data/budget')) return json(budget());
+    if (url.includes('/price-fetch/estimate')) {
+      const av = url.includes('provider=ALPHAVANTAGE');
+      return json({ requestsNeeded: av ? 1 : 0, fresh: [], noSymbol: [], budget: budget(), provider: av ? 'ALPHAVANTAGE' : 'EULERPOOL', eulerpool: { requests: 3, remaining: 400 }, alphavantage: { requests: av ? 1 : 0, remaining: 9 } });
+    }
+    if (url.endsWith('/price-fetch-jobs') && init.method === 'POST') { const body = JSON.parse(init.body); if (body.provider === 'ALPHAVANTAGE') { backupJob = true; return json({ jobId: 'av' }, 202); } return json({ jobId: 'ep' }, 202); }
+    if (url.includes('/price-fetch-jobs/ep')) return json({ status: 'DONE', nextRequestAt: new Date().toISOString(), items: [{ instrumentId: 1, status: 'OK', priceEur: '300.0000', currency: 'USD', quoteDate: '2026-11-04', provider: 'EULERPOOL', quoteId: 5 }, { instrumentId: 2, status: 'NEEDS_BACKUP', reason: 'NOT_FOUND' }] });
+    if (url.includes('/price-fetch-jobs/av')) return json({ status: 'DONE', nextRequestAt: new Date().toISOString(), items: [{ instrumentId: 2, status: 'OK', priceEur: '40.0000', currency: 'USD', quoteDate: '2026-11-04', quoteId: 6 }] });
+  });
+  mountTx();
+  const main = await screen.findByRole('button', { name: 'Fetch prices (3 Eulerpool requests)' });
+  assert.ok(screen.getAllByText('Data by Eulerpool').length > 0);
+  // Rows without an AV symbol are fetchable because Eulerpool prices by ISIN.
+  assert.equal(screen.getByLabelText('Fetch AAPL').disabled, false);
+  assert.ok(screen.queryByRole('button', { name: /via Alpha Vantage/ }) === null);
+  fireEvent.click(main);
+  const backup = await screen.findByRole('button', { name: 'Fetch 1 remaining via Alpha Vantage (uses 1 request)' });
+  assert.equal(screen.getByLabelText('AAPL price').value, '300,0000');
+  assert.ok(screen.getByText(/Fetched 04\.11\.2026 · Eulerpool/) !== null);
+  assert.equal(backupJob, false, 'the backup never starts by itself');
+  assert.ok(calls.some(c => c.url.includes('provider=ALPHAVANTAGE') && c.url.includes('instrumentIds=2')));
+  fireEvent.click(backup);
+  await waitFor(() => assert.equal(screen.getByLabelText('HMWD price').value, '40,0000'));
+  assert.equal(backupJob, true);
+  await waitFor(() => assert.ok(screen.queryByRole('button', { name: /via Alpha Vantage/ }) === null), { timeout: 3000 });
+});
+
+test('prices: Yahoo Finance backup is offered next to Alpha Vantage, shows its cost, and only runs on click', async t => {
+  let yahooJob = null, fetched = false;
+  const calls = mockFetch(t, (url, init) => {
+    if (url.endsWith('/saving-plan')) return json([{ ...stock, avSymbol: undefined, ...(fetched ? { defaultPrice: '300.0000', quoteId: 8, priceSource: 'Fetched 04.11.2026 · Yahoo Finance' } : {}) }, { ...etf, avSymbol: undefined }]);
+    if (url.includes('/market-data/budget')) return json(budget());
+    if (url.includes('/price-fetch/estimate')) {
+      const provider = new URL(url, 'http://localhost').searchParams.get('provider');
+      return json({ requestsNeeded: 0, fresh: [], noSymbol: [1, 2], budget: budget(), provider: provider ?? 'EULERPOOL', eulerpool: { requests: 2, remaining: 400 }, alphavantage: { requests: 0, remaining: 9 }, yahoo: { requests: 3, remaining: 900, historical: false, noSymbol: [] } });
+    }
+    if (url.endsWith('/price-fetch-jobs') && init.method === 'POST') { const body = JSON.parse(init.body); if (body.provider === 'YAHOO') { yahooJob = body; return json({ jobId: 'yh' }, 202); } return json({ jobId: 'ep' }, 202); }
+    if (url.includes('/price-fetch-jobs/ep')) return json({ status: 'DONE', nextRequestAt: new Date().toISOString(), items: [{ instrumentId: 1, status: 'NEEDS_BACKUP', reason: 'NOT_FOUND' }, { instrumentId: 2, status: 'NEEDS_BACKUP', reason: 'NOT_FOUND' }] });
+    if (url.includes('/price-fetch-jobs/yh')) { fetched = true; return json({ status: 'DONE', nextRequestAt: new Date().toISOString(), items: [{ instrumentId: 1, status: 'OK', priceEur: '300.0000', currency: 'USD', quoteDate: '2026-11-04', provider: 'YAHOO', quoteId: 8 }, { instrumentId: 2, status: 'NO_SYMBOL' }] }); }
+  });
+  mountTx();
+  fireEvent.click(await screen.findByRole('button', { name: 'Fetch prices (2 Eulerpool requests)' }));
+  const yahoo = await screen.findByRole('button', { name: 'Fetch 3 remaining via Yahoo Finance (uses 3 requests)' });
+  assert.ok(screen.queryByRole('button', { name: /via Alpha Vantage/ }) === null, 'AV has nothing to fetch without symbols');
+  assert.equal(yahooJob, null, 'the backup never starts by itself');
+  assert.ok(calls.some(c => c.url.includes('provider=YAHOO') && c.url.includes('instrumentIds=1,2')));
+  fireEvent.click(yahoo);
+  await waitFor(() => assert.equal(screen.getByLabelText('AAPL price').value, '300,0000'));
+  assert.deepEqual(yahooJob.instrumentIds, [1, 2]);
+  assert.equal(yahooJob.date, new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(new Date()));
+  assert.ok(screen.getByText(/Fetched 04\.11\.2026 · Yahoo Finance/) !== null);
+});
+
+test('prices: historical dates offer Yahoo Finance with the cost, and send the chosen date', async t => {
+  let posted = null;
+  mockFetch(t, (url, init) => {
+    if (url.endsWith('/saving-plan')) return json([{ ...stock, avSymbol: undefined }]);
+    if (url.includes('/market-data/budget')) return json(budget());
+    if (url.includes('/price-fetch/estimate')) return json({ requestsNeeded: 0, fresh: [], noSymbol: [], budget: budget(), provider: 'YAHOO', yahoo: { requests: 2, remaining: 900, historical: true, noSymbol: [] } });
+    if (url.endsWith('/price-fetch-jobs') && init.method === 'POST') { posted = JSON.parse(init.body); return json({ jobId: 'yh' }, 202); }
+    if (url.includes('/price-fetch-jobs/yh')) return json({ status: 'DONE', nextRequestAt: new Date().toISOString(), items: [{ instrumentId: 1, status: 'OK', priceEur: '250.0000', currency: 'USD', quoteDate: '2025-03-14', provider: 'YAHOO', quoteId: 9 }] });
+  });
+  mountTx();
+  await screen.findByLabelText('Fetch AAPL');
+  fireEvent.change(screen.getByLabelText('Transaction date'), { target: { value: '2025-03-15' } });
+  assert.equal(screen.getByRole('button', { name: /^Fetch prices/ }).disabled, true, 'current-price providers stay disabled for past dates');
+  const button = await screen.findByRole('button', { name: 'Fetch historical prices via Yahoo Finance (uses 2 requests)' });
+  assert.ok(screen.getByText(/Closing price on or before 15\.03\.2025/) !== null);
+  assert.equal(posted, null);
+  fireEvent.click(button);
+  await waitFor(() => assert.equal(screen.getByLabelText('AAPL price').value, '250,0000'));
+  assert.deepEqual(posted, { date: '2025-03-15', instrumentIds: [1], provider: 'YAHOO' });
+  assert.ok(screen.getByText(/Fetched 14\.03\.2025 · Yahoo Finance/) !== null);
+});

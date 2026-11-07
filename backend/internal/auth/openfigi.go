@@ -51,8 +51,31 @@ func (h *Handler) registerOnlineRoutes(mux *http.ServeMux) {
 			httpapi.JSON(w, 200, result)
 			return
 		}
+		var warnings []string
+		// Eulerpool has no WKN lookup, so WKN queries go straight to OpenFIGI.
+		if h.primary == marketdata.ProviderEulerpool && marketdata.Classify(q) != "ID_WERTPAPIER" {
+			hits, err := h.ep.Search(r.Context(), user, q)
+			if err != nil {
+				h.logger.Warn("Eulerpool search failed; falling back to OpenFIGI", "error", err.Error(), "queryLength", len(q))
+				warnings = append(warnings, epWarning(err))
+			} else if len(hits) > 0 {
+				result := marketdata.Results{Provider: marketdata.ProviderEulerpool, Results: make([]marketdata.Result, 0, len(hits))}
+				for _, hit := range hits {
+					result.Results = append(result.Results, marketdata.Result{Source: marketdata.ProviderEulerpool, ISIN: hit.ISIN, Ticker: hit.Ticker, Name: hit.Name, Type: hit.Type, Currency: hit.Currency})
+				}
+				if err = h.store.MatchOnline(r.Context(), user, id, result.Results); err != nil {
+					storeError(w, err)
+					return
+				}
+				httpapi.JSON(w, 200, result)
+				return
+			}
+		}
 		result, err := h.figi.Lookup(r.Context(), q)
+		result.Provider = "OPENFIGI"
+		result.Warnings = warnings
 		if err != nil {
+			h.logger.Error("online search failed", "provider", "OPENFIGI", "error", err.Error())
 			if errors.Is(err, marketdata.ErrRateLimited) {
 				apiError(w, 429, "FIGI_RATE_LIMITED", "Online search busy, try again in a minute")
 			} else {
@@ -73,7 +96,12 @@ func (h *Handler) registerOnlineRoutes(mux *http.ServeMux) {
 		}
 		var instrument database.Instrument
 		var err error
-		if row.Source == "ALPHAVANTAGE" {
+		if row.Source == marketdata.ProviderEulerpool {
+			instrument, err = h.store.SaveEulerpoolInstrument(r.Context(), row)
+			if err == nil && instrument.Type == "ETF" {
+				h.profileInBackground(instrument.ID)
+			}
+		} else if row.Source == "ALPHAVANTAGE" {
 			instrument, err = h.store.SaveAVInstrument(r.Context(), user, row)
 		} else {
 			instrument, err = h.store.SaveOnlineInstrument(r.Context(), row)

@@ -54,9 +54,9 @@ test('search debounces, widens on deletion, and ignores aborted stale results be
   await act(async () => requests[1].resolve(json([apple])));
   assert.equal(screen.getAllByRole('option').length, 1);
   await act(async () => requests[0].resolve(json([other])));
-  assert.equal(screen.queryByText('Microsoft Corp.'), null);
+  assert.ok(screen.queryByText('Microsoft Corp.') === null);
   search('app'); assert.equal(requests[1].signal.aborted, true);
-  assert.equal(screen.queryByRole('listbox'), null);
+  assert.ok(screen.queryByRole('listbox') === null);
   assert.equal(requests.length, 2);
   assert.match(requests[1].url, /q=appl&/);
 });
@@ -73,13 +73,13 @@ test('disabled rows cannot be picked; successful add clears selection and marks 
   search('apple');
   const row = await screen.findByRole('option', { name: /AAPL/ });
   fireEvent.click(screen.getByRole('option', { name: /MSFT/ }));
-  assert.equal(screen.queryByRole('table'), null);
+  assert.ok(screen.queryByRole('table') === null);
   fireEvent.click(row); fireEvent.click(row);
   assert.equal(screen.getAllByRole('row').length, 2);
   assert.match(row.textContent, /Selected/);
   fireEvent.click(screen.getByRole('button', { name: 'Add to portfolio' }));
   await screen.findByText('1 added'); assert.equal(added, true);
-  assert.equal(screen.queryByRole('table'), null);
+  assert.ok(screen.queryByRole('table') === null);
   assert.match(screen.getByRole('option', { name: /AAPL/ }).textContent, /In portfolio/);
   assert.equal(screen.getByRole('button', { name: 'Add to portfolio' }).disabled, true);
 });
@@ -107,7 +107,7 @@ test('keyboard navigation skips disabled rows and Escape and outside clicks clos
   fireEvent.keyDown(input, { key: 'ArrowDown' });
   assert.equal(input.getAttribute('aria-activedescendant'), 'instrument-1');
   fireEvent.keyDown(input, { key: 'Enter' }); assert.ok(screen.getByRole('table'));
-  fireEvent.keyDown(input, { key: 'Escape' }); assert.equal(screen.queryByRole('listbox'), null);
+  fireEvent.keyDown(input, { key: 'Escape' }); assert.ok(screen.queryByRole('listbox') === null);
   fireEvent.focus(input); assert.ok(screen.getByRole('listbox'));
-  fireEvent.pointerDown(document.body); assert.equal(screen.queryByRole('listbox'), null);
+  fireEvent.pointerDown(document.body); assert.ok(screen.queryByRole('listbox') === null);
 });

@@ -14,6 +14,8 @@ const {AppRouterContext}=await import('next/dist/shared/lib/app-router-context.s
 const {today,fetchDateAllowed}=await import('../lib/transactions.ts');
 afterEach(()=>{cleanup();sessionStorage.clear();});
 const item={instrumentId:1,ticker:'SAP',name:'SAP SE',defaultPrice:'10.0000',defaultAmount:'20.00',priceSource:'Last purchase 01.01.2025',avSymbol:'SAP.DEX',avCurrency:'EUR',avLinkedByYou:true};
+import {readFileSync} from 'node:fs';
+const require_css=()=>readFileSync(new URL('../app/globals.css',import.meta.url),'utf8');
 const json=(body,status=200)=>new Response(JSON.stringify(body),{status});
 const budget=(user=10)=>({globalRemaining:25,userRemaining:user,userLimit:10,nextSlotAt:new Date().toISOString()});
 const mount=()=>render(React.createElement(AppRouterContext.Provider,{value:{push(){}}},React.createElement(TransactionDraftProvider,null,React.createElement(Transactions,{id:'1'}))));
@@ -52,17 +54,32 @@ test('an interrupted job reloads saved quote defaults and preserves invested tot
 test('historical dates disable fetching with the specified tooltip and Berlin weekends are supported',async t=>{
  t.mock.method(globalThis,'fetch',responder());mount();await screen.findByLabelText('SAP amount');fireEvent.change(screen.getByLabelText('Transaction date'),{target:{value:'2000-01-01'}});const button=screen.getByRole('button',{name:/Fetch prices/});assert.equal(button.disabled,true);assert.equal(button.title,'Fetched prices are current prices; enter historical prices manually.');assert.equal(fetchDateAllowed('2026-11-06',new Date('2026-11-09T10:00:00Z')),true);assert.equal(fetchDateAllowed('2026-11-08',new Date('2026-11-09T10:00:00Z')),false);
 });
-test('linking shows cost before search and unlink requires confirmation',async t=>{
- let linked=false,searches=0,unlinked=0;const queries=[];
+test('linking an ISIN searches Eulerpool only on request and blocks ISINs already in use',async t=>{
+ let linked=false,searches=0;const queries=[],puts=[];
  t.mock.method(globalThis,'fetch',responder((url,init)=>{
-  if(url.endsWith('/saving-plan'))return json([{...item,ticker:'IE00B3VVMM84',avSymbol:linked?'SAP.DEX':undefined,avSearchTerm:linked?undefined:'Vanguard FTSE Emerging Markets',avLinkedByYou:false,avLinkedAt:'2026-11-04 12:00:00'}]);
-  if(url.includes('/av-symbol/search?')){searches++;queries.push(new URL(url,'http://localhost').searchParams.get('q'));return json({results:[{ticker:'SAP.DEX',avSymbol:'SAP.DEX',name:'SAP SE',currency:'EUR',region:'Germany'}]});}
-  if(init.method==='PUT'&&url.endsWith('/av-symbol')){linked=true;return new Response(null,{status:204});}
-  if(init.method==='DELETE'&&url.endsWith('/av-symbol')){unlinked++;linked=false;return new Response(null,{status:204});}
- }));mount();fireEvent.click(await screen.findByRole('button',{name:'Link symbol'}));assert.equal(searches,0);const term=screen.getByLabelText('Search term');assert.equal(term.value,'Vanguard FTSE Emerging Markets');fireEvent.change(term,{target:{value:'  '}});assert.equal(screen.getByRole('button',{name:'Search symbols (uses 1 request)'}).disabled,true);fireEvent.change(term,{target:{value:'VFEM'}});fireEvent.click(screen.getByRole('button',{name:'Search symbols (uses 1 request)'}));fireEvent.click(await screen.findByRole('button',{name:'SAP.DEX · SAP SE · EUR · Germany'}));await screen.findByText('Linked by another user · 04.11.2026');assert.equal(searches,1);assert.deepEqual(queries,['VFEM']);fireEvent.click(screen.getByRole('button',{name:'Unlink'}));assert.equal(unlinked,0);fireEvent.click(screen.getByRole('button',{name:'Confirm unlink'}));await screen.findByRole('button',{name:'Link symbol'});assert.equal(unlinked,1);
+  if(url.endsWith('/saving-plan'))return json([{...item,ticker:'SAP',avSymbol:undefined,isin:linked?'DE0007164600':undefined,avSearchTerm:linked?undefined:'SAP SE'}]);
+  if(url.includes('/isin/search')){searches++;queries.push(new URL(url,'http://localhost').searchParams.get('q'));return json({provider:'EULERPOOL',results:[{isin:'DE0007164600',ticker:'SAP.DE',name:'SAP SE',type:'STOCK',currency:'EUR'},{isin:'US8030542042',ticker:'SAP',name:'SAP SE ADR',type:'STOCK',currency:'USD',existingInstrumentId:9}]});}
+  if(init.method==='PUT'&&url.endsWith('/isin')){linked=true;puts.push(JSON.parse(init.body));return new Response(null,{status:204});}
+ }));mount();
+ fireEvent.click(await screen.findByRole('button',{name:'Link ISIN'}));assert.equal(searches,0);
+ const term=screen.getByLabelText('Search term');assert.equal(term.value,'SAP SE');assert.ok(screen.getByText(/uses 1 Eulerpool request/)!==null);
+ fireEvent.change(term,{target:{value:' '}});assert.equal(screen.getByRole('button',{name:'Search'}).disabled,true);
+ fireEvent.change(term,{target:{value:'SAP'}});fireEvent.click(screen.getByRole('button',{name:'Search'}));
+ const used=await screen.findByRole('button',{name:/SAP SE ADR/});assert.equal(used.disabled,true);assert.equal(searches,1);assert.deepEqual(queries,['SAP']);
+ fireEvent.click(screen.getByRole('button',{name:/^Stock\s*SAP SE\s*SAP\.DE/}));
+ await waitFor(()=>assert.ok(screen.queryByText('DE0007164600')!==null));
+ assert.deepEqual(puts,[{isin:'DE0007164600'}]);assert.ok(screen.queryByRole('button',{name:'Link ISIN'})===null);
+});
+test('transactions table: narrow fetch column, wrapping source text and fitting link column',()=>{
+ const css=require_css();
+ assert.ok(/\.saving-table \.col-fetch\{width:1%/.test(css));
+ assert.ok(/\.saving-table \.col-fetch input[^{]*\{width:18px;min-width:0/.test(css));
+ assert.ok(/\.saving-table \.col-source\{min-width:170px[^}]*overflow-wrap:break-word/.test(css));
+ assert.ok(!/\.saving-table input\{min-width:120px/.test(css),'global 120px input rule would stretch the checkbox column');
+ assert.ok(/\.saving-table td\{[^}]*overflow-wrap:anywhere/.test(css));
 });
 test('keyword fallback is explicit and follows an unsuccessful OpenFIGI search',async t=>{
  const calls=[];t.mock.method(globalThis,'fetch',async(url)=>{calls.push(url);if(url.includes('/online'))return json({results:[]});if(url.includes('/search'))return json([]);throw new Error(`Unexpected ${url}`);});
- render(React.createElement(InstrumentPicker,{initial:{id:1,name:'Test',itemCount:0,instrumentIds:[],itemLimit:30,createdAt:''}}));fireEvent.change(screen.getByRole('combobox'),{target:{value:'apple'}});await screen.findByText('No results');assert.ok(screen.queryByRole('button',{name:'Try Alpha Vantage (1 request)'})===null);fireEvent.click(screen.getByRole('button',{name:'Search online'}));fireEvent.click(await screen.findByRole('button',{name:'Try Alpha Vantage (1 request)'}));await waitFor(()=>assert.ok(calls.some(u=>u.includes('provider=av'))));
- fireEvent.change(screen.getByRole('combobox'),{target:{value:'US0378331005'}});await screen.findByText('No results');fireEvent.click(screen.getByRole('button',{name:'Search online'}));await waitFor(()=>assert.ok(calls.some(u=>u.includes('/online?q=US0378331005'))));assert.ok(screen.queryByRole('button',{name:'Try Alpha Vantage (1 request)'})===null);
+ render(React.createElement(InstrumentPicker,{initial:{id:1,name:'Test',itemCount:0,instrumentIds:[],itemLimit:30,createdAt:''}}));fireEvent.change(screen.getByRole('combobox'),{target:{value:'apple'}});await screen.findByText(/No results for/);assert.ok(screen.queryByRole('button',{name:'Try Alpha Vantage (1 request)'})===null);fireEvent.click(screen.getByRole('button',{name:'Search'}));fireEvent.click(await screen.findByRole('button',{name:'Try Alpha Vantage (1 request)'}));await waitFor(()=>assert.ok(calls.some(u=>u.includes('provider=av'))));
+ fireEvent.change(screen.getByRole('combobox'),{target:{value:'US0378331005'}});await screen.findByText(/No results for/);fireEvent.click(screen.getByRole('button',{name:'Search'}));await waitFor(()=>assert.ok(calls.some(u=>u.includes('/online?q=US0378331005'))));assert.ok(screen.queryByRole('button',{name:'Try Alpha Vantage (1 request)'})===null);
 });

@@ -1,6 +1,6 @@
 import Decimal from "decimal.js";
 Decimal.set({ precision: 40, rounding: Decimal.ROUND_HALF_UP });
-export type PlanItem = { instrumentId: number; ticker: string; name: string; defaultAmount: string; defaultPrice: string; priceSource: string; avSymbol?: string; avCurrency?: string; avRegion?: string; avLinkedByYou?: boolean; avLinkedAt?: string; avSearchTerm?: string; quoteId?: number };
+export type PlanItem = { instrumentId: number; isin?: string; type?: "STOCK" | "ETF"; ticker: string; name: string; defaultAmount: string; defaultPrice: string; priceSource: string; avSymbol?: string; avCurrency?: string; avRegion?: string; avLinkedByYou?: boolean; avLinkedAt?: string; avSearchTerm?: string; quoteId?: number };
 export type Line = { instrumentId: number; amount: string; price: string; quantity: string; quoteId?: number };
 export type PlanRow = PlanItem & Line & { errors: Partial<Record<"amount" | "price" | "quantity", string>> };
 export type Valuation = { value: string; performance: string; performancePct: string | null };
@@ -71,7 +71,9 @@ export function fetchDateAllowed(date:string,now=new Date()) {
  const previous=new Date(`${berlin}T12:00:00Z`);previous.setUTCDate(previous.getUTCDate()-1);while([0,6].includes(previous.getUTCDay()))previous.setUTCDate(previous.getUTCDate()-1);
  return date===berlin||date===previous.toISOString().slice(0,10);
 }
-export function fetchedSource(q:{quoteDate?:string;currency?:string;fxRate?:string;fxRateDate?:string}) {
+// Rows that Eulerpool (by ISIN) or the Alpha Vantage backup (by symbol) can price.
+export const fetchable = (r: { isin?: string; avSymbol?: string }) => !!(r.isin || r.avSymbol);
+export function fetchedSource(q:{quoteDate?:string;currency?:string;fxRate?:string;fxRateDate?:string;provider?:string}) {
  const date=(d?:string)=>d?.split("-").reverse().join(".")??"";
- return `Fetched ${date(q.quoteDate)}${q.fxRate?` · 1 ${q.currency==="GBX"||q.currency==="GBp"?"GBP":q.currency} = ${new Decimal(q.fxRate).toFixed(4).replace(".",",")} € (ECB ${date(q.fxRateDate)})`:""}`;
+ return `Fetched ${date(q.quoteDate)}${q.provider==="EULERPOOL"?" · Eulerpool":q.provider==="YAHOO"?" · Yahoo Finance":""}${q.fxRate?` · 1 ${q.currency==="GBX"||q.currency==="GBp"?"GBP":q.currency} = ${new Decimal(q.fxRate).toFixed(4).replace(".",",")} € (ECB ${date(q.fxRateDate)})`:""}`;
 }

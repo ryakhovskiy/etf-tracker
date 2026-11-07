@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -97,6 +98,7 @@ type Client struct {
 	BaseURL string
 	APIKey  string
 	Cache   *Cache
+	Log     *slog.Logger
 }
 
 func NewLive(key string, cache *Cache) *Client {
@@ -124,19 +126,25 @@ func (c *Client) post(ctx context.Context, endpoint string, request, out any) er
 	if c.APIKey != "" {
 		req.Header.Set("X-OPENFIGI-APIKEY", c.APIKey)
 	}
+	started := time.Now()
 	res, err := c.HTTP.Do(req)
 	if err != nil {
+		logUpstream(c.Log, slog.LevelError, "OPENFIGI", "request failed", "endpoint", endpoint, "elapsed", time.Since(started).Round(time.Millisecond).String(), "error", cleanErr(err))
 		return ErrUpstream
 	}
 	defer res.Body.Close()
 	if res.StatusCode == 429 {
+		logUpstream(c.Log, slog.LevelWarn, "OPENFIGI", "rate limited (429)", "endpoint", endpoint, "retryAfter", res.Header.Get("Retry-After"))
 		return ErrRateLimited
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+		logUpstream(c.Log, slog.LevelError, "OPENFIGI", "error response", "endpoint", endpoint, "status", res.StatusCode, "body", snippet(body))
 		return ErrUpstream
 	}
 	b, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 	if err != nil || json.Unmarshal(b, out) != nil {
+		logUpstream(c.Log, slog.LevelError, "OPENFIGI", "unreadable response", "endpoint", endpoint, "body", snippet(b))
 		return ErrUpstream
 	}
 	valid := true
@@ -149,6 +157,7 @@ func (c *Client) post(ctx context.Context, endpoint string, request, out any) er
 		}
 	}
 	if !valid {
+		logUpstream(c.Log, slog.LevelWarn, "OPENFIGI", "response carried an error or warning", "endpoint", endpoint, "body", snippet(b))
 		return ErrUpstream
 	}
 	if c.Cache != nil {
@@ -178,7 +187,7 @@ func (c *Client) Map(ctx context.Context, jobs []MappingJob) ([]Response, error)
 	return out, err
 }
 
-//go:embed testdata/marketdata/*.json
+//go:embed testdata/marketdata/*.json testdata/marketdata/eulerpool/*.json testdata/marketdata/yahoo/*.json
 var fixtures embed.FS
 
 type Mock struct{}
@@ -234,9 +243,11 @@ type Result struct {
 	InPortfolio          bool   `json:"inPortfolio"`
 }
 type Results struct {
-	Results []Result `json:"results"`
-	Reason  string   `json:"reason,omitempty"`
-	Warning string   `json:"warning,omitempty"`
+	Provider string   `json:"provider,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+	Results  []Result `json:"results"`
+	Reason   string   `json:"reason,omitempty"`
+	Warning  string   `json:"warning,omitempty"`
 }
 type Service struct {
 	Provider Provider

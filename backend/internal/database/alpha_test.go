@@ -97,7 +97,7 @@ func TestAVLedgerPersistsCleanupAndQuoteDay(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err = s.db.QueryRow("SELECT COUNT(*) FROM av_requests").Scan(&count); err != nil || count != 0 {
+	if err = s.db.QueryRow("SELECT COUNT(*) FROM provider_requests").Scan(&count); err != nil || count != 0 {
 		t.Fatal(count, err)
 	}
 	if err = s.LinkSymbol(ctx, "alice", 1, "S1", "EUR", ""); err != nil {

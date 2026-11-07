@@ -19,6 +19,19 @@ const developmentJWTSecret = "local-development-jwt-secret-change-me"
 type Config struct {
 	AlphaVantageAPIKey  string
 	AVLimits            marketdata.AVLimits
+	EulerpoolAPIKey     string
+	EulerpoolBaseURL    string
+	EulerpoolSoftLimit  int
+	EulerpoolQuoteTTL   time.Duration
+	EulerpoolProfileTTL time.Duration
+	MarketdataPrimary   string
+	YahooCookieURL      string
+	YahooQueryURL       string
+	YahooFallbackURL    string
+	YahooUserAgent      string
+	YahooSoftLimit      int
+	YahooMinInterval    time.Duration
+	YahooCooldown       time.Duration
 	FrankfurterBaseURL  string
 	FXProvider          string
 	MarketdataMode      string
@@ -78,6 +91,54 @@ func Load() (Config, error) {
 	cfg.AlphaVantageAPIKey = os.Getenv("ALPHAVANTAGE_API_KEY")
 	if cfg.MarketdataMode == "live" && cfg.AlphaVantageAPIKey == "" {
 		return Config{}, errors.New("ALPHAVANTAGE_API_KEY is required in live mode")
+	}
+	cfg.EulerpoolAPIKey = os.Getenv("EULERPOOL_API_KEY")
+	if cfg.MarketdataMode == "live" && cfg.EulerpoolAPIKey == "" {
+		return Config{}, errors.New("EULERPOOL_API_KEY is required in live mode")
+	}
+	cfg.EulerpoolBaseURL = strings.TrimSuffix(value("EULERPOOL_BASE_URL", "https://api.eulerpool.com/api/1"), "/")
+	epURL, e := url.Parse(cfg.EulerpoolBaseURL)
+	if e != nil || epURL.Hostname() == "" || (epURL.Scheme != "http" && epURL.Scheme != "https") || epURL.User != nil || epURL.RawQuery != "" || epURL.Fragment != "" {
+		return Config{}, errors.New("EULERPOOL_BASE_URL must be an HTTP(S) URL")
+	}
+	cfg.EulerpoolSoftLimit, err = strconv.Atoi(value("EULERPOOL_SOFT_DAILY_LIMIT", "500"))
+	if err != nil || cfg.EulerpoolSoftLimit < 1 {
+		return Config{}, errors.New("EULERPOOL_SOFT_DAILY_LIMIT must be a positive integer")
+	}
+	cfg.EulerpoolQuoteTTL, err = time.ParseDuration(value("EULERPOOL_QUOTE_TTL", "15m"))
+	if err != nil || cfg.EulerpoolQuoteTTL <= 0 {
+		return Config{}, errors.New("EULERPOOL_QUOTE_TTL must be a positive duration")
+	}
+	cfg.EulerpoolProfileTTL, err = time.ParseDuration(value("EULERPOOL_PROFILE_TTL", "720h"))
+	if err != nil || cfg.EulerpoolProfileTTL <= 0 {
+		return Config{}, errors.New("EULERPOOL_PROFILE_TTL must be a positive duration")
+	}
+	cfg.MarketdataPrimary = strings.ToUpper(value("MARKETDATA_PRIMARY", marketdata.ProviderEulerpool))
+	if cfg.MarketdataPrimary != marketdata.ProviderEulerpool && cfg.MarketdataPrimary != marketdata.ProviderAlphaVantage {
+		return Config{}, errors.New("MARKETDATA_PRIMARY must be EULERPOOL or ALPHAVANTAGE")
+	}
+	for _, entry := range []struct {
+		key, fallback string
+		out           *string
+	}{{"YAHOO_COOKIE_URL", "https://fc.yahoo.com", &cfg.YahooCookieURL}, {"YAHOO_QUERY_URL", "https://query1.finance.yahoo.com", &cfg.YahooQueryURL}, {"YAHOO_FALLBACK_URL", "https://query2.finance.yahoo.com", &cfg.YahooFallbackURL}} {
+		*entry.out = strings.TrimSuffix(value(entry.key, entry.fallback), "/")
+		u, e := url.Parse(*entry.out)
+		if e != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return Config{}, fmt.Errorf("%s must be an HTTP(S) URL", entry.key)
+		}
+	}
+	cfg.YahooUserAgent = value("YAHOO_USER_AGENT", marketdata.DefaultYahooUserAgent)
+	cfg.YahooSoftLimit, err = strconv.Atoi(value("YAHOO_SOFT_DAILY_LIMIT", "1000"))
+	if err != nil || cfg.YahooSoftLimit < 1 {
+		return Config{}, errors.New("YAHOO_SOFT_DAILY_LIMIT must be a positive integer")
+	}
+	cfg.YahooMinInterval, err = time.ParseDuration(value("YAHOO_MIN_INTERVAL", "300ms"))
+	if err != nil || cfg.YahooMinInterval < 0 {
+		return Config{}, errors.New("YAHOO_MIN_INTERVAL must be a non-negative duration")
+	}
+	cfg.YahooCooldown, err = time.ParseDuration(value("YAHOO_COOLDOWN", "15m"))
+	if err != nil || cfg.YahooCooldown <= 0 {
+		return Config{}, errors.New("YAHOO_COOLDOWN must be a positive duration")
 	}
 	for _, entry := range []struct {
 		key      string

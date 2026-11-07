@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"holdings/backend/internal/config"
+	"holdings/backend/internal/marketdata"
 )
 
 type googleClient struct {
@@ -20,8 +22,8 @@ type googleClient struct {
 	httpClient   *http.Client
 }
 
-func newGoogleClient(cfg config.Config) *googleClient {
-	return &googleClient{clientID: cfg.GoogleClientID, clientSecret: cfg.GoogleClientSecret, redirectURL: cfg.GoogleRedirectURL, httpClient: &http.Client{Timeout: 10 * time.Second}}
+func newGoogleClient(cfg config.Config, logger *slog.Logger) *googleClient {
+	return &googleClient{clientID: cfg.GoogleClientID, clientSecret: cfg.GoogleClientSecret, redirectURL: cfg.GoogleRedirectURL, httpClient: marketdata.NewLoggedClient(10*time.Second, logger)}
 }
 
 func (g *googleClient) authorizationURL(state, challenge string) string {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sync"
 	"time"
 
 	"holdings/backend/internal/config"
@@ -17,6 +18,11 @@ import (
 
 type Handler struct {
 	av          *marketdata.AVGateway
+	ep          *marketdata.EPGateway
+	yahoo       *marketdata.YahooGateway
+	primary     string
+	profileTTL  time.Duration
+	bg          sync.WaitGroup
 	fx          *marketdata.FXService
 	jobs        *priceJobs
 	figi        marketdata.Service
@@ -28,6 +34,7 @@ type Handler struct {
 }
 
 func NewHandler(cfg config.Config, store *database.Store, logger *slog.Logger) *Handler {
+	errorLog = logger
 	codes := cfg.OpenFIGIExchCodes
 	if len(codes) == 0 {
 		codes = []string{"GR", "GY"}
@@ -42,7 +49,10 @@ func NewHandler(cfg config.Config, store *database.Store, logger *slog.Logger) *
 	}
 	var provider marketdata.Provider = marketdata.Mock{}
 	if cfg.MarketdataMode == "live" {
-		provider = marketdata.NewLive(cfg.OpenFIGIAPIKey, marketdata.NewCache(size, ttl))
+		figi := marketdata.NewLive(cfg.OpenFIGIAPIKey, marketdata.NewCache(size, ttl))
+		figi.Log = logger
+		figi.HTTP = marketdata.NewLoggedClient(10*time.Second, logger)
+		provider = figi
 	}
 	var avTransport marketdata.AVTransport = marketdata.MockAV{}
 	var fxProvider marketdata.FXProvider = marketdata.MockFX{}
@@ -50,11 +60,35 @@ func NewHandler(cfg config.Config, store *database.Store, logger *slog.Logger) *
 	if fxKey == "" {
 		fxKey = "ECB"
 	}
+	var epTransport marketdata.EPTransport = marketdata.MockEP{}
 	if cfg.MarketdataMode == "live" {
-		avTransport = &marketdata.AVHTTP{HTTP: &http.Client{Timeout: 10 * time.Second}, BaseURL: "https://www.alphavantage.co/query", Key: cfg.AlphaVantageAPIKey}
-		fxProvider = &marketdata.Frankfurter{HTTP: &http.Client{Timeout: 10 * time.Second}, BaseURL: cfg.FrankfurterBaseURL, Provider: fxKey, Cache: marketdata.NewCache(1, 24*time.Hour)}
+		epTransport = &marketdata.EPHTTP{HTTP: marketdata.NewLoggedClient(10*time.Second, logger), BaseURL: cfg.EulerpoolBaseURL, Key: cfg.EulerpoolAPIKey, Log: logger}
+		avTransport = &marketdata.AVHTTP{HTTP: marketdata.NewLoggedClient(10*time.Second, logger), BaseURL: "https://www.alphavantage.co/query", Key: cfg.AlphaVantageAPIKey, Log: logger}
+		fxProvider = &marketdata.Frankfurter{HTTP: marketdata.NewLoggedClient(10*time.Second, logger), BaseURL: cfg.FrankfurterBaseURL, Provider: fxKey, Cache: marketdata.NewCache(1, 24*time.Hour), Log: logger}
 	}
-	return &Handler{av: marketdata.NewAVGateway(store, avTransport, marketdata.NewCache(size, ttl), cfg.AVLimits), fx: &marketdata.FXService{Store: store, Provider: fxProvider, ProviderKey: fxKey, Now: time.Now}, jobs: &priceJobs{entries: map[string]*priceJob{}}, figi: marketdata.Service{Provider: provider, Codes: codes}, frontendURL: cfg.FrontendURL, google: newGoogleClient(cfg), store: store, tokens: newTokenManager(cfg, store), logger: logger}
+	primary := cfg.MarketdataPrimary
+	if primary == "" {
+		primary = marketdata.ProviderEulerpool
+	}
+	profileTTL := cfg.EulerpoolProfileTTL
+	if profileTTL == 0 {
+		profileTTL = 30 * 24 * time.Hour
+	}
+	store.SetQuoteTTL(cfg.EulerpoolQuoteTTL)
+	var yahooTransport marketdata.YahooTransport = marketdata.MockYahoo{}
+	if cfg.MarketdataMode == "live" {
+		yahooTransport = marketdata.NewYahooHTTP(10*time.Second, logger, cfg.YahooUserAgent)
+	}
+	yahoo := marketdata.NewYahooGateway(store, yahooTransport, cfg.YahooSoftLimit, cfg.YahooMinInterval, cfg.YahooCooldown)
+	if cfg.YahooQueryURL != "" {
+		yahoo.CookieURL, yahoo.QueryURL, yahoo.FallbackURL = cfg.YahooCookieURL, cfg.YahooQueryURL, cfg.YahooFallbackURL
+	}
+	yahoo.Log = logger
+	ep := marketdata.NewEPGateway(store, epTransport, cfg.EulerpoolSoftLimit)
+	ep.Log = logger
+	avGateway := marketdata.NewAVGateway(store, avTransport, marketdata.NewCache(size, ttl), cfg.AVLimits)
+	avGateway.Log = logger
+	return &Handler{ep: ep, yahoo: yahoo, primary: primary, profileTTL: profileTTL, av: avGateway, fx: &marketdata.FXService{Store: store, Provider: fxProvider, ProviderKey: fxKey, Now: time.Now}, jobs: &priceJobs{entries: map[string]*priceJob{}}, figi: marketdata.Service{Provider: provider, Codes: codes}, frontendURL: cfg.FrontendURL, google: newGoogleClient(cfg, logger), store: store, tokens: newTokenManager(cfg, store), logger: logger}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -63,13 +97,15 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerImportRoutes(mux)
 	h.registerOnlineRoutes(mux)
 	h.registerAlphaRoutes(mux)
+	h.registerEulerpoolRoutes(mux)
+	h.registerYahooRoutes(mux)
 	mux.HandleFunc("GET /auth/google", h.googleLogin)
 	mux.HandleFunc("GET /auth/google/callback", h.googleCallback)
 	mux.HandleFunc("GET /auth/me", h.me)
 	mux.HandleFunc("POST /auth/refresh", h.refresh)
 	mux.HandleFunc("POST /auth/logout", h.logout)
 }
-func (h *Handler) Close() { h.av.Close() }
+func (h *Handler) Close() { h.bg.Wait(); h.av.Close() }
 
 func (h *Handler) googleLogin(w http.ResponseWriter, r *http.Request) {
 	if h.google.clientID == "" || h.google.clientSecret == "" {

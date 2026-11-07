@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -63,6 +64,7 @@ type Quote struct {
 	FXRateDate   string    `json:"fxRateDate,omitempty"`
 	QuoteDate    string    `json:"quoteDate"`
 	FetchedAt    time.Time `json:"-"`
+	Provider     string    `json:"provider,omitempty"`
 }
 type AVStore interface {
 	AVBudget(context.Context, string, time.Time, AVLimits) (Budget, error)
@@ -77,6 +79,7 @@ type AVTransport interface {
 type AVHTTP struct {
 	HTTP         *http.Client
 	BaseURL, Key string
+	Log          *slog.Logger
 }
 
 func (c *AVHTTP) Call(ctx context.Context, function, query string) ([]byte, error) {
@@ -97,16 +100,22 @@ func (c *AVHTTP) Call(ctx context.Context, function, query string) ([]byte, erro
 	if err != nil {
 		return nil, ErrUpstream
 	}
+	started := time.Now()
 	res, err := c.HTTP.Do(req)
 	if err != nil {
+		// The query string holds the API key; log only the cleaned cause.
+		logUpstream(c.Log, slog.LevelError, ProviderAlphaVantage, "request failed", "function", function, "elapsed", time.Since(started).Round(time.Millisecond).String(), "error", cleanErr(err))
 		return nil, ErrUpstream
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+		logUpstream(c.Log, slog.LevelError, ProviderAlphaVantage, "error response", "function", function, "status", res.StatusCode, "body", snippet(body))
 		return nil, ErrUpstream
 	}
 	b, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
+		logUpstream(c.Log, slog.LevelError, ProviderAlphaVantage, "reading response failed", "function", function, "error", cleanErr(err))
 		return nil, ErrUpstream
 	}
 	return b, nil
@@ -119,6 +128,7 @@ type AVGateway struct {
 	Limits    AVLimits
 	Now       func() time.Time
 	Sleep     func(context.Context, time.Duration) error
+	Log       *slog.Logger
 	queue     chan avCall
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -218,16 +228,19 @@ func (g *AVGateway) execute(c avCall) avReply {
 	}
 	b, err := g.Transport.Call(c.ctx, c.function, c.query)
 	if err != nil {
+		// The transport has already logged the cause.
 		return avReply{err: ErrUpstream}
 	}
 	var body map[string]json.RawMessage
 	if json.Unmarshal(b, &body) != nil {
+		logUpstream(g.Log, slog.LevelError, ProviderAlphaVantage, "unparseable response", "function", c.function, "body", snippet(b))
 		return avReply{err: ErrUpstream}
 	}
 	for _, k := range []string{"Note", "Information"} {
 		if v, ok := body[k]; ok {
 			message := strings.ToLower(string(v))
 			if strings.Contains(message, "limit") || strings.Contains(message, "frequency") || strings.Contains(message, "requests per") {
+				logUpstream(g.Log, slog.LevelWarn, ProviderAlphaVantage, "rate limit notice; pausing requests", "function", c.function, "backoff", g.Limits.Backoff.String(), "message", snippet(v))
 				if err = g.Store.BlockAV(c.ctx, g.Now().Add(g.Limits.Backoff)); err != nil {
 					return avReply{err: err}
 				}
@@ -235,10 +248,12 @@ func (g *AVGateway) execute(c avCall) avReply {
 			}
 		}
 	}
-	if _, ok := body["Error Message"]; ok {
+	if m, ok := body["Error Message"]; ok {
+		logUpstream(g.Log, slog.LevelError, ProviderAlphaVantage, "error message in response", "function", c.function, "message", snippet(m))
 		return avReply{err: ErrUpstream}
 	}
 	if body["Note"] != nil || body["Information"] != nil {
+		logUpstream(g.Log, slog.LevelError, ProviderAlphaVantage, "request rejected (check the API key)", "function", c.function, "message", snippet(append(append([]byte{}, body["Note"]...), body["Information"]...)))
 		return avReply{err: ErrAVRejected}
 	}
 	if c.function == "SYMBOL_SEARCH" {
@@ -252,6 +267,9 @@ func (g *AVGateway) execute(c avCall) avReply {
 		return avReply{data: b}
 	}
 	q, err := c.build(b)
+	if err != nil {
+		logUpstream(g.Log, slog.LevelError, ProviderAlphaVantage, "unusable quote response", "function", c.function, "body", snippet(b))
+	}
 	if err == nil {
 		err = g.Store.SaveQuote(c.ctx, q, c.query)
 	}
@@ -365,7 +383,7 @@ func ApplyFX(q *Quote, fx *FXRate) error {
 		return err
 	}
 	div := int64(1)
-	if q.Currency == "GBX" || q.Currency == "GBp" {
+	if MinorUnit(q.Currency) {
 		div = 100
 	}
 	v, err := Convert(p, fx.Rate, div)
@@ -514,3 +532,6 @@ func AVSearchTerm(ticker, name string) string {
 	}
 	return strings.Join(words, " ")
 }
+
+// MinorUnit reports currency codes quoted in 1/100 of the major unit.
+func MinorUnit(c string) bool { return c == "GBX" || c == "GBp" || c == "ZAc" }

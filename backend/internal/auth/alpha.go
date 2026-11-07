@@ -20,6 +20,7 @@ import (
 type priceItem struct {
 	InstrumentID int64  `json:"instrumentId"`
 	Status       string `json:"status"`
+	Reason       string `json:"reason,omitempty"`
 	*marketdata.Quote
 }
 type priceJob struct {
@@ -37,12 +38,28 @@ type fetchInput struct {
 	Date     string  `json:"date"`
 	IDs      []int64 `json:"instrumentIds"`
 	Priority string  `json:"priority,omitempty"`
+	// Provider selects the price source: EULERPOOL or ALPHAVANTAGE (the backup).
+	// Empty means the configured primary.
+	Provider string `json:"provider,omitempty"`
 }
 
 func marketError(w http.ResponseWriter, err error) {
+	if errors.Is(err, marketdata.ErrUpstream) || errors.Is(err, marketdata.ErrAVLimit) || errors.Is(err, marketdata.ErrAVUserLimit) || errors.Is(err, marketdata.ErrEPLimit) || errors.Is(err, marketdata.ErrEPAuth) || errors.Is(err, marketdata.ErrYahooLimit) || errors.Is(err, marketdata.ErrYahooAuth) {
+		errorLog.Warn("market data request failed", "error", err.Error())
+	}
 	switch {
 	case errors.Is(err, marketdata.ErrAVLimit), errors.Is(err, marketdata.ErrAVUserLimit):
 		apiError(w, 429, err.Error(), "Alpha Vantage budget is unavailable. Try again later.")
+	case errors.Is(err, marketdata.ErrEPLimit):
+		apiError(w, 429, "EULERPOOL_LIMIT_REACHED", "Eulerpool request budget is used up. Try again later.")
+	case errors.Is(err, marketdata.ErrEPAuth):
+		apiError(w, 502, "EULERPOOL_AUTH_ERROR", "Eulerpool rejected the API key.")
+	case errors.Is(err, marketdata.ErrYahooLimit):
+		apiError(w, 429, "YAHOO_LIMIT_REACHED", "Yahoo Finance is rate limiting requests. Try again later.")
+	case errors.Is(err, marketdata.ErrYahooAuth):
+		apiError(w, 502, "YAHOO_AUTH_ERROR", "Could not establish a Yahoo Finance session (cookie/crumb).")
+	case errors.Is(err, database.ErrISINInUse):
+		apiError(w, 409, "ISIN_IN_USE", "This ISIN belongs to another instrument.")
 	case errors.Is(err, database.ErrAlreadyLinked):
 		apiError(w, 409, "ALREADY_LINKED", "This instrument is already linked.")
 	case errors.Is(err, database.ErrSymbolInUse):
@@ -55,12 +72,26 @@ func marketError(w http.ResponseWriter, err error) {
 		storeError(w, err)
 	}
 }
+func (h *Handler) jobProvider(in fetchInput) string {
+	if in.Provider != "" {
+		return in.Provider
+	}
+	return h.primary
+}
 func (h *Handler) fetchRows(ctx context.Context, user string, id int64, in fetchInput) ([]database.SavingPlanItem, error) {
 	rows, err := h.store.SavingPlan(ctx, user, id)
 	if err != nil {
 		return nil, err
 	}
-	if !marketdata.AllowedDate(in.Date, time.Now()) {
+	if in.Provider != "" && in.Provider != marketdata.ProviderEulerpool && in.Provider != marketdata.ProviderAlphaVantage && in.Provider != marketdata.ProviderYahoo {
+		return nil, database.ErrInvalid
+	}
+	if h.jobProvider(in) == marketdata.ProviderYahoo {
+		// Yahoo serves history: any trading day from 1990 up to today.
+		if _, err := time.Parse("2006-01-02", in.Date); err != nil || in.Date < "1990-01-01" || in.Date > marketdata.BerlinDay(time.Now()) {
+			return nil, &database.ValidationError{Code: "VALIDATION_ERROR", Message: "Choose a date from 1990-01-01 through today.", Fields: map[string]string{"date": "Choose a date from 1990-01-01 through today."}}
+		}
+	} else if !marketdata.AllowedDate(in.Date, time.Now()) {
 		return nil, &database.ValidationError{Code: "VALIDATION_ERROR", Message: "Fetched prices are current prices; enter historical prices manually.", Fields: map[string]string{"date": "Choose today or the previous weekday."}}
 	}
 	if (in.Priority != "" && in.Priority != "HOLDINGS_VALUE") || len(in.IDs) > 100 {
@@ -105,14 +136,24 @@ func (h *Handler) registerAlphaRoutes(mux *http.ServeMux) {
 			storeError(w, err)
 			return
 		}
-		httpapi.JSON(w, 200, b)
+		eb, err := h.ep.Budget(r.Context())
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		yb, err := h.yahoo.Budget(r.Context())
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		httpapi.JSON(w, 200, map[string]any{"globalRemaining": b.GlobalRemaining, "userRemaining": b.UserRemaining, "userLimit": b.UserLimit, "nextSlotAt": b.NextSlotAt, "blockedUntil": b.BlockedUntil, "eulerpool": eb, "yahoo": yb})
 	}))
 	mux.HandleFunc("GET /api/portfolios/{id}/price-fetch/estimate", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
 		id, ok := portfolioID(w, r)
 		if !ok {
 			return
 		}
-		in := fetchInput{Date: r.URL.Query().Get("date")}
+		in := fetchInput{Date: r.URL.Query().Get("date"), Provider: r.URL.Query().Get("provider")}
 		if raw := r.URL.Query().Get("instrumentIds"); raw != "" {
 			for _, v := range strings.Split(raw, ",") {
 				n, err := strconv.ParseInt(v, 10, 64)
@@ -151,7 +192,17 @@ func (h *Handler) registerAlphaRoutes(mux *http.ServeMux) {
 			storeError(w, err)
 			return
 		}
-		httpapi.JSON(w, 200, map[string]any{"requestsNeeded": needed, "fresh": fresh, "noSymbol": noSymbol, "budget": b})
+		eulerpool, err := h.eulerpoolEstimate(r.Context(), rows)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		yahoo, err := h.yahooEstimate(r.Context(), rows, in.Date)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		httpapi.JSON(w, 200, map[string]any{"requestsNeeded": needed, "fresh": fresh, "noSymbol": noSymbol, "budget": b, "provider": h.jobProvider(in), "eulerpool": eulerpool, "yahoo": yahoo, "alphavantage": map[string]int{"requests": needed, "remaining": min(b.GlobalRemaining, b.UserRemaining)}})
 	}))
 	mux.HandleFunc("POST /api/portfolios/{id}/price-fetch-jobs", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
 		id, ok := portfolioID(w, r)
@@ -197,7 +248,14 @@ func (h *Handler) registerAlphaRoutes(mux *http.ServeMux) {
 		h.jobs.entries[key] = job
 		h.jobs.mu.Unlock()
 		time.AfterFunc(time.Hour, func() { h.jobs.mu.Lock(); delete(h.jobs.entries, key); h.jobs.mu.Unlock() })
-		go h.runPrices(job, rows, in.Date)
+		switch h.jobProvider(in) {
+		case marketdata.ProviderEulerpool:
+			go h.runEulerpoolPrices(job, rows, in.Date)
+		case marketdata.ProviderYahoo:
+			go h.runYahooPrices(job, rows, in.Date)
+		default:
+			go h.runPrices(job, rows, in.Date)
+		}
 		httpapi.JSON(w, 202, map[string]string{"jobId": key})
 	}))
 	mux.HandleFunc("GET /api/price-fetch-jobs/{jobId}", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
@@ -290,10 +348,7 @@ func (h *Handler) quoteForDate(ctx context.Context, q *marketdata.Quote, symbol 
 	return c, h.store.SaveQuote(ctx, c, symbol)
 }
 func fxCurrency(c string) string {
-	if c == "GBX" || c == "GBp" {
-		return "GBP"
-	}
-	return c
+	return marketdata.MajorUnit(c)
 }
 func (h *Handler) runPrices(job *priceJob, rows []database.SavingPlanItem, date string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
@@ -362,6 +417,7 @@ func (h *Handler) runPrices(job *priceJob, rows []database.SavingPlanItem, date 
 		}
 		if err != nil {
 			q = nil
+			h.logger.Warn("Alpha Vantage price fetch failed", "instrument", r.InstrumentID, "symbol", r.AVSymbol, "error", err.Error())
 			switch {
 			case errors.Is(err, marketdata.ErrAVLimit), errors.Is(err, marketdata.ErrAVUserLimit):
 				status = "RATE_LIMITED"

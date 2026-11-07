@@ -185,6 +185,8 @@ type SavingPlanItem struct {
 	AVSearchTerm  string `json:"avSearchTerm,omitempty"`
 	QuoteID       int64  `json:"quoteId,omitempty"`
 	InstrumentID  int64  `json:"instrumentId"`
+	ISIN          string `json:"isin,omitempty"`
+	Type          string `json:"type"`
 	Ticker        string `json:"ticker"`
 	Name          string `json:"name"`
 	DefaultAmount string `json:"defaultAmount"`
@@ -196,7 +198,7 @@ func (s *Store) SavingPlan(ctx context.Context, user string, id int64) ([]Saving
 	if _, err := s.Portfolio(ctx, user, id); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.ticker,i.name,COALESCE(l.amount_eur_e2,0),COALESCE(l.price_eur_e4,0),COALESCE(t.trade_date,''),COALESCE(i.av_symbol,''),COALESCE(i.av_currency,''),COALESCE(i.av_region,''),COALESCE(i.av_linked_by= ?,0),COALESCE(i.av_linked_at,'') FROM portfolio_items pi JOIN instruments i ON i.id=pi.instrument_id LEFT JOIN transaction_lines l ON l.id=(SELECT ll.id FROM transaction_lines ll JOIN transactions tt ON tt.id=ll.transaction_id WHERE tt.portfolio_id=pi.portfolio_id AND ll.instrument_id=i.id ORDER BY tt.trade_date DESC,tt.created_at DESC,tt.id DESC,ll.id DESC LIMIT 1) LEFT JOIN transactions t ON t.id=l.transaction_id WHERE pi.portfolio_id=? ORDER BY i.id`, user, id)
+	rows, err := s.db.QueryContext(ctx, `SELECT i.id,COALESCE(i.isin,''),i.type,i.ticker,i.name,COALESCE(l.amount_eur_e2,0),COALESCE(l.price_eur_e4,0),COALESCE(t.trade_date,''),COALESCE(i.av_symbol,''),COALESCE(i.av_currency,''),COALESCE(i.av_region,''),COALESCE(i.av_linked_by= ?,0),COALESCE(i.av_linked_at,'') FROM portfolio_items pi JOIN instruments i ON i.id=pi.instrument_id LEFT JOIN transaction_lines l ON l.id=(SELECT ll.id FROM transaction_lines ll JOIN transactions tt ON tt.id=ll.transaction_id WHERE tt.portfolio_id=pi.portfolio_id AND ll.instrument_id=i.id ORDER BY tt.trade_date DESC,tt.created_at DESC,tt.id DESC,ll.id DESC LIMIT 1) LEFT JOIN transactions t ON t.id=l.transaction_id WHERE pi.portfolio_id=? ORDER BY i.id`, user, id)
 	if err != nil {
 		return nil, err
 	}
@@ -206,10 +208,10 @@ func (s *Store) SavingPlan(ctx context.Context, user string, id int64) ([]Saving
 		var v SavingPlanItem
 		var a, p int64
 		var date string
-		if err := rows.Scan(&v.InstrumentID, &v.Ticker, &v.Name, &a, &p, &date, &v.AVSymbol, &v.AVCurrency, &v.AVRegion, &v.AVLinkedByYou, &v.AVLinkedAt); err != nil {
+		if err := rows.Scan(&v.InstrumentID, &v.ISIN, &v.Type, &v.Ticker, &v.Name, &a, &p, &date, &v.AVSymbol, &v.AVCurrency, &v.AVRegion, &v.AVLinkedByYou, &v.AVLinkedAt); err != nil {
 			return nil, err
 		}
-		if v.AVSymbol == "" {
+		if v.AVSymbol == "" || v.ISIN == "" {
 			v.AVSearchTerm = marketdata.AVSearchTerm(v.Ticker, v.Name)
 		}
 		v.DefaultAmount = decimalString(a, 2)

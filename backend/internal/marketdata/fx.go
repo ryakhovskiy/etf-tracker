@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -50,8 +51,8 @@ func (s *FXService) Rate(ctx context.Context, currency, date string) (*FXRate, e
 	if currency == "EUR" {
 		return nil, nil
 	}
-	if currency == "GBX" || currency == "GBp" {
-		currency = "GBP"
+	if MinorUnit(currency) {
+		currency = MajorUnit(currency)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -132,6 +133,7 @@ type Frankfurter struct {
 	BaseURL, Provider string
 	Cache             *Cache
 	Sleep             func(context.Context, time.Duration) error
+	Log               *slog.Logger
 }
 
 func (f *Frankfurter) get(ctx context.Context, path string, out any) error {
@@ -140,8 +142,10 @@ func (f *Frankfurter) get(ctx context.Context, path string, out any) error {
 		if err != nil {
 			return ErrUpstream
 		}
+		started := time.Now()
 		res, err := f.HTTP.Do(req)
 		if err != nil {
+			logUpstream(f.Log, slog.LevelError, "FRANKFURTER", "request failed", "path", path, "elapsed", time.Since(started).Round(time.Millisecond).String(), "error", cleanErr(err))
 			return ErrUpstream
 		}
 		if res.StatusCode == 503 && attempt == 0 {
@@ -151,10 +155,12 @@ func (f *Frankfurter) get(ctx context.Context, path string, out any) error {
 					delay = max(0, int(time.Until(t).Seconds()))
 				} else {
 					res.Body.Close()
+					logUpstream(f.Log, slog.LevelError, "FRANKFURTER", "503 without usable Retry-After", "path", path)
 					return ErrUpstream
 				}
 			}
 			res.Body.Close()
+			logUpstream(f.Log, slog.LevelWarn, "FRANKFURTER", "503; retrying once", "path", path, "retryAfterSeconds", delay)
 			if delay < 0 {
 				delay = 0
 			}
@@ -172,15 +178,19 @@ func (f *Frankfurter) get(ctx context.Context, path string, out any) error {
 		}
 		if res.StatusCode == 404 || res.StatusCode == 422 {
 			res.Body.Close()
+			logUpstream(f.Log, slog.LevelWarn, "FRANKFURTER", "no rate available", "path", path, "status", res.StatusCode)
 			return ErrFXUnavailable
 		}
 		if res.StatusCode != 200 {
+			body, _ := io.ReadAll(io.LimitReader(res.Body, 512))
 			res.Body.Close()
+			logUpstream(f.Log, slog.LevelError, "FRANKFURTER", "error response", "path", path, "status", res.StatusCode, "body", snippet(body))
 			return ErrUpstream
 		}
 		err = json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(out)
 		res.Body.Close()
 		if err != nil {
+			logUpstream(f.Log, slog.LevelError, "FRANKFURTER", "unreadable response", "path", path, "error", err.Error())
 			return ErrUpstream
 		}
 		return nil
@@ -270,4 +280,15 @@ func (MockFX) Rates(ctx context.Context, currency, from, to string) ([]FXRate, e
 		d = d.AddDate(0, 0, -1)
 	}
 	return []FXRate{{d.Format("2006-01-02"), currency, "EUR", n}}, nil
+}
+
+// MajorUnit maps a minor-unit code (GBp, GBX, ZAc) to its ISO currency.
+func MajorUnit(c string) string {
+	switch c {
+	case "GBX", "GBp":
+		return "GBP"
+	case "ZAc":
+		return "ZAR"
+	}
+	return c
 }

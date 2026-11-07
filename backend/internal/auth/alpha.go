@@ -86,13 +86,9 @@ func (h *Handler) fetchRows(ctx context.Context, user string, id int64, in fetch
 	if in.Provider != "" && in.Provider != marketdata.ProviderEulerpool && in.Provider != marketdata.ProviderAlphaVantage && in.Provider != marketdata.ProviderYahoo {
 		return nil, database.ErrInvalid
 	}
-	if h.jobProvider(in) == marketdata.ProviderYahoo {
-		// Yahoo serves history: any trading day from 1990 up to today.
-		if _, err := time.Parse("2006-01-02", in.Date); err != nil || in.Date < "1990-01-01" || in.Date > marketdata.BerlinDay(time.Now()) {
-			return nil, &database.ValidationError{Code: "VALIDATION_ERROR", Message: "Choose a date from 1990-01-01 through today.", Fields: map[string]string{"date": "Choose a date from 1990-01-01 through today."}}
-		}
-	} else if !marketdata.AllowedDate(in.Date, time.Now()) {
-		return nil, &database.ValidationError{Code: "VALIDATION_ERROR", Message: "Fetched prices are current prices; enter historical prices manually.", Fields: map[string]string{"date": "Choose today or the previous weekday."}}
+	// Every provider can price a past date from its daily history; only the range is limited.
+	if _, err := time.Parse("2006-01-02", in.Date); err != nil || in.Date < "1990-01-01" || in.Date > marketdata.BerlinDay(time.Now()) {
+		return nil, &database.ValidationError{Code: "VALIDATION_ERROR", Message: "Choose a date from 1990-01-01 through today.", Fields: map[string]string{"date": "Choose a date from 1990-01-01 through today."}}
 	}
 	if (in.Priority != "" && in.Priority != "HOLDINGS_VALUE") || len(in.IDs) > 100 {
 		return nil, database.ErrInvalid
@@ -146,7 +142,7 @@ func (h *Handler) registerAlphaRoutes(mux *http.ServeMux) {
 			storeError(w, err)
 			return
 		}
-		httpapi.JSON(w, 200, map[string]any{"globalRemaining": b.GlobalRemaining, "userRemaining": b.UserRemaining, "userLimit": b.UserLimit, "nextSlotAt": b.NextSlotAt, "blockedUntil": b.BlockedUntil, "eulerpool": eb, "yahoo": yb})
+		httpapi.JSON(w, 200, map[string]any{"globalRemaining": b.GlobalRemaining, "userRemaining": b.UserRemaining, "userLimit": b.UserLimit, "nextSlotAt": b.NextSlotAt, "blockedUntil": b.BlockedUntil, "eulerpool": eb, "yahoo": yb, "primary": h.primary})
 	}))
 	mux.HandleFunc("GET /api/portfolios/{id}/price-fetch/estimate", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
 		id, ok := portfolioID(w, r)
@@ -176,10 +172,13 @@ func (h *Handler) registerAlphaRoutes(mux *http.ServeMux) {
 				noSymbol = append(noSymbol, row.InstrumentID)
 				continue
 			}
-			q, err := h.store.FreshQuote(r.Context(), row.InstrumentID, time.Now())
-			if err != nil {
-				storeError(w, err)
-				return
+			var q *marketdata.Quote
+			if in.Date == marketdata.BerlinDay(time.Now()) { // a stored quote is only reusable for today
+				var err error
+				if q, err = h.store.FreshQuote(r.Context(), row.InstrumentID, time.Now()); err != nil {
+					storeError(w, err)
+					return
+				}
 			}
 			if q != nil {
 				fresh = append(fresh, row.InstrumentID)
@@ -192,7 +191,7 @@ func (h *Handler) registerAlphaRoutes(mux *http.ServeMux) {
 			storeError(w, err)
 			return
 		}
-		eulerpool, err := h.eulerpoolEstimate(r.Context(), rows)
+		eulerpool, err := h.eulerpoolEstimate(r.Context(), rows, in.Date)
 		if err != nil {
 			storeError(w, err)
 			return
@@ -356,6 +355,7 @@ func (h *Handler) runPrices(job *priceJob, rows []database.SavingPlanItem, date 
 	h.jobs.mu.Lock()
 	job.Status = "RUNNING"
 	h.jobs.mu.Unlock()
+	historical := date != marketdata.BerlinDay(time.Now())
 	rates := map[string]*marketdata.FXRate{}
 	fxErrors := map[string]error{}
 	fresh := map[int64]*marketdata.Quote{}
@@ -366,13 +366,15 @@ func (h *Handler) runPrices(job *priceJob, rows []database.SavingPlanItem, date 
 		if r.AVSymbol == "" {
 			continue
 		}
-		q, err := h.store.FreshQuote(ctx, r.InstrumentID, time.Now())
-		if err != nil {
-			failures[r.InstrumentID] = err
-			continue
-		}
-		if q != nil {
-			fresh[r.InstrumentID] = q
+		if !historical {
+			q, err := h.store.FreshQuote(ctx, r.InstrumentID, time.Now())
+			if err != nil {
+				failures[r.InstrumentID] = err
+				continue
+			}
+			if q != nil {
+				fresh[r.InstrumentID] = q
+			}
 		}
 		ccy := fxCurrency(r.AVCurrency)
 		if ccy == "EUR" {
@@ -407,6 +409,8 @@ func (h *Handler) runPrices(job *priceJob, rows []database.SavingPlanItem, date 
 			q, err = h.quoteForDate(ctx, fresh[r.InstrumentID], r.AVSymbol, rates[ccy])
 		case limited:
 			status = "RATE_LIMITED"
+		case historical:
+			q, err = h.av.QuoteOn(ctx, job.user, r.AVSymbol, r.AVCurrency, r.InstrumentID, rates[ccy], date)
 		default:
 			var reused bool
 			q, reused, err = h.av.Quote(ctx, job.user, r.AVSymbol, r.AVCurrency, r.InstrumentID, rates[ccy])
@@ -422,6 +426,8 @@ func (h *Handler) runPrices(job *priceJob, rows []database.SavingPlanItem, date 
 			case errors.Is(err, marketdata.ErrAVLimit), errors.Is(err, marketdata.ErrAVUserLimit):
 				status = "RATE_LIMITED"
 				limited = true
+			case errors.Is(err, marketdata.ErrAVOutOfRange):
+				status = "NOT_FOUND" // older than the compact daily series (about 100 trading days)
 			case errors.Is(err, marketdata.ErrFXUnavailable):
 				status = "FX_RATE_UNAVAILABLE"
 			case errors.Is(err, marketdata.ErrFXUnsupported):

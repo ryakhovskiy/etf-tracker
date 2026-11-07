@@ -187,10 +187,6 @@ func TestYahooDateRulesAndRateLimit(t *testing.T) {
 			t.Fatal(date, w.Code)
 		}
 	}
-	// Other providers still refuse historical dates.
-	if w := featureRequest(handler, "POST", path+"/price-fetch-jobs", `{"date":"2026-11-03","instrumentIds":[7]}`, cookies...); w.Code != 400 {
-		t.Fatal(w.Code)
-	}
 	w := featureRequest(handler, "GET", path+"/price-fetch/estimate?date=2026-11-03&instrumentIds=7,18&provider=YAHOO", "", cookies...)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"historical":true`) || !strings.Contains(w.Body.String(), `"requests":4`) {
 		t.Fatal(w.Code, w.Body.String())

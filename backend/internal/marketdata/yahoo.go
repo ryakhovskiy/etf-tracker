@@ -246,7 +246,7 @@ func (g *YahooGateway) call(ctx context.Context, user, function, host, path stri
 
 // ---- parsing ----
 
-type YahooHit struct{ Symbol, Name, Type, Exchange string }
+type YahooHit struct{ Symbol, Name, Type, Exchange, Sector, Industry string }
 
 // ParseYahooSearch keeps equities and ETFs, in Yahoo's ranking order.
 func ParseYahooSearch(b []byte) ([]YahooHit, error) {
@@ -257,6 +257,9 @@ func ParseYahooSearch(b []byte) ([]YahooHit, error) {
 			Longname  string `json:"longname"`
 			Shortname string `json:"shortname"`
 			Exchange  string `json:"exchange"`
+			ExchDisp  string `json:"exchDisp"`
+			Sector    string `json:"sectorDisp"`
+			Industry  string `json:"industryDisp"`
 		} `json:"quotes"`
 	}
 	if json.Unmarshal(b, &raw) != nil {
@@ -271,7 +274,11 @@ func ParseYahooSearch(b []byte) ([]YahooHit, error) {
 		if name == "" {
 			name = strings.Join(strings.Fields(q.Shortname), " ")
 		}
-		out = append(out, YahooHit{Symbol: q.Symbol, Name: name, Type: q.QuoteType, Exchange: q.Exchange})
+		exchange := q.ExchDisp
+		if exchange == "" {
+			exchange = q.Exchange
+		}
+		out = append(out, YahooHit{Symbol: q.Symbol, Name: name, Type: q.QuoteType, Exchange: exchange, Sector: q.Sector, Industry: q.Industry})
 	}
 	return out, nil
 }
@@ -390,22 +397,27 @@ func ParseYahooChart(b []byte) (*YahooSeries, error) {
 
 // ---- gateway operations ----
 
-// ResolveSymbol maps an ISIN to the Yahoo symbol of its best listing.
-func (g *YahooGateway) ResolveSymbol(ctx context.Context, user, isin string) (string, error) {
-	b, err := g.call(ctx, user, "search", g.FallbackURL, "/v1/finance/search", url.Values{"q": {isin}, "quotesCount": {"5"}, "newsCount": {"0"}, "listsCount": {"0"}})
+// Search finds equities and ETFs by name, ticker or ISIN, best match first.
+func (g *YahooGateway) Search(ctx context.Context, user, q string, limit int) ([]YahooHit, error) {
+	b, err := g.call(ctx, user, "search", g.FallbackURL, "/v1/finance/search", url.Values{"q": {q}, "quotesCount": {strconv.Itoa(limit)}, "newsCount": {"0"}, "listsCount": {"0"}})
 	if err != nil {
 		if errors.Is(err, ErrYahooNotFound) {
-			return "", nil
+			return []YahooHit{}, nil
 		}
-		return "", err
+		return nil, err
 	}
 	hits, err := ParseYahooSearch(b)
 	if err != nil {
 		logUpstream(g.Log, slog.LevelError, ProviderYahoo, "unparseable search response", "body", snippet(b))
-		return "", err
 	}
-	if len(hits) == 0 {
-		return "", nil
+	return hits, err
+}
+
+// ResolveSymbol maps an ISIN to the Yahoo symbol of its best listing.
+func (g *YahooGateway) ResolveSymbol(ctx context.Context, user, isin string) (string, error) {
+	hits, err := g.Search(ctx, user, isin, 5)
+	if err != nil || len(hits) == 0 {
+		return "", err
 	}
 	return hits[0].Symbol, nil
 }
@@ -481,8 +493,14 @@ func (MockYahoo) Get(ctx context.Context, rawURL string) (int, http.Header, []by
 		switch strings.ToUpper(q.Get("q")) {
 		case "IE00B8GKDB10":
 			return 200, h, read("search-isin-etf"), nil
-		case "DE0007164600":
+		case "DE0007164600", "SAP", "SAP SE":
 			return 200, h, read("search-isin-stock"), nil
+		case "VANGUARD HIGH DIVIDEND", "VHYD":
+			return 200, h, read("search-isin-etf"), nil
+		case "DE000A0F5UH1":
+			return 200, h, read("search-isin-ispa"), nil
+		case "IE00B4L5Y983":
+			return 200, h, read("search-isin-iwda"), nil
 		}
 		return 200, h, read("search-empty"), nil
 	case u.Path == "/v7/finance/quote":
@@ -513,6 +531,24 @@ func (MockYahoo) Get(ctx context.Context, rawURL string) (int, http.Header, []by
 		}
 		b, _ := json.Marshal(map[string]any{"quoteResponse": map[string]any{"result": keep, "error": nil}})
 		return 200, h, b, nil
+	case strings.HasPrefix(u.Path, "/v8/finance/chart/") && q.Get("events") == "div":
+		// Recorded 2023-01-01..2026-11-07 with events=div, trimmed to the bars
+		// around each ex-date and the last 10 bars (see docs/yahoo-notes.md).
+		switch strings.TrimPrefix(u.Path, "/v8/finance/chart/") {
+		case "ISPA.DE":
+			return 200, h, read("chart-div-ispa"), nil
+		case "VHYD.L":
+			return 200, h, read("chart-div-vhyd"), nil
+		case "AAPL":
+			return 200, h, read("chart-div-aapl"), nil
+		case "ULVR.L":
+			return 200, h, read("chart-div-ulvr"), nil
+		case "SAP.DE":
+			return 200, h, read("chart-div-sap"), nil
+		case "IWDA.L":
+			return 200, h, read("chart-div-iwda"), nil
+		}
+		return 404, h, read("chart-not-found"), nil
 	case strings.HasPrefix(u.Path, "/v8/finance/chart/"):
 		switch strings.TrimPrefix(u.Path, "/v8/finance/chart/") {
 		case "SAP.DE":
@@ -523,4 +559,63 @@ func (MockYahoo) Get(ctx context.Context, rawURL string) (int, http.Header, []by
 		return 404, h, read("chart-not-found"), nil
 	}
 	return 404, h, []byte("not found"), nil
+}
+
+// pickNoise are words that do not identify a fund or company.
+var pickNoise = map[string]bool{"ucits": true, "etf": true, "acc": true, "accumulating": true, "dist": true, "distributing": true, "inc": true, "corp": true, "plc": true, "se": true, "ag": true, "sa": true, "nv": true, "ltd": true, "the": true, "usd": true, "eur": true, "gbp": true, "chf": true, "class": true, "shs": true, "fund": true, "funds": true, "dr": true, "de": true, "ie": true}
+
+func nameTokens(s string) map[string]bool {
+	out := map[string]bool{}
+	for _, w := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9') }) {
+		if !pickNoise[w] {
+			out[w] = true
+		}
+	}
+	return out
+}
+
+// PickISIN chooses the ISIN of a Eulerpool search result list for an instrument
+// known by name and type, or "" when the match is not clear. A match needs at
+// least 80% overlap of the identifying words (both ways) and must beat the
+// runner-up by a clear margin, so lookalike funds are never mixed up.
+func PickISIN(hits []EPHit, name, typ string) string {
+	want := nameTokens(name)
+	if len(want) == 0 {
+		return ""
+	}
+	type scored struct {
+		isin  string
+		score float64
+	}
+	var all []scored
+	for _, h := range hits {
+		if h.Type != typ {
+			continue
+		}
+		got := nameTokens(h.Name)
+		inter := 0
+		for w := range want {
+			if got[w] {
+				inter++
+			}
+		}
+		union := len(want) + len(got) - inter
+		if union == 0 {
+			continue
+		}
+		all = append(all, scored{h.ISIN, float64(inter) / float64(union)})
+	}
+	best, second := scored{}, 0.0
+	for _, s := range all {
+		switch {
+		case s.score > best.score:
+			second, best = best.score, s
+		case s.score > second:
+			second = s.score
+		}
+	}
+	if best.score >= 0.8 && best.score-second >= 0.15 {
+		return best.isin
+	}
+	return ""
 }

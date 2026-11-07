@@ -63,12 +63,13 @@ type InstrumentRef struct {
 	// means Yahoo did not know the ISIN when it was last asked.
 	YahooSymbol    string
 	YahooCheckedAt time.Time
+	EPCurrency     string // Eulerpool listing currency of a stock, cached
 }
 
 func (s *Store) InstrumentRef(ctx context.Context, id int64) (InstrumentRef, error) {
 	r := InstrumentRef{ID: id}
 	var checked sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(i.isin,''),i.type,COALESCE(p.currency,''),COALESCE(CAST(json_extract(p.raw,'$.nav') AS TEXT),''),COALESCE(i.yahoo_symbol,''),i.yahoo_checked_at FROM instruments i LEFT JOIN etf_profiles p ON p.instrument_id=i.id WHERE i.id=?`, id).Scan(&r.ISIN, &r.Type, &r.Currency, &r.NAV, &r.YahooSymbol, &checked)
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(i.isin,''),i.type,COALESCE(p.currency,''),COALESCE(CAST(json_extract(p.raw,'$.nav') AS TEXT),''),COALESCE(i.yahoo_symbol,''),i.yahoo_checked_at,COALESCE(i.ep_currency,'') FROM instruments i LEFT JOIN etf_profiles p ON p.instrument_id=i.id WHERE i.id=?`, id).Scan(&r.ISIN, &r.Type, &r.Currency, &r.NAV, &r.YahooSymbol, &checked, &r.EPCurrency)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}

@@ -11,7 +11,7 @@ const {Transactions}=await import('../components/transactions.tsx');
 const {TransactionDraftProvider}=await import('../components/transaction-draft.tsx');
 const {InstrumentPicker}=await import('../components/instrument-picker.tsx');
 const {AppRouterContext}=await import('next/dist/shared/lib/app-router-context.shared-runtime.js');
-const {today,fetchDateAllowed}=await import('../lib/transactions.ts');
+const {today,fetchDateAllowed,fetchDateInRange}=await import('../lib/transactions.ts');
 afterEach(()=>{cleanup();sessionStorage.clear();});
 const item={instrumentId:1,ticker:'SAP',name:'SAP SE',defaultPrice:'10.0000',defaultAmount:'20.00',priceSource:'Last purchase 01.01.2025',avSymbol:'SAP.DEX',avCurrency:'EUR',avLinkedByYou:true};
 import {readFileSync} from 'node:fs';
@@ -51,24 +51,29 @@ test('an interrupted job reloads saved quote defaults and preserves invested tot
   if(url.endsWith('/saving-plan'))return json([{...item,...(++loads>1?{defaultPrice:'25.0000',quoteId:8,priceSource:'Fetched 04.11.2026'}:{})}]);
  }));mount();await screen.findByText('Fetch interrupted. Prices fetched so far were saved.');await waitFor(()=>assert.equal(screen.getByLabelText('SAP price').value,'25,0000'));assert.equal(screen.getByLabelText('SAP amount').value,'20,00');assert.equal(screen.getByLabelText('SAP quantity').value,'0,800000');assert.equal(sessionStorage.getItem('price-fetch:1'),null);
 });
-test('historical dates disable fetching with the specified tooltip and Berlin weekends are supported',async t=>{
- t.mock.method(globalThis,'fetch',responder());mount();await screen.findByLabelText('SAP amount');fireEvent.change(screen.getByLabelText('Transaction date'),{target:{value:'2000-01-01'}});const button=screen.getByRole('button',{name:/Fetch prices/});assert.equal(button.disabled,true);assert.equal(button.title,'Fetched prices are current prices; enter historical prices manually.');assert.equal(fetchDateAllowed('2026-11-06',new Date('2026-11-09T10:00:00Z')),true);assert.equal(fetchDateAllowed('2026-11-08',new Date('2026-11-09T10:00:00Z')),false);
+test('dates outside 1990..today disable fetching; past dates in range are fetchable by every provider',async t=>{
+ const urls=[];t.mock.method(globalThis,'fetch',responder((url)=>{urls.push(url);}));mount();await screen.findByLabelText('SAP amount');
+ fireEvent.change(screen.getByLabelText('Transaction date'),{target:{value:'1989-12-31'}});const button=screen.getByRole('button',{name:/Fetch prices/});assert.equal(button.disabled,true);assert.equal(button.title,'Choose a date from 1990-01-01 through today.');
+ fireEvent.change(screen.getByLabelText('Transaction date'),{target:{value:'2000-01-03'}});await waitFor(()=>assert.equal(screen.getByRole('button',{name:/Fetch prices/}).disabled,false));assert.ok(urls.some(u=>u.includes('/estimate?date=2000-01-03')));
+ assert.equal(fetchDateInRange('1990-01-01',new Date('2026-11-09T10:00:00Z')),true);assert.equal(fetchDateInRange('1989-12-31',new Date('2026-11-09T10:00:00Z')),false);assert.equal(fetchDateInRange('2026-11-10',new Date('2026-11-09T10:00:00Z')),false);
+ assert.equal(fetchDateAllowed('2026-11-06',new Date('2026-11-09T10:00:00Z')),true);assert.equal(fetchDateAllowed('2026-11-08',new Date('2026-11-09T10:00:00Z')),false);
 });
-test('linking an ISIN searches Eulerpool only on request and blocks ISINs already in use',async t=>{
+test('linking a Yahoo symbol searches Yahoo only on request and blocks symbols already in use',async t=>{
  let linked=false,searches=0;const queries=[],puts=[];
  t.mock.method(globalThis,'fetch',responder((url,init)=>{
-  if(url.endsWith('/saving-plan'))return json([{...item,ticker:'SAP',avSymbol:undefined,isin:linked?'DE0007164600':undefined,avSearchTerm:linked?undefined:'SAP SE'}]);
-  if(url.includes('/isin/search')){searches++;queries.push(new URL(url,'http://localhost').searchParams.get('q'));return json({provider:'EULERPOOL',results:[{isin:'DE0007164600',ticker:'SAP.DE',name:'SAP SE',type:'STOCK',currency:'EUR'},{isin:'US8030542042',ticker:'SAP',name:'SAP SE ADR',type:'STOCK',currency:'USD',existingInstrumentId:9}]});}
-  if(init.method==='PUT'&&url.endsWith('/isin')){linked=true;puts.push(JSON.parse(init.body));return new Response(null,{status:204});}
+  if(url.endsWith('/saving-plan'))return json([{...item,ticker:'SAP',avSymbol:undefined,yahooSymbol:linked?'SAP.DE':undefined,avSearchTerm:linked?undefined:'SAP SE'}]);
+  if(url.includes('/yahoo-symbol/search')){searches++;queries.push(new URL(url,'http://localhost').searchParams.get('q'));return json({provider:'YAHOO',results:[{yahooSymbol:'SAP.DE',ticker:'SAP.DE',name:'SAP SE',type:'STOCK',exchangeName:'XETRA',sector:'Technology'},{yahooSymbol:'SAP',ticker:'SAP',name:'SAP SE ADR',type:'STOCK',exchangeName:'NYSE',existingInstrumentId:9}]});}
+  if(init.method==='PUT'&&url.endsWith('/yahoo-symbol')){linked=true;puts.push(JSON.parse(init.body));return json({symbol:'SAP.DE',isin:''});}
  }));mount();
- fireEvent.click(await screen.findByRole('button',{name:'Link ISIN'}));assert.equal(searches,0);
- const term=screen.getByLabelText('Search term');assert.equal(term.value,'SAP SE');assert.ok(screen.getByText(/uses 1 Eulerpool request/)!==null);
+ fireEvent.click(await screen.findByRole('button',{name:'Link symbol'}));assert.equal(searches,0);
+ const term=screen.getByLabelText('Search term');assert.equal(term.value,'SAP SE');assert.ok(screen.getByText(/uses 1 Yahoo request/)!==null);
  fireEvent.change(term,{target:{value:' '}});assert.equal(screen.getByRole('button',{name:'Search'}).disabled,true);
  fireEvent.change(term,{target:{value:'SAP'}});fireEvent.click(screen.getByRole('button',{name:'Search'}));
  const used=await screen.findByRole('button',{name:/SAP SE ADR/});assert.equal(used.disabled,true);assert.equal(searches,1);assert.deepEqual(queries,['SAP']);
+ assert.ok(screen.getByText('SAP.DE · XETRA · Technology')!==null);assert.ok(screen.getByText('Data by Yahoo Finance')!==null);
  fireEvent.click(screen.getByRole('button',{name:/^Stock\s*SAP SE\s*SAP\.DE/}));
- await waitFor(()=>assert.ok(screen.queryByText('DE0007164600')!==null));
- assert.deepEqual(puts,[{isin:'DE0007164600'}]);assert.ok(screen.queryByRole('button',{name:'Link ISIN'})===null);
+ await waitFor(()=>assert.ok(screen.queryByText('SAP.DE')!==null));
+ assert.deepEqual(puts,[{symbol:'SAP.DE'}]);assert.ok(screen.queryByRole('button',{name:'Link symbol'})===null);assert.ok(screen.getByRole('button',{name:'Change'})!==null);
 });
 test('transactions table: narrow fetch column, wrapping source text and fitting link column',()=>{
  const css=require_css();

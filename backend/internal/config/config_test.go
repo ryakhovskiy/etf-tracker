@@ -66,7 +66,7 @@ func TestAlphaConfiguration(t *testing.T) {
 func TestEulerpoolConfiguration(t *testing.T) {
 	t.Setenv("MARKETDATA_MODE", "mock")
 	cfg, err := Load()
-	if err != nil || cfg.MarketdataPrimary != "EULERPOOL" || cfg.EulerpoolSoftLimit != 500 || cfg.EulerpoolQuoteTTL.Minutes() != 15 || cfg.EulerpoolProfileTTL.Hours() != 720 || cfg.EulerpoolBaseURL != "https://api.eulerpool.com/api/1" {
+	if err != nil || cfg.MarketdataPrimary != "YAHOO" || cfg.EulerpoolSoftLimit != 500 || cfg.EulerpoolQuoteTTL.Minutes() != 15 || cfg.EulerpoolProfileTTL.Hours() != 720 || cfg.EulerpoolBaseURL != "https://api.eulerpool.com/api/1" {
 		t.Fatalf("defaults: %+v %v", cfg, err)
 	}
 	t.Setenv("MARKETDATA_PRIMARY", "alphavantage")

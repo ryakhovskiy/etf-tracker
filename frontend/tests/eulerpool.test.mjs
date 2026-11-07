@@ -271,81 +271,129 @@ const etf = { instrumentId: 2, isin: 'IE00B4X9L533', type: 'ETF', ticker: 'HMWD'
 const budget = () => ({ globalRemaining: 25, userRemaining: 10, userLimit: 10, nextSlotAt: new Date().toISOString() });
 const mountTx = () => render(React.createElement(AppRouterContext.Provider, { value: { push() {} } }, React.createElement(TransactionDraftProvider, null, React.createElement(Transactions, { id: '1' }))));
 
-test('prices: Eulerpool cost on the main button, and the Alpha Vantage backup only for NEEDS_BACKUP items, only on click', async t => {
+const estimateOf = (provider, extra = {}) => ({ requestsNeeded: 0, fresh: [], noSymbol: [], budget: budget(), provider, ...extra });
+const jobDone = items => ({ status: 'DONE', nextRequestAt: new Date().toISOString(), items });
+
+test('prices (Eulerpool primary): Eulerpool cost on the main button, and the Alpha Vantage backup only for NEEDS_BACKUP items, only on click', async t => {
   let backupJob = false;
   const calls = mockFetch(t, (url, init) => {
     if (url.endsWith('/saving-plan')) return json([{ ...stock, avSymbol: undefined }, { ...etf, avSymbol: 'HMWD.LON', avCurrency: 'USD' }]);
     if (url.includes('/market-data/budget')) return json(budget());
-    if (url.includes('/price-fetch/estimate')) {
-      const av = url.includes('provider=ALPHAVANTAGE');
-      return json({ requestsNeeded: av ? 1 : 0, fresh: [], noSymbol: [], budget: budget(), provider: av ? 'ALPHAVANTAGE' : 'EULERPOOL', eulerpool: { requests: 3, remaining: 400 }, alphavantage: { requests: av ? 1 : 0, remaining: 9 } });
-    }
-    if (url.endsWith('/price-fetch-jobs') && init.method === 'POST') { const body = JSON.parse(init.body); if (body.provider === 'ALPHAVANTAGE') { backupJob = true; return json({ jobId: 'av' }, 202); } return json({ jobId: 'ep' }, 202); }
-    if (url.includes('/price-fetch-jobs/ep')) return json({ status: 'DONE', nextRequestAt: new Date().toISOString(), items: [{ instrumentId: 1, status: 'OK', priceEur: '300.0000', currency: 'USD', quoteDate: '2026-11-04', provider: 'EULERPOOL', quoteId: 5 }, { instrumentId: 2, status: 'NEEDS_BACKUP', reason: 'NOT_FOUND' }] });
-    if (url.includes('/price-fetch-jobs/av')) return json({ status: 'DONE', nextRequestAt: new Date().toISOString(), items: [{ instrumentId: 2, status: 'OK', priceEur: '40.0000', currency: 'USD', quoteDate: '2026-11-04', quoteId: 6 }] });
+    if (url.includes('/price-fetch/estimate')) return json(estimateOf('EULERPOOL', { requestsNeeded: 1, eulerpool: { requests: 3, remaining: 400 }, alphavantage: { requests: 1, remaining: 9 } }));
+    if (url.endsWith('/price-fetch-jobs') && init.method === 'POST') { const body = JSON.parse(init.body); if (body.provider === 'ALPHAVANTAGE') { backupJob = body; return json({ jobId: 'av' }, 202); } return json({ jobId: 'ep' }, 202); }
+    if (url.includes('/price-fetch-jobs/ep')) return json(jobDone([{ instrumentId: 1, status: 'OK', priceEur: '300.0000', currency: 'USD', quoteDate: '2026-11-04', provider: 'EULERPOOL', quoteId: 5 }, { instrumentId: 2, status: 'NEEDS_BACKUP', reason: 'NOT_FOUND' }]));
+    if (url.includes('/price-fetch-jobs/av')) return json(jobDone([{ instrumentId: 2, status: 'OK', priceEur: '40.0000', currency: 'USD', quoteDate: '2026-11-04', quoteId: 6 }]));
   });
   mountTx();
   const main = await screen.findByRole('button', { name: 'Fetch prices (3 Eulerpool requests)' });
   assert.ok(screen.getAllByText('Data by Eulerpool').length > 0);
-  // Rows without an AV symbol are fetchable because Eulerpool prices by ISIN.
   assert.equal(screen.getByLabelText('Fetch AAPL').disabled, false);
-  assert.ok(screen.queryByRole('button', { name: /via Alpha Vantage/ }) === null);
+  assert.ok(screen.queryByRole('button', { name: /remaining via/ }) === null);
   fireEvent.click(main);
   const backup = await screen.findByRole('button', { name: 'Fetch 1 remaining via Alpha Vantage (uses 1 request)' });
   assert.equal(screen.getByLabelText('AAPL price').value, '300,0000');
   assert.ok(screen.getByText(/Fetched 04\.11\.2026 · Eulerpool/) !== null);
   assert.equal(backupJob, false, 'the backup never starts by itself');
-  assert.ok(calls.some(c => c.url.includes('provider=ALPHAVANTAGE') && c.url.includes('instrumentIds=2')));
+  assert.ok(calls.some(c => c.url.includes('/estimate') && c.url.includes('instrumentIds=2')));
   fireEvent.click(backup);
   await waitFor(() => assert.equal(screen.getByLabelText('HMWD price').value, '40,0000'));
-  assert.equal(backupJob, true);
-  await waitFor(() => assert.ok(screen.queryByRole('button', { name: /via Alpha Vantage/ }) === null), { timeout: 3000 });
+  assert.deepEqual(backupJob, { date: backupJob.date, instrumentIds: [2], provider: 'ALPHAVANTAGE' });
+  await waitFor(() => assert.ok(screen.queryByRole('button', { name: /remaining via/ }) === null), { timeout: 3000 });
 });
 
-test('prices: Yahoo Finance backup is offered next to Alpha Vantage, shows its cost, and only runs on click', async t => {
-  let yahooJob = null, fetched = false;
-  const calls = mockFetch(t, (url, init) => {
-    if (url.endsWith('/saving-plan')) return json([{ ...stock, avSymbol: undefined, ...(fetched ? { defaultPrice: '300.0000', quoteId: 8, priceSource: 'Fetched 04.11.2026 · Yahoo Finance' } : {}) }, { ...etf, avSymbol: undefined }]);
-    if (url.includes('/market-data/budget')) return json(budget());
-    if (url.includes('/price-fetch/estimate')) {
-      const provider = new URL(url, 'http://localhost').searchParams.get('provider');
-      return json({ requestsNeeded: 0, fresh: [], noSymbol: [1, 2], budget: budget(), provider: provider ?? 'EULERPOOL', eulerpool: { requests: 2, remaining: 400 }, alphavantage: { requests: 0, remaining: 9 }, yahoo: { requests: 3, remaining: 900, historical: false, noSymbol: [] } });
-    }
-    if (url.endsWith('/price-fetch-jobs') && init.method === 'POST') { const body = JSON.parse(init.body); if (body.provider === 'YAHOO') { yahooJob = body; return json({ jobId: 'yh' }, 202); } return json({ jobId: 'ep' }, 202); }
-    if (url.includes('/price-fetch-jobs/ep')) return json({ status: 'DONE', nextRequestAt: new Date().toISOString(), items: [{ instrumentId: 1, status: 'NEEDS_BACKUP', reason: 'NOT_FOUND' }, { instrumentId: 2, status: 'NEEDS_BACKUP', reason: 'NOT_FOUND' }] });
-    if (url.includes('/price-fetch-jobs/yh')) { fetched = true; return json({ status: 'DONE', nextRequestAt: new Date().toISOString(), items: [{ instrumentId: 1, status: 'OK', priceEur: '300.0000', currency: 'USD', quoteDate: '2026-11-04', provider: 'YAHOO', quoteId: 8 }, { instrumentId: 2, status: 'NO_SYMBOL' }] }); }
+test('prices (Yahoo primary): Yahoo cost on the main button, items Yahoo could not price get Eulerpool first, then Alpha Vantage, each only on click', async t => {
+  const posted = [];
+  mockFetch(t, (url, init) => {
+    if (url.endsWith('/saving-plan')) return json([{ ...stock, yahooSymbol: 'AAPL', avSymbol: undefined }, { ...etf, avSymbol: 'HMWD.LON', avCurrency: 'USD' }]);
+    if (url.includes('/market-data/budget')) return json({ ...budget(), primary: 'YAHOO' });
+    if (url.includes('/price-fetch/estimate')) return json(estimateOf('YAHOO', { requestsNeeded: 1, yahoo: { requests: 2, remaining: 900, noSymbol: [] }, eulerpool: { requests: 1, remaining: 300, noIsin: [] }, alphavantage: { requests: 1, remaining: 9 } }));
+    if (url.endsWith('/price-fetch-jobs') && init.method === 'POST') { posted.push(JSON.parse(init.body)); return json({ jobId: posted.length === 1 ? 'yh' : 'ep' }, 202); }
+    if (url.includes('/price-fetch-jobs/yh')) return json(jobDone([{ instrumentId: 1, status: 'OK', priceEur: '300.0000', currency: 'USD', quoteDate: '2026-11-04', provider: 'YAHOO', quoteId: 5 }, { instrumentId: 2, status: 'NO_SYMBOL' }]));
+    if (url.includes('/price-fetch-jobs/ep')) return json(jobDone([{ instrumentId: 2, status: 'OK', priceEur: '41.0000', currency: 'GBP', quoteDate: '2026-11-04', provider: 'EULERPOOL', quoteId: 6 }]));
   });
   mountTx();
-  fireEvent.click(await screen.findByRole('button', { name: 'Fetch prices (2 Eulerpool requests)' }));
-  const yahoo = await screen.findByRole('button', { name: 'Fetch 3 remaining via Yahoo Finance (uses 3 requests)' });
-  assert.ok(screen.queryByRole('button', { name: /via Alpha Vantage/ }) === null, 'AV has nothing to fetch without symbols');
-  assert.equal(yahooJob, null, 'the backup never starts by itself');
-  assert.ok(calls.some(c => c.url.includes('provider=YAHOO') && c.url.includes('instrumentIds=1,2')));
-  fireEvent.click(yahoo);
-  await waitFor(() => assert.equal(screen.getByLabelText('AAPL price').value, '300,0000'));
-  assert.deepEqual(yahooJob.instrumentIds, [1, 2]);
-  assert.equal(yahooJob.date, new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(new Date()));
-  assert.ok(screen.getByText(/Fetched 04\.11\.2026 · Yahoo Finance/) !== null);
+  const main = await screen.findByRole('button', { name: 'Fetch prices (2 Yahoo requests)' });
+  assert.ok(screen.getAllByText('Data by Yahoo Finance').length > 0);
+  assert.ok(screen.queryByText(/AV: /) === null, 'the Alpha Vantage badge is only for Alpha Vantage as main source');
+  fireEvent.click(main);
+  const eulerpool = await screen.findByRole('button', { name: 'Fetch 1 remaining via Eulerpool (uses 1 request)' });
+  const alpha = screen.getByRole('button', { name: 'Fetch 1 remaining via Alpha Vantage (uses 1 request)' });
+  assert.ok(screen.getByText(/could not be priced by Yahoo Finance: HMWD/) !== null);
+  assert.ok(eulerpool.compareDocumentPosition(alpha) === 4, 'Eulerpool comes before Alpha Vantage');
+  assert.ok(screen.queryByRole('button', { name: /via Yahoo Finance/ }) === null, 'the primary source is not offered as its own backup');
+  assert.equal(screen.getByLabelText('AAPL price').value, '300,0000');
+  assert.equal(posted.length, 1, 'no fallback before a click');
+  assert.ok(posted[0].provider === undefined, 'the main button uses the configured primary provider');
+  fireEvent.click(eulerpool);
+  await waitFor(() => assert.equal(screen.getByLabelText('HMWD price').value, '41,0000'));
+  assert.deepEqual(posted[1].provider, 'EULERPOOL');
+  assert.deepEqual(posted[1].instrumentIds, [2]);
+  await waitFor(() => assert.ok(screen.queryByRole('button', { name: /remaining via/ }) === null), { timeout: 3000 });
 });
 
-test('prices: historical dates offer Yahoo Finance with the cost, and send the chosen date', async t => {
-  let posted = null;
+test('prices (Eulerpool primary): Yahoo is offered before Alpha Vantage as backup', async t => {
   mockFetch(t, (url, init) => {
     if (url.endsWith('/saving-plan')) return json([{ ...stock, avSymbol: undefined }]);
     if (url.includes('/market-data/budget')) return json(budget());
-    if (url.includes('/price-fetch/estimate')) return json({ requestsNeeded: 0, fresh: [], noSymbol: [], budget: budget(), provider: 'YAHOO', yahoo: { requests: 2, remaining: 900, historical: true, noSymbol: [] } });
+    if (url.includes('/price-fetch/estimate')) return json(estimateOf('EULERPOOL', { eulerpool: { requests: 1, remaining: 400 }, yahoo: { requests: 2, remaining: 900, noSymbol: [] }, alphavantage: { requests: 1, remaining: 9 } }));
+    if (url.endsWith('/price-fetch-jobs') && init.method === 'POST') return json({ jobId: 'ep' }, 202);
+    if (url.includes('/price-fetch-jobs/ep')) return json(jobDone([{ instrumentId: 1, status: 'NEEDS_BACKUP', reason: 'NOT_FOUND' }]));
+  });
+  mountTx();
+  fireEvent.click(await screen.findByRole('button', { name: 'Fetch prices (1 Eulerpool request)' }));
+  const yahoo = await screen.findByRole('button', { name: 'Fetch 2 remaining via Yahoo Finance (uses 2 requests)' });
+  assert.ok(yahoo.compareDocumentPosition(screen.getByRole('button', { name: /via Alpha Vantage/ })) === 4);
+  assert.ok(screen.queryByRole('button', { name: /via Eulerpool/ }) === null);
+});
+
+test('prices: a past date is fetched with the main provider and shows the closing-price note', async t => {
+  let posted = null;
+  mockFetch(t, (url, init) => {
+    if (url.endsWith('/saving-plan')) return json([{ ...stock, yahooSymbol: 'AAPL', avSymbol: undefined }]);
+    if (url.includes('/market-data/budget')) return json(budget());
+    if (url.includes('/price-fetch/estimate')) return json(estimateOf('YAHOO', { yahoo: { requests: 1, remaining: 900, noSymbol: [], historical: true } }));
     if (url.endsWith('/price-fetch-jobs') && init.method === 'POST') { posted = JSON.parse(init.body); return json({ jobId: 'yh' }, 202); }
-    if (url.includes('/price-fetch-jobs/yh')) return json({ status: 'DONE', nextRequestAt: new Date().toISOString(), items: [{ instrumentId: 1, status: 'OK', priceEur: '250.0000', currency: 'USD', quoteDate: '2025-03-14', provider: 'YAHOO', quoteId: 9 }] });
+    if (url.includes('/price-fetch-jobs/yh')) return json(jobDone([{ instrumentId: 1, status: 'OK', priceEur: '250.0000', currency: 'USD', quoteDate: '2025-03-14', provider: 'YAHOO', quoteId: 9 }]));
   });
   mountTx();
   await screen.findByLabelText('Fetch AAPL');
   fireEvent.change(screen.getByLabelText('Transaction date'), { target: { value: '2025-03-15' } });
-  assert.equal(screen.getByRole('button', { name: /^Fetch prices/ }).disabled, true, 'current-price providers stay disabled for past dates');
-  const button = await screen.findByRole('button', { name: 'Fetch historical prices via Yahoo Finance (uses 2 requests)' });
-  assert.ok(screen.getByText(/Closing price on or before 15\.03\.2025/) !== null);
-  assert.equal(posted, null);
+  const button = await screen.findByRole('button', { name: 'Fetch prices (1 Yahoo request)' });
+  assert.equal(button.disabled, false, 'past dates are not special any more');
+  assert.ok(screen.getByText(/Closing price on or before 15\.03\.2025 · Data by Yahoo Finance/) !== null);
   fireEvent.click(button);
   await waitFor(() => assert.equal(screen.getByLabelText('AAPL price').value, '250,0000'));
-  assert.deepEqual(posted, { date: '2025-03-15', instrumentIds: [1], provider: 'YAHOO' });
+  assert.deepEqual(posted, { date: '2025-03-15', instrumentIds: [1] });
   assert.ok(screen.getByText(/Fetched 14\.03\.2025 · Yahoo Finance/) !== null);
+});
+
+test('search (Yahoo): section title, exchange and sector, attribution, no Alpha Vantage offer, and a rate-limit banner naming the fallback', async t => {
+  let mode = 'yahoo';
+  const posts = [];
+  mockFetch(t, (url, init) => {
+    if (init?.method === 'POST' && url.endsWith('/api/instruments')) { posts.push(JSON.parse(init.body)); return json({ ...apple, id: 70, isin: 'DE0007164600', ticker: 'SAP.DE', name: 'SAP SE' }); }
+    if (!isOnline(url)) return json([]);
+    if (mode === 'empty') return json({ provider: 'YAHOO', results: [] });
+    if (mode === 'limited') return json({ provider: 'EULERPOOL', warnings: ['YAHOO_LIMIT_REACHED'], results: [{ source: 'EULERPOOL', isin: 'DE0007164600', ticker: 'SAP.DE', name: 'SAP SE', type: 'STOCK', currency: 'EUR', inPortfolio: false }] });
+    return json({ provider: 'YAHOO', results: [{ source: 'YAHOO', yahooSymbol: 'SAP.DE', ticker: 'SAP.DE', name: 'SAP SE', type: 'STOCK', exchangeName: 'XETRA', sector: 'Technology', inPortfolio: false }] });
+  });
+  mountPicker();
+  type('sap se');
+  fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  await screen.findByText('Online · Yahoo Finance');
+  const row = screen.getByRole('option', { name: /SAP\.DE/ });
+  assert.ok(row.querySelector('.option-meta').textContent === 'SAP.DE · no ISIN · XETRA · Technology', row.querySelector('.option-meta').textContent);
+  assert.ok(screen.getByText('Data by Yahoo Finance') !== null);
+  fireEvent.click(row);
+  await waitFor(() => assert.equal(posts.length, 1));
+  assert.equal(posts[0].source, 'YAHOO');
+  assert.equal(posts[0].yahooSymbol, 'SAP.DE');
+  mode = 'empty';
+  fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  await screen.findByText(/No results for/); await act(() => delay(20));
+  assert.ok(screen.queryByRole('button', { name: 'Try Alpha Vantage (1 request)' }) === null, 'Yahoo answered: nothing more is offered');
+  mode = 'limited';
+  fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+  await screen.findByText('Yahoo Finance is rate limited, showing Eulerpool results');
+  assert.ok(screen.getByText('Online · Eulerpool') !== null);
 });

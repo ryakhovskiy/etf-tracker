@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 
-export type PortfolioTab = "dashboard" | "transactions" | "import" | "items";
+export type PortfolioTab = "dashboard" | "transactions" | "dividends" | "import" | "items";
 const PortfolioUpdatesContext = createContext({
   revision: 0,
   changed: () => {},

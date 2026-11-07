@@ -18,5 +18,5 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 export type Portfolio = { id: number; name: string; itemCount: number; createdAt: string };
 export type PortfolioDetail = Portfolio & { instrumentIds: number[]; itemLimit: number };
 export type Instrument = { id: number; name: string; ticker: string; type: "STOCK" | "ETF"; isin: string; wkn: string | null; inPortfolio: boolean; figi?: string; exchCode?: string; currency?: string };
-export type OnlineInstrument = Omit<Instrument, "id" | "isin" | "wkn" | "figi" | "exchCode" | "currency"> & { figi?: string; exchCode?: string; currency?: string; avSymbol?: string; region?: string; source?: string; matchScore?: string; isin?: string; wkn?: string; existingInstrumentId?: number };
-export type OnlineSearch = { provider?: "EULERPOOL" | "OPENFIGI" | "ALPHAVANTAGE"; results: OnlineInstrument[]; warning?: string; warnings?: string[] };
+export type OnlineInstrument = Omit<Instrument, "id" | "isin" | "wkn" | "figi" | "exchCode" | "currency"> & { figi?: string; exchCode?: string; currency?: string; avSymbol?: string; yahooSymbol?: string; exchangeName?: string; sector?: string; region?: string; source?: string; matchScore?: string; isin?: string; wkn?: string; existingInstrumentId?: number };
+export type OnlineSearch = { provider?: "YAHOO" | "EULERPOOL" | "OPENFIGI" | "ALPHAVANTAGE"; results: OnlineInstrument[]; warning?: string; warnings?: string[] };

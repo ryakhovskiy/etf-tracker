@@ -184,13 +184,29 @@ type epEstimate struct {
 
 // eulerpoolEstimate counts the requests a Eulerpool run would send: one per 50
 // stock ISINs, one per ETF, plus one profile for every ETF without a currency.
-func (h *Handler) eulerpoolEstimate(ctx context.Context, rows []database.SavingPlanItem) (epEstimate, error) {
+func (h *Handler) eulerpoolEstimate(ctx context.Context, rows []database.SavingPlanItem, date string) (epEstimate, error) {
 	out := epEstimate{Fresh: []int64{}, NoISIN: []int64{}}
 	stocks := 0
+	historical := date != marketdata.BerlinDay(time.Now())
 	for _, row := range rows {
-		q, err := h.store.FreshQuote(ctx, row.InstrumentID, time.Now())
-		if err != nil {
-			return out, err
+		var q *marketdata.Quote
+		if !historical { // a stored quote is only reusable for today
+			var err error
+			if q, err = h.store.FreshQuote(ctx, row.InstrumentID, time.Now()); err != nil {
+				return out, err
+			}
+		}
+		if historical && row.ISIN != "" {
+			// One history request per instrument, plus its currency (profile) when unknown.
+			ref, err := h.store.InstrumentRef(ctx, row.InstrumentID)
+			if err != nil {
+				return out, err
+			}
+			out.Requests++
+			if (row.Type == "ETF" && ref.Currency == "") || (row.Type != "ETF" && ref.EPCurrency == "") {
+				out.Requests++
+			}
+			continue
 		}
 		switch {
 		case q != nil:
@@ -273,8 +289,13 @@ func (h *Handler) runEulerpoolPrices(job *priceJob, rows []database.SavingPlanIt
 		set(i, "OK", "", q)
 	}
 	var stocks, etfs []int
+	historical := date != marketdata.BerlinDay(time.Now())
 	for i, row := range rows {
-		q, err := h.store.FreshQuote(ctx, row.InstrumentID, time.Now())
+		var q *marketdata.Quote
+		var err error
+		if !historical { // a stored quote is only reusable for today
+			q, err = h.store.FreshQuote(ctx, row.InstrumentID, time.Now())
+		}
 		switch {
 		case err != nil:
 			set(i, "ERROR", "", nil)
@@ -310,6 +331,10 @@ func (h *Handler) runEulerpoolPrices(job *priceJob, rows []database.SavingPlanIt
 		default:
 			backup(i, "ERROR")
 		}
+	}
+	if historical {
+		h.runEulerpoolHistory(ctx, job.user, date, append(append([]int{}, stocks...), etfs...), rows, set, backup, fail, finish, &limited)
+		stocks, etfs = nil, nil
 	}
 	for start := 0; start < len(stocks); start += marketdata.EPQuoteBatchSize {
 		batch := stocks[start:min(start+marketdata.EPQuoteBatchSize, len(stocks))]
@@ -375,4 +400,73 @@ func (h *Handler) runEulerpoolPrices(job *priceJob, rows []database.SavingPlanIt
 	h.jobs.mu.Lock()
 	job.Status = "DONE"
 	h.jobs.mu.Unlock()
+}
+
+// runEulerpoolHistory prices items for a past date from Eulerpool's daily
+// history: the last price on or before the date. The series carries no currency,
+// so it comes from the ETF profile or, for stocks, the equity profile (cached).
+func (h *Handler) runEulerpoolHistory(ctx context.Context, user, date string, todo []int, rows []database.SavingPlanItem,
+	set func(int, string, string, *marketdata.Quote), backup func(int, string), fail func(int, error),
+	finish func(int, string, string, time.Time), limited *bool) {
+	day, _ := time.Parse("2006-01-02", date)
+	for _, i := range todo {
+		if *limited {
+			backup(i, "EULERPOOL_LIMIT_REACHED")
+			continue
+		}
+		ref, err := h.store.InstrumentRef(ctx, rows[i].InstrumentID)
+		if err != nil {
+			set(i, "ERROR", "", nil)
+			continue
+		}
+		kind := "equity"
+		if ref.Type == "ETF" {
+			kind = "etf"
+			if ref.Currency == "" {
+				p, e := h.ensureProfile(ctx, user, ref, true)
+				if e != nil {
+					fail(i, e)
+					continue
+				}
+				ref.Currency = p.Currency
+				if fresh, e := h.store.InstrumentRef(ctx, ref.ID); e == nil {
+					ref.NAV = fresh.NAV
+				}
+			}
+		} else {
+			ref.Currency = ref.EPCurrency
+			if ref.Currency == "" {
+				c, _, e := h.ep.StockProfile(ctx, user, ref.ISIN)
+				if e != nil {
+					fail(i, e)
+					continue
+				}
+				ref.Currency = c
+				_ = h.store.SetEPCurrency(ctx, ref.ID, c)
+			}
+		}
+		if ref.Currency == "" {
+			backup(i, "NO_CURRENCY")
+			continue
+		}
+		points, err := h.ep.History(ctx, user, kind, ref.ISIN, day.AddDate(0, 0, -10), day)
+		if err != nil {
+			fail(i, err)
+			continue
+		}
+		p, ok := marketdata.LastEPPointOnOrBefore(points, date)
+		if !ok {
+			backup(i, "EMPTY_SERIES")
+			continue
+		}
+		price := p.Price
+		if kind == "etf" {
+			if scaled, changed := marketdata.ReconcileETFPrice(price, ref.NAV); changed {
+				h.logger.Warn("Eulerpool ETF series looked mis-scaled; rescaled using the profile NAV", "isin", ref.ISIN, "series", price, "nav", ref.NAV, "used", scaled)
+				price = scaled
+			}
+		}
+		at, _ := time.Parse("2006-01-02", p.Day)
+		finish(i, price, ref.Currency, at.Add(12*time.Hour))
+	}
 }

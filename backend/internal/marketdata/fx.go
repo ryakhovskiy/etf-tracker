@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,9 @@ type FXService struct {
 	mu          sync.Mutex
 	// checked records successful fetches that returned no new rows (e.g. holidays).
 	checked map[string]time.Time
+	// ranges records the [from, to] series fetched by RatesOn per currency, so a
+	// date without a usable publication is not requested again on every load.
+	ranges map[string][][2]string
 }
 
 // publicationCutoff is when the ECB publication relevant for date d is
@@ -126,6 +130,121 @@ func (s *FXService) Rate(ctx context.Context, currency, date string) (*FXRate, e
 		return nil, ErrFXUnavailable
 	}
 	return cached, nil
+}
+
+// RatesOn returns, for each date, the latest publication on or before it
+// (accepted when at most 7 days old). Publications that are not stored yet are
+// loaded with one time-series request covering every missing date. Dates
+// without a usable publication are absent from the result. Dates after today
+// use the latest publication, so callers pass today for forecasts.
+func (s *FXService) RatesOn(ctx context.Context, currency string, dates []string) (map[string]*FXRate, error) {
+	out := map[string]*FXRate{}
+	currency = MajorUnit(currency)
+	if currency == "EUR" || len(dates) == 0 {
+		return out, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.Now()
+	today := BerlinDay(now)
+	newest, fetched, err := s.Store.FXCoverage(ctx, currency, s.ProviderKey)
+	if err != nil {
+		return nil, err
+	}
+	if t := s.checked[currency]; t.After(fetched) {
+		fetched = t
+	}
+	usable := func(r *FXRate, date string) bool {
+		if r == nil {
+			return false
+		}
+		d, _ := time.Parse("2006-01-02", date)
+		published, _ := time.Parse("2006-01-02", r.Date)
+		return d.Sub(published) <= 7*24*time.Hour
+	}
+	var missing []string
+	for _, date := range dates {
+		if _, err := time.Parse("2006-01-02", date); err != nil {
+			continue
+		}
+		if _, done := out[date]; done {
+			continue
+		}
+		at := min(date, today) // a future date uses the latest publication
+		d, _ := time.Parse("2006-01-02", at)
+		cached, err := s.Store.CachedFX(ctx, currency, at, s.ProviderKey)
+		if err != nil {
+			return nil, err
+		}
+		// Same rule as Rate: no later publication on or before d can be missing.
+		// For today, a fetch within the last hour that already has the previous
+		// publication counts too, so page loads do not refetch before 16:00.
+		covered := usable(cached, at) && (cached.Date == at || newest > at || !fetched.Before(publicationCutoff(d)) ||
+			(at == today && cached.Date >= previousWeekday(today) && now.Sub(fetched) < time.Hour))
+		if covered {
+			out[date] = cached
+			continue
+		}
+		// Already fetched for this date (and its 7 days before) without a usable publication.
+		known := false
+		for _, r := range s.ranges[currency] {
+			known = known || (at < today && r[0] <= d.AddDate(0, 0, -7).Format("2006-01-02") && r[1] >= at)
+		}
+		if !known {
+			missing = append(missing, date)
+		}
+	}
+	if len(missing) == 0 {
+		return out, nil
+	}
+	if newest == "" {
+		currencies, err := s.Provider.Currencies(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !currencies[currency] {
+			return nil, ErrFXUnsupported
+		}
+	}
+	sort.Strings(missing)
+	first, _ := time.Parse("2006-01-02", min(missing[0], today))
+	from, to := first.AddDate(0, 0, -10).Format("2006-01-02"), min(missing[len(missing)-1], today)
+	rates, err := s.Provider.Rates(ctx, currency, from, to)
+	if err != nil {
+		return nil, err
+	}
+	if err = s.Store.SaveFX(ctx, rates, s.ProviderKey, now); err != nil {
+		return nil, err
+	}
+	if s.checked == nil {
+		s.checked = map[string]time.Time{}
+	}
+	if s.ranges == nil {
+		s.ranges = map[string][][2]string{}
+	}
+	s.checked[currency] = now
+	s.ranges[currency] = append(s.ranges[currency], [2]string{from, to})
+	for _, date := range missing {
+		at := min(date, today)
+		cached, err := s.Store.CachedFX(ctx, currency, at, s.ProviderKey)
+		if err != nil {
+			return nil, err
+		}
+		if usable(cached, at) {
+			out[date] = cached
+		}
+	}
+	return out, nil
+}
+
+// previousWeekday is the weekday before day (YYYY-MM-DD).
+func previousWeekday(day string) string {
+	d, _ := time.Parse("2006-01-02", day)
+	d = d.AddDate(0, 0, -1)
+	for d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+		d = d.AddDate(0, 0, -1)
+	}
+	return d.Format("2006-01-02")
 }
 
 type Frankfurter struct {
@@ -272,14 +391,26 @@ func (MockFX) Rates(ctx context.Context, currency, from, to string) ([]FXRate, e
 	if err != nil {
 		return nil, err
 	}
-	d, _ := time.Parse("2006-01-02", to)
+	// Like the time series: one publication per weekday in [from, to]. Today's
+	// rate is published around 16:00 Berlin.
+	d, err := time.Parse("2006-01-02", to)
+	if err != nil {
+		return nil, ErrFXUnavailable
+	}
+	start, err := time.Parse("2006-01-02", from)
+	if err != nil || start.After(d) {
+		start = d
+	}
 	if to == BerlinDay(time.Now()) && time.Now().In(berlin).Hour() < 16 {
 		d = d.AddDate(0, 0, -1)
 	}
-	for d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
-		d = d.AddDate(0, 0, -1)
+	out := []FXRate{}
+	for ; !d.Before(start); d = d.AddDate(0, 0, -1) {
+		if d.Weekday() != time.Saturday && d.Weekday() != time.Sunday {
+			out = append(out, FXRate{d.Format("2006-01-02"), currency, "EUR", n})
+		}
 	}
-	return []FXRate{{d.Format("2006-01-02"), currency, "EUR", n}}, nil
+	return out, nil
 }
 
 // MajorUnit maps a minor-unit code (GBp, GBX, ZAc) to its ISO currency.

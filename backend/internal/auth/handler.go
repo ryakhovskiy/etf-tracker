@@ -25,6 +25,7 @@ type Handler struct {
 	bg          sync.WaitGroup
 	fx          *marketdata.FXService
 	jobs        *priceJobs
+	dividends   *dividendSync
 	figi        marketdata.Service
 	frontendURL string
 	google      *googleClient
@@ -68,7 +69,7 @@ func NewHandler(cfg config.Config, store *database.Store, logger *slog.Logger) *
 	}
 	primary := cfg.MarketdataPrimary
 	if primary == "" {
-		primary = marketdata.ProviderEulerpool
+		primary = marketdata.ProviderYahoo
 	}
 	profileTTL := cfg.EulerpoolProfileTTL
 	if profileTTL == 0 {
@@ -88,7 +89,9 @@ func NewHandler(cfg config.Config, store *database.Store, logger *slog.Logger) *
 	ep.Log = logger
 	avGateway := marketdata.NewAVGateway(store, avTransport, marketdata.NewCache(size, ttl), cfg.AVLimits)
 	avGateway.Log = logger
-	return &Handler{ep: ep, yahoo: yahoo, primary: primary, profileTTL: profileTTL, av: avGateway, fx: &marketdata.FXService{Store: store, Provider: fxProvider, ProviderKey: fxKey, Now: time.Now}, jobs: &priceJobs{entries: map[string]*priceJob{}}, figi: marketdata.Service{Provider: provider, Codes: codes}, frontendURL: cfg.FrontendURL, google: newGoogleClient(cfg, logger), store: store, tokens: newTokenManager(cfg, store), logger: logger}
+	h := &Handler{ep: ep, yahoo: yahoo, primary: primary, profileTTL: profileTTL, av: avGateway, fx: &marketdata.FXService{Store: store, Provider: fxProvider, ProviderKey: fxKey, Now: time.Now}, jobs: &priceJobs{entries: map[string]*priceJob{}}, figi: marketdata.Service{Provider: provider, Codes: codes}, frontendURL: cfg.FrontendURL, google: newGoogleClient(cfg, logger), store: store, tokens: newTokenManager(cfg, store), logger: logger}
+	h.dividends = newDividendSync(h)
+	return h
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -99,13 +102,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerAlphaRoutes(mux)
 	h.registerEulerpoolRoutes(mux)
 	h.registerYahooRoutes(mux)
+	h.registerDividendRoutes(mux)
 	mux.HandleFunc("GET /auth/google", h.googleLogin)
 	mux.HandleFunc("GET /auth/google/callback", h.googleCallback)
 	mux.HandleFunc("GET /auth/me", h.me)
 	mux.HandleFunc("POST /auth/refresh", h.refresh)
 	mux.HandleFunc("POST /auth/logout", h.logout)
 }
-func (h *Handler) Close() { h.bg.Wait(); h.av.Close() }
+func (h *Handler) Close() { h.dividends.stop(); h.bg.Wait(); h.av.Close() }
 
 func (h *Handler) googleLogin(w http.ResponseWriter, r *http.Request) {
 	if h.google.clientID == "" || h.google.clientSecret == "" {

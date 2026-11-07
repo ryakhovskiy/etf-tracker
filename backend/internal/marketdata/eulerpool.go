@@ -477,8 +477,10 @@ func (MockEP) Do(ctx context.Context, method, path string, body []byte) (int, ht
 			return 200, h, read("equity-search-isin"), nil
 		case strings.Contains(q, "hsbc"):
 			return 200, h, read("equity-search-keyword"), nil
-		case q == "sap":
+		case q == "sap" || q == "sap se":
 			return 200, h, []byte(`{"count":1,"results":[{"name":"SAP SE","isin":"DE0007164600","ticker":"SAP.DE","type":"stock","currency":"EUR"}]}`), nil
+		case strings.Contains(q, "all-world high dividend"):
+			return 200, h, []byte(`{"count":2,"results":[{"name":"Vanguard FTSE All-World High Dividend Yield UCITS ETF","isin":"IE00B8GKDB10","ticker":"VHYL.L","type":"etf","currency":null},{"name":"Vanguard FTSE All-World UCITS ETF","isin":"IE00B3RBWM25","ticker":"VWRL.L","type":"etf","currency":null}]}`), nil
 		}
 		return 200, h, read("equity-search-empty"), nil
 	case method == http.MethodGet && strings.HasPrefix(u.Path, "/etf/profile/"):
@@ -487,6 +489,16 @@ func (MockEP) Do(ctx context.Context, method, path string, body []byte) (int, ht
 			return 200, h, read("etf-profile"), nil
 		case "IE00B4L5Y983":
 			return 200, h, read("etf-profile-ishares"), nil
+		}
+		return notFound()
+	case method == http.MethodGet && strings.HasPrefix(u.Path, "/equity/quotes/"):
+		if strings.TrimPrefix(u.Path, "/equity/quotes/") == "DE0007164600" {
+			return 200, h, read("equity-quotes-sap"), nil
+		}
+		return notFound()
+	case method == http.MethodGet && strings.HasPrefix(u.Path, "/equity/profile/"):
+		if strings.TrimPrefix(u.Path, "/equity/profile/") == "DE0007164600" {
+			return 200, h, read("equity-profile-sap"), nil
 		}
 		return notFound()
 	case method == http.MethodGet && strings.HasPrefix(u.Path, "/etf/quotes/"):
@@ -557,4 +569,86 @@ func ReconcileETFPrice(price, nav string) (string, bool) {
 		return down.FloatString(4), true
 	}
 	return price, false
+}
+
+// EPPoint is one daily price from a Eulerpool history, dated by its UTC day.
+type EPPoint struct{ Day, Price string }
+
+// ParseEPPoints reads both history shapes: ETFs answer [[ms, price], ...],
+// equities [{"timestamp": ms, "price": p}, ...].
+func ParseEPPoints(b []byte) ([]EPPoint, error) {
+	var raw []json.RawMessage
+	if json.Unmarshal(b, &raw) != nil {
+		return nil, ErrUpstream
+	}
+	out := make([]EPPoint, 0, len(raw))
+	for _, r := range raw {
+		var ms, price json.Number
+		var pair []json.Number
+		var obj struct {
+			Timestamp json.Number `json:"timestamp"`
+			Price     json.Number `json:"price"`
+		}
+		switch {
+		case json.Unmarshal(r, &pair) == nil && len(pair) == 2:
+			ms, price = pair[0], pair[1]
+		case json.Unmarshal(r, &obj) == nil && obj.Timestamp != "":
+			ms, price = obj.Timestamp, obj.Price
+		default:
+			return nil, ErrUpstream
+		}
+		t, e1 := ms.Int64()
+		v, e2 := Scaled(price.String(), 4)
+		if e1 != nil || e2 != nil || t <= 0 {
+			continue
+		}
+		out = append(out, EPPoint{Day: time.UnixMilli(t).UTC().Format("2006-01-02"), Price: Fixed(v, 4)})
+	}
+	return out, nil
+}
+
+// LastEPPointOnOrBefore returns the newest point dated on or before day.
+func LastEPPointOnOrBefore(points []EPPoint, day string) (EPPoint, bool) {
+	var best EPPoint
+	found := false
+	for _, p := range points {
+		if p.Day <= day && (!found || p.Day >= best.Day) {
+			best, found = p, true
+		}
+	}
+	return best, found
+}
+
+// History fetches daily prices in [from, to]; kind is "etf" or "equity".
+func (g *EPGateway) History(ctx context.Context, user, kind, isin string, from, to time.Time) ([]EPPoint, error) {
+	path := fmt.Sprintf("/%s/quotes/%s?startdate=%d&enddate=%d", kind, url.PathEscape(isin), from.UnixMilli(), to.Add(24*time.Hour).UnixMilli())
+	b, err := g.do(ctx, user, kind+"/quotes", http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	points, err := ParseEPPoints(b)
+	if err != nil {
+		logUpstream(g.Log, slog.LevelError, ProviderEulerpool, "unparseable history", "isin", isin, "body", snippet(b))
+	}
+	return points, err
+}
+
+// StockProfile returns the listing currency (and WKN, when known) of an equity.
+func (g *EPGateway) StockProfile(ctx context.Context, user, isin string) (currency, wkn string, err error) {
+	b, err := g.do(ctx, user, "equity/profile", http.MethodGet, "/equity/profile/"+url.PathEscape(isin), nil)
+	if err != nil {
+		return "", "", err
+	}
+	var raw struct {
+		Currency string `json:"currency"`
+		WKN      string `json:"wkn"`
+	}
+	if json.Unmarshal(b, &raw) != nil {
+		logUpstream(g.Log, slog.LevelError, ProviderEulerpool, "unparseable equity profile", "isin", isin, "body", snippet(b))
+		return "", "", ErrUpstream
+	}
+	if len(raw.Currency) >= 3 && len(raw.Currency) <= 4 {
+		currency = raw.Currency
+	}
+	return currency, strings.ToUpper(strings.TrimSpace(raw.WKN)), nil
 }

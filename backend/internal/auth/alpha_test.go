@@ -152,8 +152,8 @@ func TestAlphaJobsEstimateFXAndOwnership(t *testing.T) {
 	if b.UserRemaining != 7 {
 		t.Fatal("reuse spent budget", b)
 	}
-	if w = featureRequest(handler, "POST", path+"/price-fetch-jobs", `{"date":"2000-01-01","instrumentIds":[1]}`, cookies...); w.Code != 400 {
-		t.Fatal("historical fetch allowed", w.Code)
+	if w = featureRequest(handler, "POST", path+"/price-fetch-jobs", `{"date":"1989-12-31","instrumentIds":[1]}`, cookies...); w.Code != 400 {
+		t.Fatal("date before 1990 allowed", w.Code)
 	}
 }
 func TestAlphaJobRunningImmediatePersistenceAndBudgetExhaustion(t *testing.T) {

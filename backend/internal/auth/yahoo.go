@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"holdings/backend/internal/database"
 	"holdings/backend/internal/httpapi"
@@ -265,6 +268,70 @@ type historyResponse struct {
 }
 
 func (h *Handler) registerYahooRoutes(mux *http.ServeMux) {
+	// Linking: find the Yahoo symbol of an instrument by name or ticker, then store it.
+	mux.HandleFunc("GET /api/instruments/{id}/yahoo-symbol/search", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
+		id, ok := portfolioID(w, r)
+		if !ok {
+			return
+		}
+		term, err := h.store.AVSearchTerm(r.Context(), id)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
+			term = q
+		}
+		if utf8.RuneCountInString(term) < 2 || utf8.RuneCountInString(term) > 100 || strings.ContainsFunc(term, unicode.IsControl) {
+			apiError(w, 400, "INVALID_QUERY", "Enter between 2 and 100 characters.")
+			return
+		}
+		result, err := h.searchProvider(r.Context(), marketdata.ProviderYahoo, user, term)
+		if err != nil {
+			marketError(w, err)
+			return
+		}
+		if err = h.store.MatchOnline(r.Context(), user, 0, result.Results); err != nil {
+			storeError(w, err)
+			return
+		}
+		httpapi.JSON(w, 200, result)
+	}))
+	mux.HandleFunc("PUT /api/instruments/{id}/yahoo-symbol", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
+		id, ok := portfolioID(w, r)
+		if !ok {
+			return
+		}
+		var in struct {
+			Symbol string `json:"symbol"`
+		}
+		if !decodeBody(w, r, &in) {
+			return
+		}
+		if err := h.store.LinkYahooSymbol(r.Context(), id, in.Symbol); err != nil {
+			marketError(w, err)
+			return
+		}
+		// Link the ISIN as well where possible: needed by the Eulerpool fallback.
+		ref, err := h.store.InstrumentRef(r.Context(), id)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		isin := ref.ISIN
+		if isin == "" {
+			var name string
+			if name, err = h.store.InstrumentName(r.Context(), id); err == nil {
+				if found := h.lookupISIN(r.Context(), user, name, ref.Type); found != "" {
+					if filled, e := h.store.FillISIN(r.Context(), id, found); e == nil && filled {
+						isin = found
+						h.profileInBackground(id)
+					}
+				}
+			}
+		}
+		httpapi.JSON(w, 200, map[string]string{"symbol": strings.ToUpper(strings.TrimSpace(in.Symbol)), "isin": isin})
+	}))
 	// Daily closes in the listing currency. Costs 1 Yahoo request (plus a symbol
 	// search the first time). Results are stored and also feed historical price fetches.
 	mux.HandleFunc("GET /api/instruments/{id}/price-history", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
@@ -320,4 +387,96 @@ func (h *Handler) registerYahooRoutes(mux *http.ServeMux) {
 		}
 		httpapi.JSON(w, 200, historyResponse{InstrumentID: id, Provider: marketdata.ProviderYahoo, Symbol: symbol, Currency: series.Currency, Prices: prices})
 	}))
+}
+
+func yahooWarning(err error) string {
+	switch {
+	case errors.Is(err, marketdata.ErrYahooLimit):
+		return marketdata.ErrYahooLimit.Error()
+	case errors.Is(err, marketdata.ErrYahooAuth):
+		return marketdata.ErrYahooAuth.Error()
+	}
+	return "YAHOO_UNAVAILABLE"
+}
+
+func providerWarning(provider string, err error) string {
+	if provider == marketdata.ProviderYahoo {
+		return yahooWarning(err)
+	}
+	return epWarning(err)
+}
+
+func yahooType(t string) string {
+	if t == "ETF" {
+		return "ETF"
+	}
+	return "STOCK"
+}
+
+// searchProvider runs one online search against Yahoo or Eulerpool and shapes
+// the hits as picker rows. An ISIN query makes the ISIN of the rows known.
+func (h *Handler) searchProvider(ctx context.Context, provider, user, q string) (marketdata.Results, error) {
+	out := marketdata.Results{Provider: provider, Results: []marketdata.Result{}}
+	if provider == marketdata.ProviderYahoo {
+		hits, err := h.yahoo.Search(ctx, user, q, 10)
+		if err != nil {
+			return out, err
+		}
+		isin := ""
+		if marketdata.Classify(q) == "ID_ISIN" {
+			isin = marketdata.Normalize(q)
+		}
+		seen := map[string]bool{}
+		for _, hit := range hits {
+			if seen[hit.Symbol] {
+				continue
+			}
+			seen[hit.Symbol] = true
+			out.Results = append(out.Results, marketdata.Result{Source: provider, YahooSymbol: hit.Symbol, Ticker: hit.Symbol, Name: hit.Name, Type: yahooType(hit.Type), ExchangeName: hit.Exchange, Sector: hit.Sector, ISIN: isin})
+		}
+		return out, nil
+	}
+	hits, err := h.ep.Search(ctx, user, q)
+	if err != nil {
+		return out, err
+	}
+	for _, hit := range hits {
+		out.Results = append(out.Results, marketdata.Result{Source: provider, ISIN: hit.ISIN, Ticker: hit.Ticker, Name: hit.Name, Type: hit.Type, Currency: hit.Currency})
+	}
+	return out, nil
+}
+
+// lookupISIN finds the ISIN of an instrument known by name and type through a
+// Eulerpool search (1 request). It returns "" unless the match is clear, and
+// never fails the caller: the instrument simply stays without an ISIN.
+func (h *Handler) lookupISIN(ctx context.Context, user, name, typ string) string {
+	hits, err := h.ep.Search(ctx, user, name)
+	if err != nil {
+		h.logger.Info("ISIN lookup via Eulerpool skipped", "error", err.Error())
+		return ""
+	}
+	return marketdata.PickISIN(hits, name, typ)
+}
+
+// saveYahooPick stores a picked Yahoo row, reusing an instrument that already has
+// the symbol or (when the ISIN is found) the ISIN.
+func (h *Handler) saveYahooPick(ctx context.Context, user string, row marketdata.Result) (database.Instrument, error) {
+	isin := marketdata.Normalize(row.ISIN)
+	if !marketdata.ValidISIN(isin) {
+		isin = ""
+	}
+	if isin == "" {
+		exists, err := h.store.YahooSymbolExists(ctx, row.YahooSymbol)
+		if err != nil {
+			return database.Instrument{}, err
+		}
+		if !exists {
+			isin = h.lookupISIN(ctx, user, row.Name, row.Type)
+		}
+	}
+	instrument, err := h.store.SaveYahooInstrument(ctx, row, isin)
+	if err == nil && instrument.Type == "ETF" && instrument.ISIN != "" {
+		h.profileInBackground(instrument.ID)
+	}
+	return instrument, err
 }

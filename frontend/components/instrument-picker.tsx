@@ -10,12 +10,15 @@ type PickerRow = Instrument & { online?: OnlineInstrument };
 type Section = { key: "local" | "online"; title: string; rows: PickerRow[] };
 
 const onlineMessage = (code: string) => code === "FIGI_RATE_LIMITED" ? "Online search busy, try again in a minute" : "Online search unavailable";
-const warningText = (code: string) => ({
-  EULERPOOL_UNAVAILABLE: "Eulerpool unavailable, showing OpenFIGI results",
-  EULERPOOL_LIMIT_REACHED: "Eulerpool limit reached, showing OpenFIGI results",
-  EULERPOOL_AUTH_ERROR: "Eulerpool is not configured correctly, showing OpenFIGI results",
-}[code] ?? onlineMessage(code));
-const providerTitle = (p?: string) => `Online · ${p === "EULERPOOL" ? "Eulerpool" : p === "ALPHAVANTAGE" ? "Alpha Vantage" : "OpenFIGI"}`;
+const providerName = (p?: string) => p === "YAHOO" ? "Yahoo Finance" : p === "EULERPOOL" ? "Eulerpool" : p === "ALPHAVANTAGE" ? "Alpha Vantage" : "OpenFIGI";
+// Warning codes come from the sources that failed; the text names the one that answered instead.
+const warningText = (code: string, shown?: string) => {
+  const failed = code.startsWith("YAHOO") ? "Yahoo Finance" : code.startsWith("EULERPOOL") ? "Eulerpool" : "";
+  if (!failed) return onlineMessage(code);
+  const reason = code.endsWith("LIMIT_REACHED") ? "is rate limited" : code.endsWith("AUTH_ERROR") ? "is not configured correctly" : "unavailable";
+  return `${failed} ${reason}, showing ${providerName(shown)} results`;
+};
+const providerTitle = (p?: string) => `Online · ${providerName(p)}`;
 const identifier = /^(?:[A-Z]{2}[A-Z0-9]{9}[0-9]|(?=[A-Z0-9]{6}$)(?=.*[0-9])[A-Z0-9]{6})$/;
 
 const SearchIcon = () => <svg className="icon" viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false"><circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" strokeWidth="1.8" /><path d="m14 14 4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>;
@@ -86,7 +89,7 @@ export function InstrumentPicker({ initial }: { initial: PortfolioDetail }) {
     setAVOffer(false); setQuery(value); setLocal([]); setOnline(null); setOnlineError(""); setOnlineLoading(false); setSearchError(""); setWarnings([]); setActive(-1);
     const long = [...value.trim()].length >= 4; setOpen(long); setLoading(long);
   };
-  const matches = (a: Instrument, b: Instrument) => a.id === b.id || !!(a.figi && a.figi === b.figi) || !!(a.isin && a.isin === b.isin) || !!(a.wkn && a.wkn === b.wkn) || !!((a as PickerRow).online?.avSymbol && (a as PickerRow).online?.avSymbol === (b as PickerRow).online?.avSymbol);
+  const matches = (a: Instrument, b: Instrument) => a.id === b.id || !!((a as PickerRow).online?.yahooSymbol && (a as PickerRow).online?.yahooSymbol === (b as PickerRow).online?.yahooSymbol) || !!(a.figi && a.figi === b.figi) || !!(a.isin && a.isin === b.isin) || !!(a.wkn && a.wkn === b.wkn) || !!((a as PickerRow).online?.avSymbol && (a as PickerRow).online?.avSymbol === (b as PickerRow).online?.avSymbol);
   const disabled = (i: Instrument) => i.inPortfolio || portfolio.instrumentIds.includes(i.id) || selected.some(s => matches(s, i));
   const isSelected = (i: Instrument) => selected.some(s => matches(s, i));
   const inPortfolio = (i: Instrument) => i.inPortfolio || portfolio.instrumentIds.includes(i.id);
@@ -123,9 +126,9 @@ export function InstrumentPicker({ initial }: { initial: PortfolioDetail }) {
       if (version !== onlineVersion.current || abort.signal.aborted) return;
       const resolved = provider === "av" ? "ALPHAVANTAGE" : found.provider;
       // Alpha Vantage is offered only when no online source had anything to show.
-      if (provider === "default") setAVOffer(found.results.length === 0 && resolved !== "EULERPOOL");
+      if (provider === "default") setAVOffer(found.results.length === 0 && resolved !== "EULERPOOL" && resolved !== "YAHOO");
       setOnline({ provider: resolved, rows: found.results.map((row, index) => ({ ...row, id: row.existingInstrumentId ?? -(index + 1), isin: row.isin ?? "", wkn: row.wkn ?? null, online: row })) });
-      setWarnings([...(found.warnings ?? []).map(warningText), ...(found.warning ? [onlineMessage(found.warning)] : [])]);
+      setWarnings([...(found.warnings ?? []).map(code => warningText(code, resolved)), ...(found.warning ? [onlineMessage(found.warning)] : [])]);
       if (provider === "default" && found.warning) setAVOffer(true);
     } catch (e) {
       if (version === onlineVersion.current && !abort.signal.aborted) {
@@ -206,7 +209,7 @@ export function InstrumentPicker({ initial }: { initial: PortfolioDetail }) {
                 <span className={`pill ${i.type === "ETF" ? "pill-etf" : "pill-stock"}`}>{i.type === "ETF" ? "ETF" : "Stock"}</span>
                 <span className="option-main">
                   <strong className="option-name"><Highlight text={i.name} query={normalized} /></strong>
-                  <span className="option-meta">{[i.ticker, i.isin || "—", i.wkn ?? "—"].join(" · ")}</span>
+                  <span className="option-meta">{(i.online?.exchangeName ? [i.ticker, i.isin || "no ISIN", i.online.exchangeName, i.online.sector] : [i.ticker, i.isin || "—", i.wkn ?? "—"]).filter(Boolean).join(" · ")}</span>
                 </span>
                 <span className="option-side">
                   {off && <span className="option-state">{inPortfolio(i) ? "✓ In portfolio" : "Selected"}</span>}
@@ -225,7 +228,7 @@ export function InstrumentPicker({ initial }: { initial: PortfolioDetail }) {
         {warnings.length > 0 && !sections.some(s => s.key === "online") && !onlineLoading && <div className="banner" role="note">{warnings.join(" · ")}</div>}
         {nothing && <div className="state empty-state"><svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" strokeWidth="1.6" /><path d="m16.5 16.5 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg><p role="status">No results for “{normalized}”</p>{!online && <small>Press Search to look online.</small>}</div>}
         {canOfferAV && !onlineLoading && <div className="state"><button type="button" disabled={busy || loading} onClick={() => void searchOnline("av")}>Try Alpha Vantage (1 request)</button></div>}
-        {online?.provider === "EULERPOOL" && <div className="dropdown-footer">Data by Eulerpool</div>}
+        {(online?.provider === "EULERPOOL" || online?.provider === "YAHOO") && <div className="dropdown-footer">Data by {providerName(online.provider)}</div>}
       </div>}
       {info && <EtfInfoPanel instrumentId={info.id} name={info.name} close={() => setInfo(null)} />}
     </div>

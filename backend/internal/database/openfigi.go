@@ -28,7 +28,7 @@ func (s *Store) MatchOnline(ctx context.Context, user string, portfolio int64, r
 	}
 	for i := range rows {
 		r := &rows[i]
-		err = conn.QueryRowContext(ctx, `SELECT id,EXISTS(SELECT 1 FROM portfolio_items WHERE portfolio_id=? AND instrument_id=i.id) FROM instruments i WHERE figi=NULLIF(?,'') OR isin=NULLIF(?,'') OR wkn=NULLIF(?,'') OR av_symbol=NULLIF(?,'') ORDER BY id LIMIT 1`, portfolio, r.FIGI, r.ISIN, r.WKN, r.AVSymbol).Scan(&r.ExistingInstrumentID, &r.InPortfolio)
+		err = conn.QueryRowContext(ctx, `SELECT id,EXISTS(SELECT 1 FROM portfolio_items WHERE portfolio_id=? AND instrument_id=i.id) FROM instruments i WHERE figi=NULLIF(?,'') OR isin=NULLIF(?,'') OR wkn=NULLIF(?,'') OR av_symbol=NULLIF(?,'') OR yahoo_symbol=NULLIF(?,'') ORDER BY id LIMIT 1`, portfolio, r.FIGI, r.ISIN, r.WKN, r.AVSymbol, r.YahooSymbol).Scan(&r.ExistingInstrumentID, &r.InPortfolio)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}

@@ -20,6 +20,9 @@ import (
 var ErrAVLimit = errors.New("AV_RATE_LIMITED")
 var ErrAVUserLimit = errors.New("AV_USER_LIMIT_REACHED")
 
+// ErrAVOutOfRange means the date is older than the compact daily series (about 100 trading days).
+var ErrAVOutOfRange = errors.New("AV_OUT_OF_RANGE")
+
 // ErrAVRejected is an UPSTREAM_ERROR where AV answered with a Note/Information
 // notice that is not a limit, e.g. the demo key used outside its examples.
 var ErrAVRejected = fmt.Errorf("%w: Alpha Vantage rejected the request", ErrUpstream)
@@ -138,6 +141,7 @@ type avCall struct {
 	ctx                   context.Context
 	user, function, query string
 	instrument            int64
+	historical            bool
 	build                 func([]byte) (*Quote, error)
 	reply                 chan avReply
 }
@@ -190,7 +194,7 @@ func (g *AVGateway) execute(c avCall) avReply {
 		if b, ok := g.Cache.Get(key); ok {
 			return avReply{data: b}
 		}
-	} else {
+	} else if !c.historical {
 		q, err := g.Store.FreshQuote(c.ctx, c.instrument, g.Now())
 		if err != nil {
 			return avReply{err: err}
@@ -281,7 +285,7 @@ func (g *AVGateway) dispatch(c avCall) avReply {
 		if b, ok := g.Cache.Get("av:" + Normalize(c.query)); ok {
 			return avReply{data: b}
 		}
-	} else {
+	} else if !c.historical {
 		q, err := g.Store.FreshQuote(c.ctx, c.instrument, g.Now())
 		if err != nil {
 			return avReply{err: err}
@@ -366,6 +370,39 @@ func (g *AVGateway) Quote(ctx context.Context, user, symbol, currency string, id
 		return q, ApplyFX(q, fx)
 	}})
 	return r.quote, r.fresh, r.err
+}
+
+// QuoteOn returns the close on or before day from the compact daily series (about
+// the last 100 trading days; older dates give ErrAVOutOfRange). It never reuses
+// a stored current quote.
+func (g *AVGateway) QuoteOn(ctx context.Context, user, symbol, currency string, id int64, fx *FXRate, day string) (*Quote, error) {
+	r := g.dispatch(avCall{ctx: ctx, user: user, function: "TIME_SERIES_DAILY", query: symbol, instrument: id, historical: true, build: func(b []byte) (*Quote, error) {
+		var raw struct {
+			Series map[string]map[string]string `json:"Time Series (Daily)"`
+		}
+		if json.Unmarshal(b, &raw) != nil || len(raw.Series) == 0 {
+			return nil, ErrUpstream
+		}
+		earliest, best := "", ""
+		for d := range raw.Series {
+			if earliest == "" || d < earliest {
+				earliest = d
+			}
+			if d <= day && d > best {
+				best = d
+			}
+		}
+		if best == "" {
+			return nil, ErrAVOutOfRange
+		}
+		p, err := Scaled(raw.Series[best]["4. close"], 4)
+		if err != nil {
+			return nil, ErrUpstream
+		}
+		q := &Quote{InstrumentID: id, OrigPrice: Fixed(p, 4), Currency: currency, Price: Fixed(p, 4), QuoteDate: best, FetchedAt: g.Now()}
+		return q, ApplyFX(q, fx)
+	}})
+	return r.quote, r.err
 }
 
 // ApplyFX sets the EUR price of q from its original price using fx, the rate
@@ -469,6 +506,9 @@ type MockAV struct{}
 func (MockAV) Call(ctx context.Context, function, query string) ([]byte, error) {
 	if function == "GLOBAL_QUOTE" {
 		return fixtures.ReadFile("testdata/marketdata/alpha-quote.json")
+	}
+	if function == "TIME_SERIES_DAILY" {
+		return fixtures.ReadFile("testdata/marketdata/alpha-daily-ibm.json")
 	}
 	// alpha-search-tesco.json is the verbatim response of the public demo request
 	// function=SYMBOL_SEARCH&keywords=tesco&apikey=demo.

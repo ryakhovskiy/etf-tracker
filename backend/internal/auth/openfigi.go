@@ -52,17 +52,24 @@ func (h *Handler) registerOnlineRoutes(mux *http.ServeMux) {
 			return
 		}
 		var warnings []string
-		// Eulerpool has no WKN lookup, so WKN queries go straight to OpenFIGI.
-		if h.primary == marketdata.ProviderEulerpool && marketdata.Classify(q) != "ID_WERTPAPIER" {
-			hits, err := h.ep.Search(r.Context(), user, q)
-			if err != nil {
-				h.logger.Warn("Eulerpool search failed; falling back to OpenFIGI", "error", err.Error(), "queryLength", len(q))
-				warnings = append(warnings, epWarning(err))
-			} else if len(hits) > 0 {
-				result := marketdata.Results{Provider: marketdata.ProviderEulerpool, Results: make([]marketdata.Result, 0, len(hits))}
-				for _, hit := range hits {
-					result.Results = append(result.Results, marketdata.Result{Source: marketdata.ProviderEulerpool, ISIN: hit.ISIN, Ticker: hit.Ticker, Name: hit.Name, Type: hit.Type, Currency: hit.Currency})
+		// Yahoo and Eulerpool cannot look up WKNs, so WKN queries go straight to OpenFIGI.
+		// Order: primary provider first, then the other one, then OpenFIGI (all free of AV budget).
+		if h.primary != marketdata.ProviderAlphaVantage && marketdata.Classify(q) != "ID_WERTPAPIER" {
+			order := []string{marketdata.ProviderYahoo, marketdata.ProviderEulerpool}
+			if h.primary == marketdata.ProviderEulerpool {
+				order = []string{marketdata.ProviderEulerpool}
+			}
+			for _, provider := range order {
+				result, err := h.searchProvider(r.Context(), provider, user, q)
+				if err != nil {
+					h.logger.Warn("online search failed; trying the next source", "provider", provider, "error", err.Error(), "queryLength", len(q))
+					warnings = append(warnings, providerWarning(provider, err))
+					continue
 				}
+				if len(result.Results) == 0 {
+					continue
+				}
+				result.Warnings = warnings
 				if err = h.store.MatchOnline(r.Context(), user, id, result.Results); err != nil {
 					storeError(w, err)
 					return
@@ -96,7 +103,9 @@ func (h *Handler) registerOnlineRoutes(mux *http.ServeMux) {
 		}
 		var instrument database.Instrument
 		var err error
-		if row.Source == marketdata.ProviderEulerpool {
+		if row.Source == marketdata.ProviderYahoo {
+			instrument, err = h.saveYahooPick(r.Context(), user, row)
+		} else if row.Source == marketdata.ProviderEulerpool {
 			instrument, err = h.store.SaveEulerpoolInstrument(r.Context(), row)
 			if err == nil && instrument.Type == "ETF" {
 				h.profileInBackground(instrument.ID)

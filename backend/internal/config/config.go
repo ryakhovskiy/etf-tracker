@@ -113,9 +113,9 @@ func Load() (Config, error) {
 	if err != nil || cfg.EulerpoolProfileTTL <= 0 {
 		return Config{}, errors.New("EULERPOOL_PROFILE_TTL must be a positive duration")
 	}
-	cfg.MarketdataPrimary = strings.ToUpper(value("MARKETDATA_PRIMARY", marketdata.ProviderEulerpool))
-	if cfg.MarketdataPrimary != marketdata.ProviderEulerpool && cfg.MarketdataPrimary != marketdata.ProviderAlphaVantage {
-		return Config{}, errors.New("MARKETDATA_PRIMARY must be EULERPOOL or ALPHAVANTAGE")
+	cfg.MarketdataPrimary = strings.ToUpper(value("MARKETDATA_PRIMARY", marketdata.ProviderYahoo))
+	if cfg.MarketdataPrimary != marketdata.ProviderYahoo && cfg.MarketdataPrimary != marketdata.ProviderEulerpool && cfg.MarketdataPrimary != marketdata.ProviderAlphaVantage {
+		return Config{}, errors.New("MARKETDATA_PRIMARY must be YAHOO, EULERPOOL or ALPHAVANTAGE")
 	}
 	for _, entry := range []struct {
 		key, fallback string

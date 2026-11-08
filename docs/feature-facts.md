@@ -18,6 +18,7 @@ or live-provider availability. Code and tests take precedence over historical sp
 | Eulerpool / f3 | Implemented; primary-provider default superseded | Search, stock bulk quotes, ETF history/profiles, quota accounting, modern picker |
 | Yahoo and historical prices / later code | Implemented extension | Default primary provider, symbol linking, current quotes and daily history |
 | Dividend calendar / f4, beyond the supplied specs | Implemented extension | Cached gross dividends, EUR totals, forecasts and background sync |
+| Docker deployment / later infrastructure | Implemented | Separate multi-stage backend/frontend images, dedicated network, persistent SQLite volume, health checks |
 
 ## Platform, security and shared rules
 
@@ -42,6 +43,36 @@ or live-provider availability. Code and tests take precedence over historical sp
   1990-01-01 through today in Europe/Berlin.
 - Terminology differs by surface: transaction API `amount` = **EUR total** and
   `quantity` = **units**; CSV column **Amount** maps to units, **Total €** to money.
+
+## Docker deployment
+
+- From the repository root, `docker compose build` builds both images;
+  `docker compose up -d --build --wait` builds and starts both services.
+  Requires Docker Engine with the Compose plugin and a configured root `.env`.
+- Backend: Go 1.27.3 build stage, `CGO_ENABLED=0`, stripped binary with trimmed
+  paths; Alpine runtime with CA roots and Go timezone data. Goose migrations and
+  mock fixtures are embedded. Runs as UID/GID `10001:10001`.
+- Frontend: Node 22 Alpine build/runtime, `npm ci`, Next.js standalone output,
+  compiled static assets and `public` assets; runs as user `node`. Final images
+  exclude source trees, local `.env` files and the full development dependencies.
+- Both services join the dedicated **`holdings-network`** bridge. Frontend
+  publishes **`9443:9443`**; backend listens on **9000** within that network,
+  without publishing a host port. Docker builds set `NEXT_PUBLIC_API_URL=""`
+  and `API_PROXY_URL=http://backend:9000`; Next.js forwards `/api/*` and `/auth/*`
+  to the backend, keeping browser requests and cookies on the frontend origin.
+  These values are compiled at build time; local development retains its direct API URL.
+- **9443 serves HTTP**; an external HTTPS reverse proxy must forward the public
+  site to it. Set `FRONTEND_URL` and `GOOGLE_REDIRECT_URL` to the public HTTPS
+  origin/callback, including any public port, and register that callback with Google.
+  Supply real Google credentials and a random `JWT_SECRET` of at least 32 characters.
+  Compose overrides `APP_ENV=production`, `SECURE_SESSION_COOKIE=true`,
+  `PORT=9000` and `DATABASE_PATH=/app/data/holdings.db`.
+- SQLite persists in the **`holdings_holdings-data`** named volume at `/app/data`,
+  initialized writable by the backend user. Existing host databases require explicit
+  migration into it. `docker compose down` preserves data; `down -v` deletes it.
+- Both services have health checks, init processes and `unless-stopped` restart
+  policies. Frontend startup waits for backend `/health` to pass. Operational
+  commands: `docker compose ps` and `docker compose logs -f`.
 
 ## Pages and workflows
 
@@ -231,12 +262,23 @@ per-item errors and ECB historical FX. This does **not** create dividend transac
 - UI: [`frontend/components`](../frontend/components), routes in
   [`frontend/app`](../frontend/app), decimal/helpers in [`frontend/lib`](../frontend/lib).
   Migrations currently run through **00013**; add migrations rather than editing applied ones.
+- Deployment: [`compose.yaml`](../compose.yaml),
+  [`backend/Dockerfile`](../backend/Dockerfile),
+  [`frontend/Dockerfile`](../frontend/Dockerfile), per-service `.dockerignore`
+  files and [`next.config.mjs`](../frontend/next.config.mjs).
+  Setup and HTTPS requirements: [Docker deployment](../README.md#docker-deployment).
 - Backend tests cover ownership, concurrency/limits, decimals, imports, valuation,
   providers/jobs/FX and dividends. Frontend tests cover interactions, coupling,
   stale requests, limits, accessibility, charts, imports and dividends.
   Snapshot checks: `go test ./...` and `npm test` both passed on 2026-11-08.
   Run `go test ./...` in `backend`; `npm test` and `npm run typecheck` in `frontend`.
   Mock fixtures live under `testdata/` and embedded provider testdata.
+- Docker checks passed on 2026-11-08: Compose validation, both image builds,
+  frontend tests/type checking and isolated container smoke tests. Verified healthy
+  non-root services, dedicated networking, internal-only backend port, writable
+  SQLite storage, static assets, API forwarding and secure OAuth cookies/callback.
+  Local Go dependency downloads required the host TLS proxy CA as a temporary
+  build secret; it is not included in the deployment configuration or runtime images.
 - This snapshot is based on source/test inspection and local tests; live-provider
   behavior and every original acceptance checkbox have not been independently audited.
   Provider observations: [`yahoo-notes.md`](yahoo-notes.md),

@@ -1,0 +1,8 @@
+.env
+.env.*
+data
+*.db
+*.db-*
+coverage*
+Dockerfile
+.dockerignore

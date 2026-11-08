@@ -24,6 +24,42 @@ Requires Go 1.27.3 or newer and Node.js 22.18 or newer (including native TypeScr
 
 Open http://localhost:3000. Google OAuth handles both new-user signup and returning-user login. Users and hashed refresh tokens are persisted in `DATABASE_PATH` (default: `data/holdings.db`); access and refresh tokens are issued only as HttpOnly cookies.
 
+## Docker deployment
+
+Install Docker Engine with the Compose plugin on the Linux server. From the repository root, copy `.env.example` to `.env` if needed and set your real credentials and public HTTPS URLs, for example:
+
+```dotenv
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+JWT_SECRET=your-random-secret-at-least-32-characters
+FRONTEND_URL=https://holdings.example.com
+GOOGLE_REDIRECT_URL=https://holdings.example.com/auth/google/callback
+```
+
+Generate `JWT_SECRET` with `openssl rand -hex 32` and register the exact `GOOGLE_REDIRECT_URL` in Google Cloud Console. If the public HTTPS URL includes `:9443`, include that port in both URLs above. Keep the other provider settings in `.env` as needed. Compose sets `APP_ENV=production`, `SECURE_SESSION_COOKIE=true`, `PORT=9000`, and the container database path automatically, overriding local development values.
+
+Build both production images and start both containers with one command:
+
+```sh
+docker compose up -d --build --wait
+```
+
+To build images without starting containers:
+
+```sh
+docker compose build
+```
+
+Both Dockerfiles use multiple stages. The backend runtime contains the stripped Go binary, CA certificates, and timezone data; migrations and mock market data are embedded in the binary. The frontend runtime contains Node.js, the [Next.js standalone output](https://nextjs.org/docs/app/api-reference/config/next-config-js/output), static assets, and any `public` assets. Build tools, source trees, local `.env` files, and the full development dependency tree are excluded from the final images. Both services run as unprivileged users.
+
+The two containers join the dedicated `holdings-network` bridge network. The frontend listens on container port **9443**, published as server port **9443**. It forwards `/api/*` and `/auth/*` to **`backend:9000`** over that network, so the browser uses the frontend origin for API requests and cookies. The backend listens on **9000** and is accessible only within the Docker network. `NEXT_PUBLIC_API_URL` is compiled as an empty string in the Docker build; no frontend environment file or server-specific image rebuild is needed.
+
+Port 9443 serves **HTTP inside this setup**. Configure your HTTPS reverse proxy to forward the entire public site to `http://127.0.0.1:9443`; the public URLs in `.env` must match the browser-facing HTTPS origin. A port number alone does not enable TLS. The API requires HTTPS URLs and secure cookies in production.
+
+SQLite files persist in the `holdings_holdings-data` named volume at `/app/data`. The volume is initialized with permissions for the backend service user. Existing host databases are not imported automatically; copy any existing database into that volume while the backend is stopped and preserve ownership `10001:10001`. Back up the volume before upgrades. `docker compose down` preserves it; `docker compose down -v` deletes it.
+
+Check service health and logs with `docker compose ps` and `docker compose logs -f`. The frontend starts after the backend health check passes. After pulling source updates, run the same `docker compose up -d --build --wait` command to rebuild and recreate the services.
+
 ## Database migrations
 
 The API applies pending [Goose](https://pressly.github.io/goose/documentation/provider/) migrations before accepting requests. SQL migrations live in [backend/internal/database/migrations](./backend/internal/database/migrations) and are embedded into the binary. Goose records applied versions in `goose_db_version`; restarting the API does not reapply them. Add a new numbered SQL file with `-- +goose Up` and `-- +goose Down` sections for each schema change, then rebuild the API. Do not edit already applied migrations.

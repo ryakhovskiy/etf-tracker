@@ -2,6 +2,8 @@
 
 A small Go + Next.js app with Google login/signup, SQLite-backed users and refresh tokens, JWT access tokens, and private portfolios with a search-driven stock/ETF picker.
 
+See [Implemented feature facts](docs/feature-facts.md) for the concise agent reference, current provider roles, and implementation status across the feature specs.
+
 ## Setup
 
 Requires Go 1.27.3 or newer and Node.js 22.18 or newer (including native TypeScript support for the frontend tests).

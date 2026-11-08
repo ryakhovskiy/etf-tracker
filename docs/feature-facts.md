@@ -56,7 +56,7 @@ or live-provider availability. Code and tests take precedence over historical sp
   compiled static assets and `public` assets; runs as user `node`. Final images
   exclude source trees, local `.env` files and the full development dependencies.
 - Both services join the dedicated **`holdings-network`** bridge. Frontend
-  publishes **`9443:9443`**; backend listens on **9000** within that network,
+  publishes **`127.0.0.1:9443:9443`** (loopback only); backend listens on **9000** within that network,
   without publishing a host port. Docker builds set `NEXT_PUBLIC_API_URL=""`
   and `API_PROXY_URL=http://backend:9000`; Next.js forwards `/api/*` and `/auth/*`
   to the backend, keeping browser requests and cookies on the frontend origin.

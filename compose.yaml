@@ -25,7 +25,8 @@ services:
     build:
       context: ./frontend
     ports:
-      - "9443:9443"
+      # Loopback only: the host's cloudflared daemon is the sole public entry point.
+      - "127.0.0.1:9443:9443"
     depends_on:
       backend:
         condition: service_healthy

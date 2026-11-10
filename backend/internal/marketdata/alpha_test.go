@@ -257,6 +257,29 @@ func TestFrankfurterURLStorageCacheAndErrors(t *testing.T) {
 	}
 }
 
+// Before the ~16:00 ECB release, Frankfurter answers a request for today alone
+// with the previous publication. That row is valid and must not fail the request.
+func TestFrankfurterAcceptsEarlierPublication(t *testing.T) {
+	ctx := context.Background()
+	body := `[{"date":"2026-11-09","base":"USD","quote":"EUR","rate":0.89342}]`
+	f := &md.Frankfurter{HTTP: &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+		return response(200, body), nil
+	})}, BaseURL: "https://mock.invalid", Provider: "ECB"}
+	rates, err := f.Rates(ctx, "USD", "2026-11-10", "2026-11-10")
+	if err != nil || len(rates) != 1 || rates[0].Date != "2026-11-09" || rates[0].Rate != 89342000 {
+		t.Fatal(rates, err)
+	}
+	for _, bad := range []string{
+		`[{"date":"2026-11-11","base":"USD","quote":"EUR","rate":0.9}]`, // after the range
+		`[{"date":"2026-11-10","base":"GBP","quote":"EUR","rate":0.9}]`, // wrong pair
+	} {
+		body = bad
+		if _, err := f.Rates(ctx, "USD", "2026-11-10", "2026-11-10"); !errors.Is(err, md.ErrUpstream) {
+			t.Fatal(bad, err)
+		}
+	}
+}
+
 type fxFunc struct {
 	rates func(context.Context, string, string, string) ([]md.FXRate, error)
 }

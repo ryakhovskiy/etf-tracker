@@ -80,14 +80,30 @@ type loggingTransport struct {
 }
 
 func (t loggingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if t.log != nil {
-		t.log.Info("calling url: "+ScrubURL(r.URL), "method", r.Method)
+	if t.log == nil {
+		return t.base.RoundTrip(r)
 	}
-	return t.base.RoundTrip(r)
+	target := ScrubURL(r.URL)
+	t.log.Info("calling url: "+target, "method", r.Method)
+	started := time.Now()
+	res, err := t.base.RoundTrip(r)
+	elapsed := time.Since(started).Round(time.Millisecond).String()
+	if err != nil {
+		t.log.Error("call failed: "+target, "method", r.Method, "elapsed", elapsed, "error", cleanErr(err))
+		return res, err
+	}
+	level := slog.LevelInfo
+	if res.StatusCode >= 400 {
+		level = slog.LevelWarn
+	}
+	t.log.Log(r.Context(), level, "response from url: "+target, "method", r.Method, "status", res.StatusCode,
+		"elapsed", elapsed, "contentType", res.Header.Get("Content-Type"), "contentLength", res.ContentLength)
+	return res, nil
 }
 
 // NewLoggedClient returns an HTTP client that logs "calling url: <url>" (with
-// secrets scrubbed) before every outbound request.
+// secrets scrubbed) before every outbound request, and its status and duration
+// (or transport error) afterwards.
 func NewLoggedClient(timeout time.Duration, log *slog.Logger) *http.Client {
 	return &http.Client{Timeout: timeout, Transport: loggingTransport{base: http.DefaultTransport, log: log}}
 }

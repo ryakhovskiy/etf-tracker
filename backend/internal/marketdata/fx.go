@@ -3,6 +3,7 @@ package marketdata
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -353,22 +354,34 @@ func (f *Frankfurter) Rates(ctx context.Context, currency, from, to string) ([]F
 		return nil, err
 	}
 	out := []FXRate{}
+	reject := func(reason string, r any) ([]FXRate, error) {
+		logUpstream(f.Log, slog.LevelError, "FRANKFURTER", "rejected rates response: "+reason, "currency", currency, "from", from, "to", to, "row", fmt.Sprintf("%+v", r))
+		return nil, ErrUpstream
+	}
 	for _, r := range rows {
 		if r.Base == r.Quote {
 			continue
 		}
-		if r.Base != currency || r.Quote != "EUR" || r.Date < from || r.Date > to {
-			return nil, ErrUpstream
+		// A row before from is the latest earlier publication: Frankfurter returns
+		// it when [from, to] has none yet (e.g. today before the ~16:00 ECB release).
+		if r.Base != currency || r.Quote != "EUR" || r.Date > to {
+			return reject("unexpected currency pair or date after the requested range", r)
 		}
 		if _, err := time.Parse("2006-01-02", r.Date); err != nil {
-			return nil, ErrUpstream
+			return reject("invalid date", r)
 		}
 		n, err := Scaled(r.Rate.String(), 8)
 		if err != nil {
+			logUpstream(f.Log, slog.LevelError, "FRANKFURTER", "rejected rates response: invalid rate", "currency", currency, "row", fmt.Sprintf("%+v", r), "error", err.Error())
 			return nil, err
 		}
 		out = append(out, FXRate{r.Date, r.Base, r.Quote, n})
 	}
+	dates := make([]string, len(out))
+	for i, r := range out {
+		dates[i] = r.Date
+	}
+	logUpstream(f.Log, slog.LevelInfo, "FRANKFURTER", "rates received", "currency", currency, "from", from, "to", to, "publications", strings.Join(dates, ","))
 	return out, nil
 }
 

@@ -166,6 +166,7 @@ func (g *YahooGateway) get(ctx context.Context, user, function, rawURL string) (
 	status, _, body, err := g.Transport.Get(ctx, rawURL)
 	g.last = g.Now()
 	if err != nil {
+		logUpstream(g.Log, slog.LevelError, ProviderYahoo, "transport error", "function", function, "error", cleanErr(err))
 		return 0, nil, ErrUpstream
 	}
 	if e := g.Store.RecordProviderRequest(ctx, ProviderYahoo, user, function, g.Now(), true); e != nil {
@@ -427,27 +428,54 @@ func (g *YahooGateway) Quotes(ctx context.Context, user string, symbols []string
 	if len(symbols) == 0 || len(symbols) > YahooQuoteBatchSize {
 		return nil, fmt.Errorf("quotes need 1..%d symbols", YahooQuoteBatchSize)
 	}
+	logUpstream(g.Log, slog.LevelInfo, ProviderYahoo, "requesting quotes", "symbols", strings.Join(symbols, ","))
 	b, err := g.call(ctx, user, "quote", g.QueryURL, "/v7/finance/quote", url.Values{"symbols": {strings.Join(symbols, ",")}})
 	if err != nil {
+		logUpstream(g.Log, slog.LevelError, ProviderYahoo, "quote request failed", "symbols", strings.Join(symbols, ","), "error", err.Error(), "body", snippet(b))
 		return nil, err
 	}
 	out, err := ParseYahooQuotes(b)
 	if err != nil {
 		logUpstream(g.Log, slog.LevelError, ProviderYahoo, "unparseable quote response", "body", snippet(b))
+		return out, err
 	}
-	return out, err
+	var missing []string
+	for _, s := range symbols {
+		if q, ok := out[s]; ok {
+			logUpstream(g.Log, slog.LevelInfo, ProviderYahoo, "quote received", "symbol", s, "price", q.Price, "currency", q.Currency, "at", q.At.UTC().Format(time.RFC3339))
+		} else {
+			missing = append(missing, s)
+		}
+	}
+	if len(missing) > 0 {
+		// Unknown symbols and rows without price, time or currency are dropped by the parser.
+		logUpstream(g.Log, slog.LevelWarn, ProviderYahoo, "symbols missing or incomplete in quote response", "missing", strings.Join(missing, ","), "body", snippet(b))
+	}
+	return out, nil
 }
 
 // History fetches daily closes for the inclusive day range [from, to].
 func (g *YahooGateway) History(ctx context.Context, user, symbol string, from, to time.Time) (*YahooSeries, error) {
 	q := url.Values{"period1": {strconv.FormatInt(from.Unix(), 10)}, "period2": {strconv.FormatInt(to.Add(24*time.Hour).Unix(), 10)}, "interval": {"1d"}, "includeAdjustedClose": {"false"}}
+	days := []any{"symbol", symbol, "from", from.Format("2006-01-02"), "to", to.Format("2006-01-02")}
+	logUpstream(g.Log, slog.LevelInfo, ProviderYahoo, "requesting history", days...)
 	b, err := g.call(ctx, user, "chart", g.QueryURL, "/v8/finance/chart/"+url.PathEscape(symbol), q)
 	if err != nil {
+		logUpstream(g.Log, slog.LevelError, ProviderYahoo, "history request failed", append(days, "error", err.Error(), "body", snippet(b))...)
 		return nil, err
 	}
 	s, err := ParseYahooChart(b)
-	if err != nil && !errors.Is(err, ErrYahooNotFound) {
-		logUpstream(g.Log, slog.LevelError, ProviderYahoo, "unparseable chart response", "symbol", symbol, "body", snippet(b))
+	switch {
+	case errors.Is(err, ErrYahooNotFound):
+		logUpstream(g.Log, slog.LevelWarn, ProviderYahoo, "history not found", append(days, "body", snippet(b))...)
+	case err != nil:
+		logUpstream(g.Log, slog.LevelError, ProviderYahoo, "unparseable chart response", append(days, "error", err.Error(), "body", snippet(b))...)
+	default:
+		attrs := append(days, "currency", s.Currency, "points", len(s.Points))
+		if n := len(s.Points); n > 0 {
+			attrs = append(attrs, "first", s.Points[0].Day, "last", s.Points[n-1].Day, "lastClose", s.Points[n-1].Close)
+		}
+		logUpstream(g.Log, slog.LevelInfo, ProviderYahoo, "history received", attrs...)
 	}
 	return s, err
 }

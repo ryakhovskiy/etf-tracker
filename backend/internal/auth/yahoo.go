@@ -125,27 +125,39 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 		}
 		return r, err
 	}
+	item := func(i int, attrs ...any) []any {
+		return append([]any{"user", job.user, "instrument", rows[i].InstrumentID, "isin", rows[i].ISIN, "date", date}, attrs...)
+	}
 	finish := func(i int, price, ccy, quoteDay string) {
 		q := &marketdata.Quote{InstrumentID: rows[i].InstrumentID, OrigPrice: price, Price: price, Currency: ccy, QuoteDate: quoteDay, FetchedAt: time.Now(), Provider: marketdata.ProviderYahoo}
+		quote := []any{"price", price, "currency", ccy, "quoteDay", quoteDay}
 		fx, err := rate(ccy)
-		if err == nil {
-			err = marketdata.ApplyFX(q, fx)
-		}
-		if err == nil {
-			err = h.store.SaveQuote(ctx, q, "")
-		}
 		if err != nil {
-			h.logger.Error("could not store Yahoo quote", "instrument", rows[i].InstrumentID, "currency", ccy, "error", err.Error())
+			h.logger.Error("Yahoo price obtained but no EUR FX rate", item(i, append(quote, "fxCurrency", fxCurrency(ccy), "status", quoteFailure(err), "error", err.Error())...)...)
 			set(i, quoteFailure(err), "", nil)
 			return
 		}
+		if err = marketdata.ApplyFX(q, fx); err != nil {
+			h.logger.Error("could not convert Yahoo quote to EUR", item(i, append(quote, "fxDate", fx.Date, "error", err.Error())...)...)
+			set(i, quoteFailure(err), "", nil)
+			return
+		}
+		if err = h.store.SaveQuote(ctx, q, ""); err != nil {
+			h.logger.Error("could not store Yahoo quote", item(i, append(quote, "error", err.Error())...)...)
+			set(i, quoteFailure(err), "", nil)
+			return
+		}
+		if fx != nil {
+			quote = append(quote, "fxDate", fx.Date, "eurPrice", q.Price)
+		}
+		h.logger.Info("Yahoo quote stored", item(i, quote...)...)
 		set(i, "OK", "", q)
 	}
 	today := marketdata.BerlinDay(time.Now())
 	historical := date != today
 	limited := false
 	fail := func(i int, err error) {
-		h.logger.Warn("Yahoo could not price item", "instrument", rows[i].InstrumentID, "isin", rows[i].ISIN, "error", err.Error())
+		h.logger.Warn("Yahoo could not price item", item(i, "error", err.Error())...)
 		switch {
 		case errors.Is(err, marketdata.ErrYahooLimit):
 			limited = true
@@ -165,21 +177,25 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 	for i, row := range rows {
 		ref, err := h.store.InstrumentRef(ctx, row.InstrumentID)
 		if err != nil {
+			h.logger.Error("could not load instrument for Yahoo pricing", item(i, "error", err.Error())...)
 			set(i, "ERROR", "", nil)
 			continue
 		}
 		if !historical {
 			q, err := h.store.FreshQuote(ctx, row.InstrumentID, time.Now())
 			if err != nil {
+				h.logger.Error("could not read cached quote", item(i, "error", err.Error())...)
 				set(i, "ERROR", "", nil)
 				continue
 			}
 			if q != nil {
-				fx, err := rate(q.Currency)
+				ccy := q.Currency
+				fx, err := rate(ccy)
 				if err == nil {
 					q, err = h.quoteForDate(ctx, q, row.AVSymbol, fx)
 				}
 				if err != nil {
+					h.logger.Error("cached quote found but could not be converted to EUR", item(i, "currency", ccy, "status", quoteFailure(err), "error", err.Error())...)
 					set(i, quoteFailure(err), "", nil)
 				} else {
 					set(i, "FRESH", "", q)
@@ -196,6 +212,7 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 		case err != nil:
 			fail(i, err)
 		case symbol == "":
+			h.logger.Warn("no Yahoo symbol for instrument", item(i)...)
 			set(i, "NO_SYMBOL", "", nil)
 		default:
 			work = append(work, todo{i, ref, symbol})
@@ -221,6 +238,7 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 				case err != nil:
 					fail(w.i, err)
 				case !ok:
+					h.logger.Warn("Yahoo returned no usable quote for symbol", item(w.i, "symbol", w.symbol)...)
 					set(w.i, "NOT_FOUND", "", nil)
 				default:
 					finish(w.i, q.Price, q.Currency, marketdata.BerlinDay(q.At))
@@ -244,10 +262,11 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 				continue
 			}
 			if err = h.store.SaveHistory(ctx, w.ref.ID, w.symbol, series.Currency, marketdata.ProviderYahoo, series.Points, time.Now()); err != nil {
-				h.logger.Error("could not store Yahoo history", "instrument", w.ref.ID, "error", err.Error())
+				h.logger.Error("could not store Yahoo history", item(w.i, "symbol", w.symbol, "error", err.Error())...)
 			}
 			p, ok := series.LastCloseOnOrBefore(date)
 			if !ok {
+				h.logger.Warn("Yahoo history has no close on or before date", item(w.i, "symbol", w.symbol, "points", len(series.Points))...)
 				set(w.i, "NOT_FOUND", "", nil)
 				continue
 			}

@@ -145,6 +145,7 @@ function workspaceFetch(url) {
  if (url.includes('/performance')) return json(performance);
  if (url.includes('/transactions?')) return json({ lines: [txLine], total: 51, page: url.endsWith('2') ? 2 : 1 });
  if (url.includes('/search')) return json([{ id: 2, ticker: 'MSFT', name: 'Microsoft', type: 'STOCK', isin: 'TEST', wkn: null, inPortfolio: false }]);
+ if (url.endsWith('/items')) return json([{ instrumentId: 1, ticker: 'AAPL', isin: 'US0378331005', name: 'Apple', type: 'STOCK', latestQuote: null, payDelayDays: 0 }]);
  return json(portfolio);
 }
 const panelView = (activeTab, router = { push() {} }) => React.createElement(AppRouterContext.Provider, { value: router }, React.createElement(PortfolioPanels, { portfolio, activeTab }));

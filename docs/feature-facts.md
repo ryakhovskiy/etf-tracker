@@ -85,7 +85,7 @@ or live-provider availability. Code and tests take precedence over historical sp
 | `/portfolios/:id/saving-plan` | Compatibility redirect to Transactions; API keeps `saving-plan` name |
 | `/portfolios/:id/dividends` | Annual dividend calendar |
 | `/portfolios/:id/import` | CSV configuration, preview and import |
-| `/portfolios/:id/items` | Search-driven item selection and batch add |
+| `/portfolios/:id/items` | Search-driven item selection and batch add; items in the portfolio with latest stored quote and pay-date delay |
 
 Portfolio tabs stay mounted: tab switches preserve drafts, selection and pagination;
 successful mutations refresh related panels. Portfolio names are trimmed, 1–100
@@ -235,7 +235,7 @@ duplicate lines or stale preview where applicable.
 
 | Area | Routes |
 |---|---|
-| Portfolios/items | `GET/POST /api/portfolios`; `GET/PATCH/DELETE /api/portfolios/{p}`; `POST .../{p}/items`; `DELETE .../{p}/items/{i}` |
+| Portfolios/items | `GET/POST /api/portfolios`; `GET/PATCH/DELETE /api/portfolios/{p}`; `GET/POST .../{p}/items`; `DELETE .../{p}/items/{i}`; `PUT /api/users/me/instruments/{i}/pay-delay` |
 | Instruments | `GET /api/instruments/search`; `GET .../search/online` (`provider=av` explicit fallback); `POST /api/instruments` |
 | Transactions | `GET /api/portfolios/{p}/saving-plan`; `GET/POST .../{p}/transactions`; `DELETE .../{p}/transactions/{txId}`; `GET .../{p}/performance` |
 | CSV | `GET/PUT /api/users/me/csv-settings`; `POST /api/portfolios/{p}/imports/parse`, `/imports/validate`, `/imports` |
@@ -246,8 +246,12 @@ duplicate lines or stale preview where applicable.
 
 ## Additional implemented feature: dividends
 
-Annual 12-month calendar, ex-date grouping, gross per-share EUR amounts, units held
-strictly before ex-date, yield from the prior close, and totals. Forecasts repeat
+Annual 12-month calendar grouped by estimated pay-date (ex-date + per-user,
+per-instrument delay of 0–90 days, moved to the next German working day; nationwide
+holidays only), faded ex-date markers in the ex-date month (not counted), gross
+per-share EUR amounts at the pay-date ECB rate, units held strictly before ex-date,
+yield from the prior close, and totals (received = pay-date passed). A 24-bar stacked
+chart (ex-dates grey, payments in instrument colors, expected hatched) sits below. Forecasts repeat
 recent actual events annually using current units; show forecast/not-held/unsupported
 currency states. Yahoo is the sole dividend provider. Shared cache renders first;
 stale/never-synced data refreshes in background, with manual refresh, progress,

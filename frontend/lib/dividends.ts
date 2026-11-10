@@ -4,11 +4,14 @@ import { euro, units } from "./transactions";
 export type DividendEntry = {
   instrumentId: number; ticker: string; isin: string | null; shortName: string;
   kind: "ACTUAL" | "FORECAST"; exDate: string; basisExDate: string | null;
+  /** Estimated: ex-date + payDelayDays, moved to the next German working day (payDateShifted). */
+  payDate: string; payDateShifted: boolean; payDelayDays: number; paid: boolean;
   perUnitOrig: string; currency: string; perUnitEur: string | null; fxRate: string | null; fxRateDate: string | null;
   yieldPct: string | null; close: string | null; closeDate: string | null;
   units: string; total: string | null; held: boolean; warning: "FX_UNSUPPORTED_CURRENCY" | "FX_RATE_UNAVAILABLE" | null;
 };
-export type DividendMonth = { month: number; total: string; entries: DividendEntry[] };
+/** entries: payments of the month (in total). exEntries: dividends going ex in it, markers only (in exTotal). */
+export type DividendMonth = { month: number; total: string; entries: DividendEntry[]; exTotal: string; exEntries: DividendEntry[] };
 export type DividendSyncError = { instrumentId: number; label: string; message: string; at: string; lastSyncedAt: string | null };
 export type DividendCalendar = {
   year: number; bounds: { minYear: number; maxYear: number };
@@ -28,8 +31,19 @@ export function berlinYearMonth(now = new Date()) {
 export const monthName = (month: number) => new Date(Date.UTC(2026, month - 1, 1)).toLocaleDateString("de-DE", { month: "long", timeZone: "UTC" });
 /** 2026-05-14 -> "14.05.2026" */
 export const dayLabel = (date: string) => date.split("-").reverse().join(".");
+/** 2026-05-14 -> "14.05." */
+export const shortDay = (date: string) => `${date.slice(8, 10)}.${date.slice(5, 7)}.`;
 /** 2026-05-14 -> "Ex 14.05." */
-export const exLabel = (date: string) => `Ex ${date.slice(8, 10)}.${date.slice(5, 7)}.`;
+export const exLabel = (date: string) => `Ex ${shortDay(date)}`;
+/** 2026-06-13 -> "Pay 13.06." */
+export const payLabel = (date: string) => `Pay ${shortDay(date)}`;
+/** How the pay-date was estimated: "ex-date + 30 days, moved to the next working day". */
+export function payRule(entry: Pick<DividendEntry, "payDelayDays" | "payDateShifted">) {
+  const base = entry.payDelayDays === 0 ? "ex-date" : `ex-date + ${entry.payDelayDays} ${entry.payDelayDays === 1 ? "day" : "days"}`;
+  return entry.payDateShifted ? `${base}, moved to the next working day` : base;
+}
+/** Key of an entry, unique within a calendar. */
+export const entryKey = (e: DividendEntry) => `${e.kind}-${e.instrumentId}-${e.exDate}`;
 /** An instant as a Berlin calendar day: "04.11.2026". */
 export const syncedLabel = (iso: string) => berlinDate(new Date(iso), { day: "2-digit", month: "2-digit", year: "numeric" });
 const grouped = (fixed: string) => { const [whole, fraction] = fixed.split("."); return whole.replace(/\B(?=(\d{3})+(?!\d))/g, ".") + (fraction ? `,${fraction}` : ""); };

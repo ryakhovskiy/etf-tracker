@@ -24,14 +24,23 @@ const Y = Number(berlin({ year: 'numeric' }));
 const M = Number(berlin({ month: '2-digit' }));
 const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8');
 
-const entry = (over = {}) => ({
- instrumentId: 3, ticker: 'ISPA.DE', isin: 'DE000A0F5UH1', shortName: 'iShares STOXX Global Select Dividend 100 UCITS ETF (DE)',
- kind: 'ACTUAL', exDate: `${Y}-05-14`, basisExDate: null, perUnitOrig: '0.412300', currency: 'EUR', perUnitEur: '0.4123',
- fxRate: null, fxRateDate: null, yieldPct: '1.38', close: '29.8800', closeDate: null, units: '120.5', total: '49.68', held: true, warning: null, ...over,
-});
+// Without a pay-date delay the pay-date is the ex-date; actual events are paid, forecasts expected.
+const entry = (over = {}) => {
+ const e = {
+  instrumentId: 3, ticker: 'ISPA.DE', isin: 'DE000A0F5UH1', shortName: 'iShares STOXX Global Select Dividend 100 UCITS ETF (DE)',
+  kind: 'ACTUAL', exDate: `${Y}-05-14`, basisExDate: null, perUnitOrig: '0.412300', currency: 'EUR', perUnitEur: '0.4123',
+  fxRate: null, fxRateDate: null, yieldPct: '1.38', close: '29.8800', closeDate: null, units: '120.5', total: '49.68', held: true, warning: null,
+  payDateShifted: false, payDelayDays: 0, ...over,
+ };
+ return { payDate: e.exDate, paid: e.kind === 'ACTUAL', ...e };
+};
+// Payments go to the pay-date month, every dividend to its ex-date month's markers.
 function calendar(year = Y, entries = [], over = {}) {
- const months = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, total: '0.00', entries: [] }));
- for (const e of entries) months[Number(e.exDate.slice(5, 7)) - 1].entries.push(e);
+ const months = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, total: '0.00', entries: [], exTotal: '0.00', exEntries: [] }));
+ for (const e of entries) {
+  if (e.payDate.startsWith(String(year))) months[Number(e.payDate.slice(5, 7)) - 1].entries.push(e);
+  if (e.exDate.startsWith(String(year))) months[Number(e.exDate.slice(5, 7)) - 1].exEntries.push(e);
+ }
  return { year, bounds: { minYear: Y - 2, maxYear: Y + 1 }, totals: { received: '412.18', expected: '198.40', total: '610.58' }, months,
   sync: { provider: 'YAHOO', lastSyncedAt: '2026-11-04T13:32:00Z', stale: [], errors: [], jobId: null }, ...over };
 }
@@ -41,6 +50,8 @@ const tree = ({ search = '', router = { push() {} }, tab = 'dividends' } = {}) =
 const yearOf = url => Number(new URL(url, 'http://x').searchParams.get('year'));
 // Amounts use no-break spaces before € and %; compare with plain spaces.
 const text = node => node.textContent.replace(/\u00a0/g, ' ');
+// The chart repeats tickers and month names: look inside the calendar grid only.
+const gridHas = value => waitFor(() => assert.ok(document.querySelector('.dividend-grid')?.textContent.includes(value), `${value} in the calendar`), { timeout: 5000 });
 
 test('formats amounts, dates and month names in de-DE', () => {
  assert.deepEqual(Array.from({ length: 12 }, (_, i) => monthName(i + 1)), ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember']);
@@ -120,9 +131,9 @@ test('entries show ticker or ISIN, short name, ex date, yield, per-unit value, u
  assert.equal(ispa.querySelector('.entry-ticker').textContent, 'ISPA.DE');
  assert.equal(ispa.querySelector('.entry-name').textContent, 'iShares STOXX Global Select Dividend 100 UCITS ETF (DE)');
  assert.equal(ispa.querySelector('.entry-name').getAttribute('title'), 'iShares STOXX Global Select Dividend 100 UCITS ETF (DE)');
- assert.equal(text(ispa.querySelector('.entry-figures')), 'Ex 14.05.1,38 %0,4123 €× 120,549,68 €');
+ assert.equal(text(ispa.querySelector('.entry-figures')), 'Ex 14.05. · Pay 14.05.1,38 %0,4123 €× 120,549,68 €');
  assert.equal(vanguard.querySelector('.entry-ticker').textContent, 'IE00B8GKDB10');
- assert.match(text(vanguard.querySelector('.entry-figures')), /^Ex 20\.05\.–.*0,4792 €× 1\.234,51\.591,57 €$/);
+ assert.match(text(vanguard.querySelector('.entry-figures')), /^Ex 20\.05\. · Pay 20\.05\.–.*0,4792 €× 1\.234,51\.591,57 €$/);
  assert.equal(vanguard.querySelector('.missing').getAttribute('title'), 'No price before the ex-date.');
  // € values that cannot be computed: "–" with the reason as tooltip.
  const missing = xyz.querySelectorAll('.missing');
@@ -161,12 +172,12 @@ test('clicking an entry opens a popover with its details', async t => {
   entry({ instrumentId: 4, kind: 'FORECAST', exDate: `${Y}-12-18`, basisExDate: `${Y - 1}-12-18`, close: '91.7850', closeDate: `${Y}-11-06`, currency: 'GBp', perUnitOrig: '39.820000', fxRate: '1.18340000', fxRateDate: `${Y}-11-06` }),
  ])));
  render(tree());
- await screen.findByText('Mai');
+ await screen.findByRole('listitem', { name: `Mai ${Y}` });
  const button = document.querySelector('.dividend-entry .entry-button');
  fireEvent.click(button);
  const details = text(screen.getByRole('dialog', { name: 'ISPA.DE dividend details' }));
  assert.equal(button.getAttribute('aria-expanded'), 'true');
- for (const part of [`Ex-date14.05.${Y}`, 'Per share0,519077 USD', `FX rate1 USD = 0,9231 € (ECB 14.05.${Y})`, 'Price before ex-date93,625 USD', 'Units held120,5', 'SourceYahoo Finance']) assert.ok(details.includes(part), `${part} in ${details}`);
+ for (const part of [`Ex-date14.05.${Y}`, `Pay-date14.05.${Y}`, 'Estimated asex-date', 'StatusPaid', 'Per share0,519077 USD', `FX rate1 USD = 0,9231 € (ECB 14.05.${Y})`, 'Price before ex-date93,625 USD', 'Units held120,5', 'SourceYahoo Finance']) assert.ok(details.includes(part), `${part} in ${details}`);
  assert.ok(!details.includes('based on'));
  fireEvent.keyDown(document, { key: 'Escape' });
  assert.ok(screen.queryByRole('dialog') === null);
@@ -189,12 +200,12 @@ test('stale data syncs in the background: cached data shows at once, progress is
   throw Error(`Unexpected ${url}`);
  });
  render(tree());
- await screen.findByText('ISPA.DE');
+ await gridHas('ISPA.DE');
  await screen.findByText('1/2 instruments');
- assert.ok(screen.getByText('ISPA.DE'), 'cached entries stay visible during the sync');
+ await gridHas('ISPA.DE'); // cached entries stay visible during the sync
  assert.equal(screen.getByRole('button', { name: 'Refreshing…' }).disabled, true);
  assert.deepEqual(posted, [{ scope: 'STALE' }]);
- await screen.findByText('NEW.DE', {}, { timeout: 5000 });
+ await gridHas('NEW.DE');
  assert.equal(gets, 2);
  await waitFor(() => assert.equal(screen.getByRole('button', { name: 'Refresh dividends' }).disabled, false));
  // Still stale after the job (e.g. a failing instrument): no automatic loop.
@@ -269,4 +280,114 @@ test('dark mode: every dividend color is a token with a dark value', () => {
  const rules = section.replace(/--[a-z-]+:#[0-9a-f]{3,8}/gi, '').replace(/\.dividends \.error\{color:#[0-9a-f]+\}/, '');
  assert.doesNotMatch(rules, /#[0-9a-f]{3,8}\b/i);
  assert.match(section, /\.pill-expected\{background:var\(--div-pill-expected-bg\);color:var\(--div-pill-expected-fg\)\}/);
+});
+
+test('payments sit in the pay-date month; ex-dates paid later are faded markers in their own month', async t => {
+ const shifted = entry({ exDate: `${Y}-10-02`, payDate: `${Y}-11-02`, payDateShifted: true, payDelayDays: 30 });
+ const sameMonth = entry({ instrumentId: 4, ticker: 'VHYL.L', exDate: `${Y}-05-04`, payDate: `${Y}-05-22`, payDelayDays: 18 });
+ const unpaid = entry({ instrumentId: 5, ticker: 'HMWO.L', exDate: `${Y}-12-10`, payDate: `${Y + 1}-01-11`, payDateShifted: true, payDelayDays: 30, paid: false });
+ t.mock.method(globalThis, 'fetch', async () => json(calendar(Y, [shifted, sameMonth, unpaid])));
+ render(tree());
+ const november = await screen.findByRole('listitem', { name: `November ${Y}` });
+ const payment = november.querySelector('.dividend-entry');
+ assert.equal(text(payment.querySelector('.entry-dates')), 'Ex 02.10. · Pay 02.11.');
+ assert.equal(payment.querySelector('.state-pill'), null, 'paid: no expected pill');
+ // October: no payment, the ex-date as a marker that is not counted.
+ const october = screen.getByRole('listitem', { name: `Oktober ${Y}` });
+ assert.equal(october.querySelectorAll('.dividend-entry').length, 0);
+ assert.ok(within(october).getByText('No payments'));
+ const marker = october.querySelector('.ex-marker');
+ assert.equal(text(marker), 'Ex 02.10.ISPA.DE→ paid 02.11.49,68 €');
+ assert.equal(marker.querySelector('button').getAttribute('aria-label').replace(/\u00a0/g, ' '), `ISPA.DE goes ex 02.10.${Y}, paid 02.11.${Y}, 49,68 €`);
+ // Ex and pay in the same month: the payment only, no marker.
+ const may = screen.getByRole('listitem', { name: `Mai ${Y}` });
+ assert.equal(may.querySelectorAll('.dividend-entry').length, 1);
+ assert.equal(may.querySelectorAll('.ex-marker').length, 0);
+ // Paid next year: the marker shows the full pay-date; nothing is paid in December.
+ const december = screen.getByRole('listitem', { name: `Dezember ${Y}` });
+ assert.equal(text(december.querySelector('.ex-pays')), `→ pays 11.01.${Y + 1}`);
+ // Faded until hovered or focused.
+ assert.match(css, /\.ex-marker\{[^}]*opacity:\.4/);
+ assert.match(css, /\.ex-marker:hover,\.ex-marker:focus-within,\.ex-marker\.open\{opacity:1\}/);
+ // Its popover explains the estimate.
+ fireEvent.click(marker.querySelector('button'));
+ const details = text(screen.getByRole('dialog', { name: 'ISPA.DE dividend details' }));
+ for (const part of [`Ex-date02.10.${Y}`, `Pay-date02.11.${Y}`, 'Estimated asex-date + 30 days, moved to the next working day', 'StatusPaid']) assert.ok(details.includes(part), `${part} in ${details}`);
+ fireEvent.click(document.body);
+ assert.ok(screen.queryByRole('dialog') === null);
+ // An unpaid payment carries the expected pill (here in next year's January).
+ cleanup();
+ t.mock.method(globalThis, 'fetch', async () => json(calendar(Y + 1, [unpaid])));
+ render(tree({ search: `year=${Y + 1}` }));
+ const january = await screen.findByRole('listitem', { name: `Januar ${Y + 1}` });
+ assert.equal(january.querySelector('.state-pill').textContent, 'expected');
+});
+
+// jsdom normalizes colors; compare through the same parser.
+const cssColor = value => { const el = document.createElement('i'); el.style.color = value; return el.style.color; };
+
+test('the chart stacks one segment per dividend in 24 bars and explains a segment on hover, focus or tap', async t => {
+ const { instrumentColor } = await import('../lib/colors.ts');
+ const a = entry({ exDate: `${Y}-03-02`, payDate: `${Y}-04-01`, payDelayDays: 30, total: '20.00' });
+ const b = entry({ instrumentId: 4, ticker: 'VHYL.L', exDate: `${Y}-03-10`, payDate: `${Y}-03-25`, payDelayDays: 15, total: '10.00' });
+ const c = entry({ instrumentId: 5, ticker: 'HMWO.L', kind: 'FORECAST', exDate: `${Y}-11-20`, payDate: `${Y}-12-21`, payDelayDays: 30, total: '5.00', paid: false });
+ const zero = entry({ instrumentId: 6, ticker: 'NH', exDate: `${Y}-06-02`, held: false, units: '0', total: '0.00' });
+ const cal = calendar(Y, [a, b, c, zero]);
+ cal.months[2].total = '10.00'; cal.months[2].exTotal = '30.00'; cal.months[3].total = '20.00';
+ cal.months[10].exTotal = '5.00'; cal.months[11].total = '5.00';
+ t.mock.method(globalThis, 'fetch', async () => json(cal));
+ render(tree());
+ const chart = await screen.findByRole('figure', { name: `Dividends by month, ${Y}: ex-dates and payments` });
+ assert.deepEqual([...chart.querySelectorAll('.month-label')].map(l => l.textContent).length, 12);
+ // Ex bars: March holds two dividends, November one; zero totals draw nothing.
+ const ex = [...chart.querySelectorAll('.seg-ex')];
+ assert.deepEqual(ex.map(s => s.getAttribute('data-key')), [`ex-ACTUAL-3-${Y}-03-02`, `ex-ACTUAL-4-${Y}-03-10`, `ex-FORECAST-5-${Y}-11-20`]);
+ assert.equal(chart.querySelectorAll('.seg').length, 6);
+ // Gray translucent shades per instrument for ex-dates; instrument colors for payments; expected payments hatched.
+ assert.equal(ex[0].querySelector('.seg-mark').style.fill, 'var(--div-ex-c)');
+ assert.equal(ex[1].querySelector('.seg-mark').style.fill, 'var(--div-ex-d)');
+ const paid = chart.querySelector(`[data-key="pay-ACTUAL-3-${Y}-03-02"]`);
+ assert.ok(paid.classList.contains('seg-paid'));
+ assert.equal(cssColor(paid.querySelector('.seg-mark').style.fill), cssColor(instrumentColor(3)));
+ const expected = chart.querySelector(`[data-key="pay-FORECAST-5-${Y}-11-20"]`);
+ assert.ok(expected.classList.contains('seg-expected'));
+ assert.equal(expected.querySelector('.seg-mark').style.fill, 'url(#div-hatch-5)');
+ assert.ok(chart.querySelector('#div-hatch-5'));
+ assert.match(css, /\.seg-ex \.seg-mark\{fill-opacity:var\(--div-ex-opacity\)\}/);
+ // The top segment of a bar has the rounded data end; the one below it is a plain rectangle.
+ assert.ok(chart.querySelector(`[data-key="pay-ACTUAL-3-${Y}-03-02"] path.seg-mark`));
+ assert.ok(chart.querySelector(`[data-key="ex-ACTUAL-3-${Y}-03-02"] rect.seg-mark`));
+ assert.ok(chart.querySelector(`[data-key="ex-ACTUAL-4-${Y}-03-10"] path.seg-mark`));
+ // Hover: the segment is highlighted, the others fade, the tooltip explains it.
+ fireEvent.mouseEnter(paid);
+ assert.ok(paid.classList.contains('active'));
+ assert.ok(chart.querySelector('svg').classList.contains('has-active'));
+ const tip = text(screen.getByRole('tooltip'));
+ for (const part of ['ISPA.DE · Paid', `Ex-date02.03.${Y}`, `Pay-date01.04.${Y}`, 'Estimated asex-date + 30 days', 'Total20,00 €', 'April payments20,00 €']) assert.ok(tip.includes(part), `${part} in ${tip}`);
+ fireEvent.mouseLeave(chart.querySelector('.dividend-chart-plot'));
+ assert.ok(screen.queryByRole('tooltip') === null);
+ // Keyboard focus shows it too; Escape hides it.
+ fireEvent.focus(ex[1]);
+ assert.ok(text(screen.getByRole('tooltip')).includes('VHYL.L · Ex-date'));
+ assert.ok(text(screen.getByRole('tooltip')).includes('März ex-dates30,00 €'));
+ fireEvent.keyDown(document, { key: 'Escape' });
+ assert.ok(screen.queryByRole('tooltip') === null);
+ // Tap toggles.
+ fireEvent.click(expected);
+ assert.ok(text(screen.getByRole('tooltip')).includes('HMWO.L · Expected payment'));
+ fireEvent.click(expected);
+ assert.ok(screen.queryByRole('tooltip') === null);
+ // Every segment has an accessible name; the legend names kinds and instruments.
+ assert.equal(paid.getAttribute('aria-label').replace(/\u00a0/g, ' '), `ISPA.DE paid: 20,00 €, ex-date 02.03.${Y}, pay-date 01.04.${Y}`);
+ assert.equal(paid.getAttribute('tabindex'), '0');
+ const legend = text(chart.querySelector('.dividend-chart-legend'));
+ for (const part of ['Ex-date (left bar)', 'Paid (right bar)', 'Expected payment', 'ISPA.DE', 'VHYL.L', 'HMWO.L']) assert.ok(legend.includes(part), legend);
+});
+
+test('the chart says so when a year has no dividends', async t => {
+ t.mock.method(globalThis, 'fetch', async () => json(calendar(Y)));
+ render(tree());
+ const chart = await screen.findByRole('figure');
+ assert.ok(within(chart).getByText(`No dividends in ${Y}.`));
+ assert.equal(chart.querySelectorAll('.seg').length, 0);
 });

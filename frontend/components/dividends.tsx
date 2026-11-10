@@ -3,9 +3,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { api, APIError } from "../lib/api";
 import {
-  amount, berlinYearMonth, dayLabel, exLabel, fxLabel, listingAmount, money, monthName, percent, perUnit, syncedLabel, warningText,
+  amount, berlinYearMonth, dayLabel, entryKey, exLabel, fxLabel, listingAmount, money, monthName, payLabel, payRule, percent, perUnit, shortDay, syncedLabel, warningText,
   type DividendCalendar, type DividendEntry, type DividendSyncJob,
 } from "../lib/dividends";
+import { DividendChart } from "./dividend-chart";
 import { usePortfolioUpdates } from "./portfolio-updates";
 
 const POLL_MS = 2000;
@@ -27,6 +28,9 @@ function EntryDetails({ entry, id, close }: { entry: DividendEntry; id: string; 
     <p className="popover-name">{entry.shortName}</p>
     <dl>
       <div><dt>Ex-date</dt><dd>{dayLabel(entry.exDate)}</dd></div>
+      <div><dt>Pay-date</dt><dd>{dayLabel(entry.payDate)}</dd></div>
+      <div><dt>Estimated as</dt><dd>{payRule(entry)}</dd></div>
+      <div><dt>Status</dt><dd>{entry.paid ? "Paid" : "Expected"}</dd></div>
       <div><dt>Per share</dt><dd>{listingAmount(entry.perUnitOrig, entry.currency)}</dd></div>
       <div><dt>FX rate</dt><dd>{entry.fxRate && entry.fxRateDate ? `${fxLabel(entry.fxRate, entry.currency)} (ECB ${dayLabel(entry.fxRateDate)})` : entry.warning ? warningText(entry) : "not needed (EUR)"}</dd></div>
       <div><dt>{forecast ? `Latest close${entry.closeDate ? ` (${dayLabel(entry.closeDate)})` : ""}` : "Price before ex-date"}</dt><dd>{entry.close ? listingAmount(entry.close, entry.currency) : "–"}</dd></div>
@@ -47,16 +51,32 @@ function Entry({ entry, open, toggle }: { entry: DividendEntry; open: boolean; t
       <span className="entry-line">
         <strong className="entry-ticker">{entry.ticker}</strong>
         <span className="entry-name" title={entry.shortName}>{entry.shortName}</span>
-        {forecast && <span className="state-pill pill-expected">expected</span>}
+        {!entry.paid && <span className="state-pill pill-expected">expected</span>}
         {!entry.held && <span className="state-pill pill-not-held">not held</span>}
       </span>
       <span className="entry-figures">
-        <span className="entry-ex">{exLabel(entry.exDate)}</span>
+        <span className="entry-dates"><span className="entry-ex">{exLabel(entry.exDate)}</span> · <span className="entry-pay">{payLabel(entry.payDate)}</span></span>
         <Value value={entry.yieldPct === null ? null : percent(entry.yieldPct)} reason="No price before the ex-date." />
         <Value value={entry.perUnitEur === null ? null : perUnit(entry.perUnitEur)} reason={reason} />
         <span className="entry-units">× {amount(entry.units)}</span>
         <Value strong value={entry.total === null ? null : money(entry.total)} reason={reason} />
       </span>
+    </button>
+    {open && <EntryDetails entry={entry} id={popover} close={toggle} />}
+  </li>;
+}
+
+/** A dividend going ex in this month, paid later: shown faded, in no total. */
+function ExMarker({ entry, open, toggle, year }: { entry: DividendEntry; open: boolean; toggle: () => void; year: number }) {
+  const popover = useId();
+  const pays = entry.payDate.startsWith(String(year)) ? shortDay(entry.payDate) : dayLabel(entry.payDate);
+  return <li className={`ex-marker${open ? " open" : ""}`}>
+    <button type="button" className="ex-marker-button" aria-expanded={open} aria-controls={open ? popover : undefined} onClick={toggle}
+      aria-label={`${entry.ticker} goes ex ${dayLabel(entry.exDate)}, ${entry.paid ? "paid" : "pays"} ${dayLabel(entry.payDate)}${entry.total === null ? "" : `, ${money(entry.total)}`}`}>
+      <span className="entry-ex">{exLabel(entry.exDate)}</span>
+      <strong className="entry-ticker">{entry.ticker}</strong>
+      <span className="ex-pays">→ {entry.paid ? "paid" : "pays"} {pays}</span>
+      <span className="ex-total">{entry.total === null ? "–" : money(entry.total)}</span>
     </button>
     {open && <EntryDetails entry={entry} id={popover} close={toggle} />}
   </li>;
@@ -173,7 +193,7 @@ export function Dividends({ id }: { id: string }) {
   useEffect(() => {
     if (!open) return;
     const key = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(null); };
-    const click = (e: MouseEvent) => { if (!(e.target as Element).closest?.(".dividend-entry")) setOpen(null); };
+    const click = (e: MouseEvent) => { if (!(e.target as Element).closest?.(".dividend-entry, .ex-marker")) setOpen(null); };
     document.addEventListener("keydown", key);
     document.addEventListener("click", click);
     return () => { document.removeEventListener("keydown", key); document.removeEventListener("click", click); };
@@ -215,13 +235,26 @@ export function Dividends({ id }: { id: string }) {
     {!shown ? (error && !loading ? <p><button type="button" onClick={() => go(today.year)}>Show {today.year}</button></p> : <div role="status" aria-label="Loading dividends"><span className="sr-only">Loading dividends…</span><SkeletonGrid /></div>) :
       <ol className="dividend-grid">{shown.months.map(m => {
         const current = shown.year === today.year && m.month === today.month;
+        // Paid in the same month: the payment entry already shows its ex-date.
+        const month = `${shown.year}-${String(m.month).padStart(2, "0")}`;
+        const exOnly = m.exEntries.filter(e => !e.payDate.startsWith(month));
         return <li key={m.month} className={`month-card${current ? " current" : ""}`} aria-current={current ? "date" : undefined} aria-label={`${monthName(m.month)} ${shown.year}`}>
           <header><h3>{monthName(m.month)}</h3><strong>{money(m.total)}</strong></header>
-          {m.entries.length === 0 ? <p className="month-empty">No dividends</p> : <ul className="dividend-entries">{m.entries.map(e => {
-            const key = `${e.kind}-${e.instrumentId}-${e.exDate}`;
-            return <Entry key={key} entry={e} open={open === key} toggle={() => setOpen(open === key ? null : key)} />;
-          })}</ul>}
+          {m.entries.length === 0 && exOnly.length === 0 ? <p className="month-empty">No dividends</p> : <>
+            {m.entries.length === 0 ? <p className="month-empty">No payments</p> : <ul className="dividend-entries" aria-label={`Payments in ${monthName(m.month)}`}>{m.entries.map(e => {
+              const key = `pay-${entryKey(e)}`;
+              return <Entry key={key} entry={e} open={open === key} toggle={() => setOpen(open === key ? null : key)} />;
+            })}</ul>}
+            {exOnly.length > 0 && <div className="ex-markers">
+              <p className="ex-markers-label">Going ex, paid later</p>
+              <ul aria-label={`Ex-dates in ${monthName(m.month)}`}>{exOnly.map(e => {
+                const key = `ex-${entryKey(e)}`;
+                return <ExMarker key={key} entry={e} year={shown.year} open={open === key} toggle={() => setOpen(open === key ? null : key)} />;
+              })}</ul>
+            </div>}
+          </>}
         </li>;
       })}</ol>}
+    {shown && <DividendChart year={shown.year} months={shown.months} />}
   </section>;
 }

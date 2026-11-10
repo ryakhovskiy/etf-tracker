@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, type PortfolioDetail } from "../lib/api";
 import { InstrumentPicker } from "./instrument-picker";
+import { PortfolioHoldings } from "./portfolio-holdings";
 import { usePortfolioUpdates } from "./portfolio-updates";
 
 export function PortfolioItems({ initial }: { initial: PortfolioDetail }) {
@@ -17,5 +18,5 @@ export function PortfolioItems({ initial }: { initial: PortfolioDetail }) {
       .catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
   }, [initial.id, revision]);
-  return <>{error && <p role="alert" className="error">{error}</p>}<InstrumentPicker initial={data} /></>;
+  return <>{error && <p role="alert" className="error">{error}</p>}<InstrumentPicker initial={data} /><PortfolioHoldings id={initial.id} /></>;
 }

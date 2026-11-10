@@ -183,6 +183,42 @@ func (h *Handler) registerPortfolioRoutes(mux *http.ServeMux) {
 		}
 		httpapi.JSON(w, 200, result)
 	}))
+	// The items of a portfolio with their latest stored quote and the user's pay-date delay.
+	mux.HandleFunc("GET /api/portfolios/{id}/items", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
+		id, ok := portfolioID(w, r)
+		if !ok {
+			return
+		}
+		items, err := h.store.PortfolioItems(r.Context(), user, id)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		httpapi.JSON(w, 200, items)
+	}))
+	// One pay-date delay per user and instrument, shared by all of the user's portfolios.
+	mux.HandleFunc("PUT /api/users/me/instruments/{instrumentId}/pay-delay", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
+		item, err := strconv.ParseInt(r.PathValue("instrumentId"), 10, 64)
+		if err != nil || item < 1 {
+			apiError(w, 404, "NOT_FOUND", "Item not found.")
+			return
+		}
+		var body struct {
+			Days *int `json:"payDelayDays"`
+		}
+		if !decodeBody(w, r, &body) {
+			return
+		}
+		if body.Days == nil {
+			apiError(w, 400, "INVALID_BODY", "payDelayDays is required.")
+			return
+		}
+		if err := h.store.SetPayDelay(r.Context(), user, item, *body.Days); err != nil {
+			storeError(w, err)
+			return
+		}
+		httpapi.JSON(w, 200, map[string]int{"payDelayDays": *body.Days})
+	}))
 	mux.HandleFunc("DELETE /api/portfolios/{id}/items/{instrumentId}", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
 		id, ok := portfolioID(w, r)
 		if !ok {

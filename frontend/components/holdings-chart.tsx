@@ -3,8 +3,8 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContai
 import { chartData, euro, type Performance } from "../lib/transactions";
 import { axisEuro, dateLabel, quoteDates } from "../lib/performance";
 
-const colors = ["#1f5c47", "#6689b1", "#c39743", "#9867a1", "#c87967", "#789252", "#599d9d"];
-export const instrumentColor = (id: number) => colors[(id-1)%colors.length];
+import { instrumentColor } from "../lib/colors";
+export { instrumentColor };
 export function HoldingsTooltip({ performance, date, current, total }: { performance: Performance; date: number; current: boolean; total: string }) {
  const valuation = performance.current;
  const i = performance.dates.indexOf(new Date(date).toISOString().slice(0,10));

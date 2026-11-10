@@ -35,13 +35,19 @@ type DividendEntry struct {
 	ShortName    string  `json:"shortName"`
 	Kind         string  `json:"kind"`
 	ExDate       string  `json:"exDate"`
-	BasisExDate  *string `json:"basisExDate"`
-	PerUnitOrig  string  `json:"perUnitOrig"`
-	Currency     string  `json:"currency"`
-	PerUnitEUR   *string `json:"perUnitEur"`
-	FXRate       *string `json:"fxRate"`
-	FXRateDate   *string `json:"fxRateDate"`
-	YieldPct     *string `json:"yieldPct"`
+	// PayDate is estimated: ex-date + PayDelayDays, moved to the next German
+	// working day (PayDateShifted). Paid reports PayDate <= today.
+	PayDate        string  `json:"payDate"`
+	PayDateShifted bool    `json:"payDateShifted"`
+	PayDelayDays   int     `json:"payDelayDays"`
+	Paid           bool    `json:"paid"`
+	BasisExDate    *string `json:"basisExDate"`
+	PerUnitOrig    string  `json:"perUnitOrig"`
+	Currency       string  `json:"currency"`
+	PerUnitEUR     *string `json:"perUnitEur"`
+	FXRate         *string `json:"fxRate"`
+	FXRateDate     *string `json:"fxRateDate"`
+	YieldPct       *string `json:"yieldPct"`
 	// Close is the price the yield uses, in the listing currency: the close before
 	// the ex-date, or for forecasts the latest close (dated CloseDate).
 	Close     *string `json:"close"`
@@ -52,10 +58,15 @@ type DividendEntry struct {
 	Warning   *string `json:"warning"`
 }
 
+// DividendMonth holds the payments of a month (Entries, summed in Total and the
+// year totals) and, as markers only, the dividends going ex in it (ExEntries,
+// summed in ExTotal and nowhere else).
 type DividendMonth struct {
-	Month   int             `json:"month"`
-	Total   string          `json:"total"`
-	Entries []DividendEntry `json:"entries"`
+	Month     int             `json:"month"`
+	Total     string          `json:"total"`
+	Entries   []DividendEntry `json:"entries"`
+	ExTotal   string          `json:"exTotal"`
+	ExEntries []DividendEntry `json:"exEntries"`
 }
 
 type DividendTotals struct {
@@ -209,7 +220,9 @@ type plannedDividend struct {
 	divisor          int64
 }
 
-// planDividends lists the actual events and the forecasts of the year.
+// planDividends lists the actual events and the forecasts that go ex or are
+// paid in the year. A payment can fall into the year after its ex-date, so
+// ex-dates of the previous year are considered too.
 func planDividends(snap DividendSnapshot, year int, today string) []plannedDividend {
 	out := []plannedDividend{}
 	basisFrom := dayTime(today).AddDate(0, 0, -forecastBasisDays).Format("2006-01-02")
@@ -218,8 +231,17 @@ func planDividends(snap DividendSnapshot, year int, today string) []plannedDivid
 		if it.ISIN != "" {
 			isin = ptr(it.ISIN)
 		}
-		base := DividendEntry{InstrumentID: it.InstrumentID, Ticker: it.label(), ISIN: isin, ShortName: it.Name}
+		delay := snap.PayDelays[it.InstrumentID]
+		base := DividendEntry{InstrumentID: it.InstrumentID, Ticker: it.label(), ISIN: isin, ShortName: it.Name, PayDelayDays: delay}
 		add := func(e DividendEntry, amountE6, units, closeE4 int64, currency, fxDate string) {
+			e.PayDate, e.PayDateShifted = marketdata.PayDate(e.ExDate, delay)
+			if yearOf(e.ExDate) != year && yearOf(e.PayDate) != year {
+				return
+			}
+			e.Paid = e.PayDate <= today
+			if e.Kind == DividendActual {
+				fxDate = e.PayDate // converted when paid; min(today) below for future payments
+			}
 			e.PerUnitOrig, e.Currency, e.Units, e.Held = marketdata.Fixed(amountE6, 6), currency, unitsString(units), units > 0
 			if closeE4 > 0 {
 				e.Close = ptr(decimalString(closeE4, 4))
@@ -232,7 +254,7 @@ func planDividends(snap DividendSnapshot, year int, today string) []plannedDivid
 		}
 		events := snap.Events[it.InstrumentID]
 		for _, ev := range events {
-			if yearOf(ev.ExDate) != year {
+			if y := yearOf(ev.ExDate); y != year && y != year-1 {
 				continue
 			}
 			e := base
@@ -250,7 +272,7 @@ func planDividends(snap DividendSnapshot, year int, today string) []plannedDivid
 				if yearOf(day) > year {
 					break
 				}
-				if yearOf(day) != year || day <= today {
+				if yearOf(day) < year-1 || day <= today {
 					continue
 				}
 				near := false
@@ -277,9 +299,11 @@ func planDividends(snap DividendSnapshot, year int, today string) []plannedDivid
 	return out
 }
 
-// BuildDividendCalendar computes the 12 months of a year: actual events by
-// units held before the ex-date, forecasts from the last 365 days, EUR values
-// at the ECB rate of the ex-date (forecasts: latest rate). Sync is not filled.
+// BuildDividendCalendar computes the 12 months of a year: payments in the month
+// of their estimated pay-date, ex-date markers in the month of the ex-date.
+// Actual events use the units held before the ex-date and the ECB rate of the
+// pay-date (latest rate while it is in the future); forecasts come from the last
+// 365 days and use current units and the latest rate. Sync is not filled.
 func BuildDividendCalendar(snap DividendSnapshot, year int, today string, rates FXRates) DividendCalendar {
 	planned := planDividends(snap, year, today)
 	// One rates call per currency, covering every date it needs.
@@ -306,10 +330,10 @@ func BuildDividendCalendar(snap DividendSnapshot, year int, today string, rates 
 	hundred := big.NewRat(100, 1)
 	received, expected := new(big.Rat), new(big.Rat)
 	cal := DividendCalendar{Year: year, Bounds: snap.Bounds(today), Months: make([]DividendMonth, 12)}
-	monthTotals := make([]*big.Rat, 12)
+	monthTotals, exTotals := make([]*big.Rat, 12), make([]*big.Rat, 12)
 	for i := range cal.Months {
-		cal.Months[i] = DividendMonth{Month: i + 1, Entries: []DividendEntry{}}
-		monthTotals[i] = new(big.Rat)
+		cal.Months[i] = DividendMonth{Month: i + 1, Entries: []DividendEntry{}, ExEntries: []DividendEntry{}}
+		monthTotals[i], exTotals[i] = new(big.Rat), new(big.Rat)
 	}
 	for _, p := range planned {
 		e := p.entry
@@ -345,30 +369,44 @@ func BuildDividendCalendar(snap DividendSnapshot, year int, today string, rates 
 		case !e.Held:
 			e.Total = ptr("0.00") // nothing held: nothing received, whatever the rate
 		}
-		m := dayTime(e.ExDate).Month() - 1
-		if e.Total != nil {
-			monthTotals[m].Add(monthTotals[m], total)
-			if e.Kind == DividendActual {
-				received.Add(received, total)
-			} else {
-				expected.Add(expected, total)
+		// The payment counts in its month and in Received (paid) or Expected.
+		if yearOf(e.PayDate) == year {
+			m := dayTime(e.PayDate).Month() - 1
+			if e.Total != nil {
+				monthTotals[m].Add(monthTotals[m], total)
+				if e.Paid {
+					received.Add(received, total)
+				} else {
+					expected.Add(expected, total)
+				}
 			}
+			cal.Months[m].Entries = append(cal.Months[m].Entries, e)
 		}
-		cal.Months[m].Entries = append(cal.Months[m].Entries, e)
+		// The ex-date is a marker only: it adds to no total but its month's ExTotal.
+		if yearOf(e.ExDate) == year {
+			m := dayTime(e.ExDate).Month() - 1
+			if e.Total != nil {
+				exTotals[m].Add(exTotals[m], total)
+			}
+			cal.Months[m].ExEntries = append(cal.Months[m].ExEntries, e)
+		}
 	}
-	for i := range cal.Months {
-		entries := cal.Months[i].Entries
+	byDate := func(entries []DividendEntry, date func(DividendEntry) string) {
 		sort.SliceStable(entries, func(a, b int) bool {
 			x, y := entries[a], entries[b]
-			if x.ExDate != y.ExDate {
-				return x.ExDate < y.ExDate
+			if date(x) != date(y) {
+				return date(x) < date(y)
 			}
 			if x.Ticker != y.Ticker {
 				return x.Ticker < y.Ticker
 			}
 			return x.InstrumentID < y.InstrumentID
 		})
-		cal.Months[i].Total = money(monthTotals[i])
+	}
+	for i := range cal.Months {
+		byDate(cal.Months[i].Entries, func(e DividendEntry) string { return e.PayDate })
+		byDate(cal.Months[i].ExEntries, func(e DividendEntry) string { return e.ExDate })
+		cal.Months[i].Total, cal.Months[i].ExTotal = money(monthTotals[i]), money(exTotals[i])
 	}
 	cal.Totals = DividendTotals{Received: money(received), Expected: money(expected), Total: money(new(big.Rat).Add(received, expected))}
 	return cal

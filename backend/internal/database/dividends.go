@@ -49,6 +49,7 @@ type DividendSnapshot struct {
 	Items          []DividendItem
 	Events         map[int64][]StoredDividend // ascending ex-date
 	Sync           map[int64]DividendSync
+	PayDelays      map[int64]int // the user's days from ex-date to payment; absent = 0
 }
 
 // parseStamp reads a DATETIME column; the driver returns it as RFC 3339 text.
@@ -66,10 +67,15 @@ func parseStamp(v sql.NullString) time.Time {
 // DividendSnapshot loads the items currently in the portfolio, their lines and
 // their cached dividend data. Other users' portfolios are ErrNotFound.
 func (s *Store) DividendSnapshot(ctx context.Context, user string, id int64) (DividendSnapshot, error) {
-	out := DividendSnapshot{Items: []DividendItem{}, Events: map[int64][]StoredDividend{}, Sync: map[int64]DividendSync{}}
+	out := DividendSnapshot{Items: []DividendItem{}, Events: map[int64][]StoredDividend{}, Sync: map[int64]DividendSync{}, PayDelays: map[int64]int{}}
 	if _, err := s.Portfolio(ctx, user, id); err != nil {
 		return out, err
 	}
+	delays, err := s.payDelays(ctx, user)
+	if err != nil {
+		return out, err
+	}
+	out.PayDelays = delays
 	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.ticker,COALESCE(i.isin,''),i.name FROM portfolio_items pi JOIN instruments i ON i.id=pi.instrument_id WHERE pi.portfolio_id=? ORDER BY i.id`, id)
 	if err != nil {
 		return out, err

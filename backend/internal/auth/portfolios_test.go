@@ -8,6 +8,7 @@ import (
 	"holdings/backend/internal/database"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -173,4 +174,44 @@ func TestTransactionAPI(t *testing.T) {
 	request("DELETE", fmt.Sprintf("/api/portfolios/%d/transactions/%d", second.ID, tx.ID), "", 404)
 	request("DELETE", path+fmt.Sprintf("/transactions/%d", tx.ID), "", 204)
 	request("DELETE", path+"/items/1", "", 204)
+}
+
+func TestPortfolioItemsAndPayDelayAPI(t *testing.T) {
+	h, handler := auditHandler(t, ":memory:")
+	for _, route := range []struct{ method, path string }{{"GET", "/api/portfolios/1/items"}, {"PUT", "/api/users/me/instruments/1/pay-delay"}} {
+		if w := featureRequest(handler, route.method, route.path, ""); w.Code != 401 {
+			t.Fatal(route, w.Code)
+		}
+	}
+	cookies := auditLogin(t, h, handler)
+	ctx := context.Background()
+	user := cookiesUser(t, h, cookies)
+	p, err := h.store.SavePortfolio(ctx, user, 0, "Pay delays")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.store.AddItems(ctx, user, p.ID, []int64{20}); err != nil {
+		t.Fatal(err)
+	}
+	put := func(id int64, body string, status int) string {
+		t.Helper()
+		w := featureRequest(handler, "PUT", fmt.Sprintf("/api/users/me/instruments/%d/pay-delay", id), body, cookies...)
+		if w.Code != status {
+			t.Fatalf("%d %s: %d %s", id, body, w.Code, w.Body.String())
+		}
+		return w.Body.String()
+	}
+	put(20, `{"payDelayDays":30}`, 200)
+	put(20, `{"payDelayDays":91}`, 400)
+	put(20, `{"payDelayDays":1.5}`, 400)
+	put(20, `{}`, 400)
+	put(7, `{"payDelayDays":5}`, 404) // not in any of the user's portfolios
+	w := featureRequest(handler, "GET", fmt.Sprintf("/api/portfolios/%d/items", p.ID), "", cookies...)
+	var items []database.PortfolioItemOverview
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &items) != nil || len(items) != 1 || items[0].InstrumentID != 20 || items[0].PayDelayDays != 30 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"latestQuote":null`) {
+		t.Fatal(w.Body.String())
+	}
 }

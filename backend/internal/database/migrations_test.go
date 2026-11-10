@@ -53,7 +53,7 @@ func TestLegacyDatabaseMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version, err := provider.GetDBVersion(ctx); err != nil || version != 14 {
+	if version, err := provider.GetDBVersion(ctx); err != nil || version != 15 {
 		t.Fatalf("version=%d err=%v", version, err)
 	}
 	if applied, err := provider.Up(ctx); err != nil || len(applied) != 0 {

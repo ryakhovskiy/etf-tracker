@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, APIError } from "../lib/api";
 
-export type JobItem = { instrumentId: number; status: string; reason?: string; priceEur?: string; origPrice?: string; currency?: string; fxRate?: string; fxRateDate?: string; quoteDate?: string; quoteId?: number; provider?: string };
+export type JobItem = { instrumentId: number; status: string; reason?: string; priceEur?: string; origPrice?: string; currency?: string; fxRate?: string; fxRateDate?: string; fxSource?: string; quoteDate?: string; quoteTime?: string; quoteId?: number; provider?: string };
 type Provider = "YAHOO" | "EULERPOOL" | "ALPHAVANTAGE";
 type Estimate = {
   provider?: string; noSymbol: number[]; budget: { blockedUntil?: string };

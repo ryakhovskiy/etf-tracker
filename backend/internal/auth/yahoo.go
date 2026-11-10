@@ -278,6 +278,159 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 	h.jobs.mu.Unlock()
 }
 
+type realtimeEstimate struct {
+	Requests  int     `json:"requests"`
+	Remaining int     `json:"remaining"`
+	NoSymbol  []int64 `json:"noSymbol"`
+}
+
+// realtimeEstimate counts the requests a real-time run would send: a symbol
+// search where the symbol is unknown, one chart request per instrument (cached
+// quotes are never reused) and one live FX request per foreign currency. The
+// currency is only known from an earlier quote, so new listings may add one.
+func (h *Handler) realtimeEstimate(ctx context.Context, rows []database.SavingPlanItem) (*realtimeEstimate, error) {
+	out := &realtimeEstimate{NoSymbol: []int64{}}
+	currencies := map[string]bool{}
+	for _, row := range rows {
+		ref, err := h.store.InstrumentRef(ctx, row.InstrumentID)
+		if err != nil {
+			return nil, err
+		}
+		switch {
+		case ref.YahooSymbol != "":
+		case ref.ISIN == "" || (!ref.YahooCheckedAt.IsZero() && time.Since(ref.YahooCheckedAt) < yahooRecheck):
+			out.NoSymbol = append(out.NoSymbol, row.InstrumentID)
+			continue
+		default:
+			out.Requests++ // symbol search
+		}
+		out.Requests++
+		ccy, err := h.store.LatestQuoteCurrency(ctx, row.InstrumentID)
+		if err != nil {
+			return nil, err
+		}
+		if ccy = fxCurrency(ccy); ccy != "" && ccy != "EUR" {
+			currencies[ccy] = true
+		}
+	}
+	out.Requests += len(currencies)
+	b, err := h.yahoo.Budget(ctx)
+	out.Remaining = b.Remaining
+	return out, err
+}
+
+// runYahooRealtime prices a job with the latest Yahoo price of each instrument,
+// fetched now from the v8 chart endpoint even when today's quote is cached.
+// Foreign currencies are converted at a live Yahoo rate ({CCY}EUR=X); when no
+// live rate can be had, the ECB reference rate is used and labelled as such.
+// It only runs when the user asked for it.
+func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem, date string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	h.jobs.mu.Lock()
+	job.Status = "RUNNING"
+	h.jobs.mu.Unlock()
+	set := func(i int, status string, q *marketdata.Quote) {
+		h.jobs.mu.Lock()
+		job.Items[i] = priceItem{InstrumentID: rows[i].InstrumentID, Status: status, Quote: q}
+		h.jobs.mu.Unlock()
+	}
+	item := func(i int, attrs ...any) []any {
+		return append([]any{"user", job.user, "instrument", rows[i].InstrumentID, "isin", rows[i].ISIN, "realtime", true}, attrs...)
+	}
+	limited := false
+	fail := func(i int, err error) {
+		h.logger.Warn("Yahoo could not price item in real time", item(i, "error", err.Error())...)
+		switch {
+		case errors.Is(err, marketdata.ErrYahooLimit):
+			limited = true
+			set(i, "RATE_LIMITED", nil)
+		case errors.Is(err, marketdata.ErrYahooNotFound):
+			set(i, "NOT_FOUND", nil)
+		default:
+			set(i, "ERROR", nil)
+		}
+	}
+	type fxResult struct {
+		rate *marketdata.FXRate
+		err  error
+	}
+	rates := map[string]fxResult{}
+	rate := func(ccy string) (*marketdata.FXRate, error) {
+		major := fxCurrency(ccy)
+		if major == "EUR" {
+			return nil, nil
+		}
+		if r, ok := rates[major]; ok {
+			return r.rate, r.err
+		}
+		var r *marketdata.FXRate
+		err := marketdata.ErrYahooLimit
+		if !limited {
+			r, err = h.yahoo.LiveFX(ctx, job.user, major)
+		}
+		if err != nil {
+			if errors.Is(err, marketdata.ErrYahooLimit) {
+				limited = true
+			}
+			h.logger.Warn("no live Yahoo FX rate; using the ECB reference rate", "currency", major, "error", err.Error())
+			r, err = h.fx.Rate(ctx, major, date)
+		}
+		rates[major] = fxResult{r, err}
+		return r, err
+	}
+	for i, row := range rows {
+		if limited {
+			set(i, "RATE_LIMITED", nil)
+			continue
+		}
+		ref, err := h.store.InstrumentRef(ctx, row.InstrumentID)
+		if err != nil {
+			h.logger.Error("could not load instrument for real-time pricing", item(i, "error", err.Error())...)
+			set(i, "ERROR", nil)
+			continue
+		}
+		symbol, err := h.yahooSymbol(ctx, job.user, ref)
+		if err != nil {
+			fail(i, err)
+			continue
+		}
+		if symbol == "" {
+			set(i, "NO_SYMBOL", nil)
+			continue
+		}
+		latest, err := h.yahoo.Latest(ctx, job.user, symbol)
+		if err != nil {
+			fail(i, err)
+			continue
+		}
+		q := &marketdata.Quote{InstrumentID: row.InstrumentID, OrigPrice: latest.Price, Price: latest.Price, Currency: latest.Currency, QuoteDate: marketdata.BerlinDay(latest.At), QuoteTime: latest.At, FetchedAt: time.Now(), Provider: marketdata.ProviderYahoo}
+		attrs := []any{"symbol", symbol, "price", latest.Price, "currency", latest.Currency, "at", latest.At.UTC().Format(time.RFC3339)}
+		fx, err := rate(latest.Currency)
+		if err == nil {
+			err = marketdata.ApplyFX(q, fx)
+		}
+		if err != nil {
+			h.logger.Error("real-time Yahoo price obtained but not converted to EUR", item(i, append(attrs, "status", quoteFailure(err), "error", err.Error())...)...)
+			set(i, quoteFailure(err), nil)
+			continue
+		}
+		if err = h.store.SaveQuote(ctx, q, ""); err != nil {
+			h.logger.Error("could not store real-time Yahoo quote", item(i, append(attrs, "error", err.Error())...)...)
+			set(i, "ERROR", nil)
+			continue
+		}
+		if fx != nil {
+			attrs = append(attrs, "fxRate", q.FXRate, "fxSource", q.FXSource, "eurPrice", q.Price)
+		}
+		h.logger.Info("real-time Yahoo quote stored", item(i, attrs...)...)
+		set(i, "OK", q)
+	}
+	h.jobs.mu.Lock()
+	job.Status = "DONE"
+	h.jobs.mu.Unlock()
+}
+
 type historyResponse struct {
 	InstrumentID int64                   `json:"instrumentId"`
 	Provider     string                  `json:"provider"`

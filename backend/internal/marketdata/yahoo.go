@@ -214,15 +214,30 @@ func (g *YahooGateway) refreshCrumb(ctx context.Context, user string) error {
 // call sends a request with the session crumb. A 401/403 means the crumb or
 // cookie expired: the session is rebuilt once and the request retried once.
 func (g *YahooGateway) call(ctx context.Context, user, function, host, path string, q url.Values) ([]byte, error) {
+	return g.send(ctx, user, function, host, path, q, true)
+}
+
+// callPublic is for endpoints that answer without a session (v8 chart): no
+// cookie or crumb requests are spent up front. A crumb already held is still
+// attached, and a 401/403 falls back to building a session once.
+func (g *YahooGateway) callPublic(ctx context.Context, user, function, host, path string, q url.Values) ([]byte, error) {
+	return g.send(ctx, user, function, host, path, q, false)
+}
+
+func (g *YahooGateway) send(ctx context.Context, user, function, host, path string, q url.Values, needCrumb bool) ([]byte, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for attempt := 0; ; attempt++ {
-		if g.crumb == "" {
+		if needCrumb && g.crumb == "" {
 			if err := g.refreshCrumb(ctx, user); err != nil {
 				return nil, err
 			}
 		}
-		q.Set("crumb", g.crumb)
+		if g.crumb != "" {
+			q.Set("crumb", g.crumb)
+		} else {
+			q.Del("crumb")
+		}
 		status, body, err := g.get(ctx, user, function, host+path+"?"+q.Encode())
 		if err != nil {
 			return body, err
@@ -232,6 +247,7 @@ func (g *YahooGateway) call(ctx context.Context, user, function, host, path stri
 			logUpstream(g.Log, slog.LevelWarn, ProviderYahoo, "session rejected; rebuilding cookie and crumb", "function", function, "status", status, "attempt", attempt+1, "body", snippet(body))
 			g.crumb = ""
 			if attempt == 0 {
+				needCrumb = true
 				continue
 			}
 			return nil, ErrYahooAuth
@@ -321,6 +337,52 @@ func ParseYahooQuotes(b []byte) (map[string]YahooQuote, error) {
 		out[r.Symbol] = YahooQuote{Symbol: r.Symbol, Currency: r.Currency, Price: Fixed(price, 4), At: time.Unix(ts, 0)}
 	}
 	return out, nil
+}
+
+// ParseYahooLatest reads the latest regular-market price from the meta block of
+// v8/finance/chart (range=1d). It is the same value v7/finance/quote reports,
+// with the same exchange delay (real time for US listings, ~15 min for XETRA/LSE).
+func ParseYahooLatest(b []byte) (YahooQuote, error) {
+	q, err := parseLatest(b, 4)
+	return q, err
+}
+
+// parseLatest returns the meta price at the given scale (4 for prices, 8 for FX).
+func parseLatest(b []byte, scale int) (YahooQuote, error) {
+	var raw struct {
+		Chart struct {
+			Result []struct {
+				Meta struct {
+					Symbol   string      `json:"symbol"`
+					Currency string      `json:"currency"`
+					Price    json.Number `json:"regularMarketPrice"`
+					Time     json.Number `json:"regularMarketTime"`
+				} `json:"meta"`
+			} `json:"result"`
+			Error *struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		} `json:"chart"`
+	}
+	if json.Unmarshal(b, &raw) != nil {
+		return YahooQuote{}, ErrUpstream
+	}
+	if e := raw.Chart.Error; e != nil {
+		if strings.EqualFold(e.Code, "Not Found") {
+			return YahooQuote{}, ErrYahooNotFound
+		}
+		return YahooQuote{}, fmt.Errorf("%w: %s", ErrUpstream, e.Code)
+	}
+	if len(raw.Chart.Result) != 1 {
+		return YahooQuote{}, ErrYahooNotFound
+	}
+	m := raw.Chart.Result[0].Meta
+	ts, e1 := m.Time.Int64()
+	price, e2 := Scaled(m.Price.String(), scale)
+	if e1 != nil || e2 != nil || ts <= 0 || len(m.Currency) < 3 || len(m.Currency) > 4 || m.Symbol == "" {
+		return YahooQuote{}, ErrYahooNotFound
+	}
+	return YahooQuote{Symbol: m.Symbol, Currency: m.Currency, Price: Fixed(price, scale), At: time.Unix(ts, 0)}, nil
 }
 
 // YahooPoint is one daily close, dated in the exchange's time zone.
@@ -454,6 +516,53 @@ func (g *YahooGateway) Quotes(ctx context.Context, user string, symbols []string
 	return out, nil
 }
 
+// Latest fetches the current regular-market price of one symbol from the chart
+// endpoint (1 request, no session needed). The 1d interval keeps the response
+// to ~1 KB; the price lives in the meta block either way.
+func (g *YahooGateway) Latest(ctx context.Context, user, symbol string) (YahooQuote, error) {
+	return g.latest(ctx, user, symbol, 4)
+}
+
+func (g *YahooGateway) latest(ctx context.Context, user, symbol string, scale int) (YahooQuote, error) {
+	b, err := g.callPublic(ctx, user, "latest", g.QueryURL, "/v8/finance/chart/"+url.PathEscape(symbol), url.Values{"interval": {"1d"}, "range": {"1d"}})
+	if err != nil {
+		logUpstream(g.Log, slog.LevelError, ProviderYahoo, "latest price request failed", "symbol", symbol, "error", err.Error(), "body", snippet(b))
+		return YahooQuote{}, err
+	}
+	q, err := parseLatest(b, scale)
+	if err != nil {
+		logUpstream(g.Log, slog.LevelWarn, ProviderYahoo, "no usable latest price", "symbol", symbol, "error", err.Error(), "body", snippet(b))
+		return q, err
+	}
+	logUpstream(g.Log, slog.LevelInfo, ProviderYahoo, "latest price received", "symbol", symbol, "price", q.Price, "currency", q.Currency, "at", q.At.UTC().Format(time.RFC3339))
+	return q, nil
+}
+
+// FXSourceYahoo marks a live Yahoo rate; ECB rates have no source.
+const FXSourceYahoo = "YAHOO"
+
+// LiveFX fetches the live EUR value of one unit of currency from the Yahoo pair
+// {CCY}EUR=X (1 request), in the same orientation as the stored ECB rates.
+// Minor units use their major currency; ApplyFX divides by 100.
+func (g *YahooGateway) LiveFX(ctx context.Context, user, currency string) (*FXRate, error) {
+	ccy := MajorUnit(currency)
+	if ccy == "EUR" {
+		return nil, nil
+	}
+	if len(ccy) != 3 {
+		return nil, ErrFXUnsupported
+	}
+	q, err := g.latest(ctx, user, ccy+"EUR=X", 8)
+	if err != nil {
+		return nil, err
+	}
+	rate, err := Scaled(q.Price, 8)
+	if err != nil || q.Currency != "EUR" {
+		return nil, ErrFXUnavailable
+	}
+	return &FXRate{Date: BerlinDay(q.At), Base: ccy, Quote: "EUR", Rate: rate, Source: FXSourceYahoo}, nil
+}
+
 // History fetches daily closes for the inclusive day range [from, to].
 func (g *YahooGateway) History(ctx context.Context, user, symbol string, from, to time.Time) (*YahooSeries, error) {
 	q := url.Values{"period1": {strconv.FormatInt(from.Unix(), 10)}, "period2": {strconv.FormatInt(to.Add(24*time.Hour).Unix(), 10)}, "interval": {"1d"}, "includeAdjustedClose": {"false"}}
@@ -559,6 +668,29 @@ func (MockYahoo) Get(ctx context.Context, rawURL string) (int, http.Header, []by
 		}
 		b, _ := json.Marshal(map[string]any{"quoteResponse": map[string]any{"result": keep, "error": nil}})
 		return 200, h, b, nil
+	case strings.HasPrefix(u.Path, "/v8/finance/chart/") && q.Get("range") != "":
+		// Latest prices (range=1d) need no crumb; only the meta block is read,
+		// so the recorded series fixtures serve as well. FX pairs were recorded
+		// live on 2026-11-10 with interval=1d&range=1d.
+		switch strings.TrimPrefix(u.Path, "/v8/finance/chart/") {
+		case "SAP.DE":
+			return 200, h, read("chart-sap"), nil
+		case "VHYD.L":
+			return 200, h, read("chart-vhyd"), nil
+		case "ULVR.L":
+			return 200, h, read("chart-div-ulvr"), nil
+		case "AAPL":
+			return 200, h, read("chart-div-aapl"), nil
+		case "ISPA.DE":
+			return 200, h, read("chart-div-ispa"), nil
+		case "IWDA.L":
+			return 200, h, read("chart-div-iwda"), nil
+		case "USDEUR=X":
+			return 200, h, read("chart-fx-usdeur"), nil
+		case "GBPEUR=X":
+			return 200, h, read("chart-fx-gbpeur"), nil
+		}
+		return 404, h, read("chart-not-found"), nil
 	case strings.HasPrefix(u.Path, "/v8/finance/chart/") && q.Get("events") == "div":
 		// Recorded 2023-01-01..2026-11-07 with events=div, trimmed to the bars
 		// around each ex-date and the last 10 bars (see docs/yahoo-notes.md).

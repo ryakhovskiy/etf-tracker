@@ -1,0 +1,56 @@
+{
+ "chart": {
+  "result": [
+   {
+    "meta": {
+     "currency": "EUR",
+     "symbol": "GBPEUR=X",
+     "exchangeName": "CCY",
+     "fullExchangeName": "CCY",
+     "instrumentType": "CURRENCY",
+     "regularMarketTime": 1794344369,
+     "gmtoffset": 0,
+     "timezone": "GMT",
+     "exchangeTimezoneName": "Europe/London",
+     "regularMarketPrice": 1.1949,
+     "chartPreviousClose": 1.197,
+     "priceHint": 4,
+     "dataGranularity": "1d",
+     "range": "1d"
+    },
+    "timestamp": [
+     1794344369
+    ],
+    "indicators": {
+     "quote": [
+      {
+       "low": [
+        1.1938999891281128
+       ],
+       "volume": [
+        0
+       ],
+       "high": [
+        1.1978000402450562
+       ],
+       "open": [
+        1.1967999935150146
+       ],
+       "close": [
+        1.1949000358581543
+       ]
+      }
+     ],
+     "adjclose": [
+      {
+       "adjclose": [
+        1.1949000358581543
+       ]
+      }
+     ]
+    }
+   }
+  ],
+  "error": null
+ }
+}

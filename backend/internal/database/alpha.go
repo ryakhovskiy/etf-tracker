@@ -145,8 +145,8 @@ func scanQuote(row interface{ Scan(...any) error }) (*marketdata.Quote, error) {
 	q := &marketdata.Quote{}
 	var p, orig int64
 	var rate sql.NullInt64
-	var fetched string
-	err := row.Scan(&q.ID, &q.InstrumentID, &p, &orig, &q.Currency, &rate, &q.FXRateDate, &q.QuoteDate, &fetched, &q.Provider)
+	var fetched, quoteTime string
+	err := row.Scan(&q.ID, &q.InstrumentID, &p, &orig, &q.Currency, &rate, &q.FXRateDate, &q.QuoteDate, &fetched, &q.Provider, &quoteTime, &q.FXSource)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -158,11 +158,27 @@ func scanQuote(row interface{ Scan(...any) error }) (*marketdata.Quote, error) {
 	if rate.Valid {
 		q.FXRate = decimalString(rate.Int64, 8)
 	}
+	if quoteTime != "" {
+		if q.QuoteTime, err = time.Parse(time.RFC3339Nano, quoteTime); err != nil {
+			return nil, err
+		}
+	}
 	q.FetchedAt, err = time.Parse(time.RFC3339Nano, fetched)
 	return q, err
 }
 
-const quoteColumns = `id,instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,COALESCE(fx_rate_date,''),quote_date,fetched_at,provider`
+const quoteColumns = `id,instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,COALESCE(fx_rate_date,''),quote_date,fetched_at,provider,COALESCE(quote_time,''),COALESCE(fx_source,'')`
+
+// LatestQuoteCurrency returns the listing currency of the newest stored quote
+// of an instrument, or "" when it has none. Used to estimate FX requests.
+func (s *Store) LatestQuoteCurrency(ctx context.Context, id int64) (string, error) {
+	var ccy string
+	err := s.db.QueryRowContext(ctx, "SELECT orig_currency FROM price_quotes WHERE instrument_id=? ORDER BY fetched_at DESC,id DESC LIMIT 1", id).Scan(&ccy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return ccy, err
+}
 
 // FreshQuote returns the newest quote of any provider if it is still fresh. A
 // Eulerpool stock quote stays fresh for the quote TTL; ETF closes and Alpha
@@ -224,7 +240,14 @@ func (s *Store) SaveQuote(ctx context.Context, q *marketdata.Quote, symbol strin
 			}
 			rate = r
 		}
-		res, err := c.ExecContext(ctx, `INSERT INTO price_quotes(instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,fx_rate_date,quote_date,fetched_at,provider) VALUES(?,?,?,?,?,?,?,?,?)`, q.InstrumentID, p, orig, q.Currency, rate, q.FXRateDate, q.QuoteDate, q.FetchedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"), provider)
+		var quoteTime, fxSource any
+		if !q.QuoteTime.IsZero() {
+			quoteTime = q.QuoteTime.UTC().Format(time.RFC3339Nano)
+		}
+		if q.FXSource != "" {
+			fxSource = q.FXSource
+		}
+		res, err := c.ExecContext(ctx, `INSERT INTO price_quotes(instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,fx_rate_date,quote_date,fetched_at,provider,quote_time,fx_source) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, q.InstrumentID, p, orig, q.Currency, rate, q.FXRateDate, q.QuoteDate, q.FetchedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"), provider, quoteTime, fxSource)
 		if err != nil {
 			return err
 		}
@@ -398,11 +421,17 @@ func (s *Store) applyQuoteDefaults(ctx context.Context, items []SavingPlanItem) 
 		v.QuoteID = q.ID
 		d, _ := time.Parse("2006-01-02", q.QuoteDate)
 		v.PriceSource = "Fetched " + d.Format("02.01.2006")
+		if !q.QuoteTime.IsZero() {
+			v.PriceSource += " " + q.QuoteTime.In(marketdata.Berlin()).Format("15:04")
+		}
 		switch q.Provider {
 		case marketdata.ProviderEulerpool:
 			v.PriceSource += " · Eulerpool"
 		case marketdata.ProviderYahoo:
 			v.PriceSource += " · Yahoo Finance"
+			if !q.QuoteTime.IsZero() {
+				v.PriceSource += " real-time"
+			}
 		}
 		if q.FXRate != "" {
 			rate, err := marketdata.Scaled(q.FXRate, 4)
@@ -412,7 +441,11 @@ func (s *Store) applyQuoteDefaults(ctx context.Context, items []SavingPlanItem) 
 			fxDate, _ := time.Parse("2006-01-02", q.FXRateDate)
 			currency := q.Currency
 			currency = marketdata.MajorUnit(currency)
-			v.PriceSource += " · 1 " + currency + " = " + strings.ReplaceAll(marketdata.Fixed(rate, 4), ".", ",") + " € (ECB " + fxDate.Format("02.01.2006") + ")"
+			source := "ECB " + fxDate.Format("02.01.2006")
+			if q.FXSource == marketdata.FXSourceYahoo {
+				source = "Yahoo live"
+			}
+			v.PriceSource += " · 1 " + currency + " = " + strings.ReplaceAll(marketdata.Fixed(rate, 4), ".", ",") + " € (" + source + ")"
 		}
 	}
 	return nil

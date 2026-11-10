@@ -198,6 +198,20 @@ date and fetches a daily close on or before it. Default primary is **YAHOO**;
   become `NEEDS_BACKUP`; alternative providers require separate clicks. Default
   UI offers Eulerpool then AV after Yahoo; Eulerpool-primary UI can offer Yahoo
   before AV. No automatic AV spend.
+- **Real-time prices** (Transactions "Fetch real-time prices", Dashboard "Fetch
+  real-time value"; today only, always Yahoo whatever the primary): a price job
+  with `"realtime": true`. It ignores today's cached quote and calls
+  `v8/finance/chart/{symbol}?interval=1d&range=1d` once per instrument, reading
+  `meta.regularMarketPrice`/`regularMarketTime`. The chart endpoint needs only
+  the browser User-Agent, so no cookie or crumb is spent (a crumb already held is
+  attached). Foreign currencies use a live Yahoo rate `{CCY}EUR=X` (1 request per
+  currency, same EUR-per-unit orientation as ECB). If none can be had, the ECB
+  rate is used. Quotes are saved with `quote_time` and `fx_source='YAHOO'`, and
+  labelled "HH:MM · Yahoo Finance real-time · … (Yahoo live)". Yahoo's own exchange
+  delay still applies: US listings are real time, XETRA/LSE are ~15 min delayed.
+  The estimate's `realtime` field (null for past dates) counts searches +
+  instruments + currencies of earlier quotes. A regular fetch that reuses a
+  real-time quote as fresh converts it at the ECB rate again.
 - Shared fresh quotes avoid provider calls. Eulerpool stock TTL is 15m; Eulerpool
   ETF/AV quotes use calendar-day freshness; Yahoo also checks trading-date recency.
   Historical closes are cached separately and are not fresh current quotes.

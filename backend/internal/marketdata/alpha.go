@@ -65,9 +65,13 @@ type Quote struct {
 	Currency     string    `json:"currency"`
 	FXRate       string    `json:"fxRate,omitempty"`
 	FXRateDate   string    `json:"fxRateDate,omitempty"`
-	QuoteDate    string    `json:"quoteDate"`
-	FetchedAt    time.Time `json:"-"`
-	Provider     string    `json:"provider,omitempty"`
+	// FXSource is empty for an ECB reference rate and FXSourceYahoo for a live rate.
+	FXSource  string `json:"fxSource,omitempty"`
+	QuoteDate string `json:"quoteDate"`
+	// QuoteTime is the market time of a real-time price; zero for daily quotes.
+	QuoteTime time.Time `json:"quoteTime,omitzero"`
+	FetchedAt time.Time `json:"-"`
+	Provider  string    `json:"provider,omitempty"`
 }
 type AVStore interface {
 	AVBudget(context.Context, string, time.Time, AVLimits) (Budget, error)
@@ -409,7 +413,7 @@ func (g *AVGateway) QuoteOn(ctx context.Context, user, symbol, currency string, 
 // for the transaction date. EUR listings are left unchanged.
 func ApplyFX(q *Quote, fx *FXRate) error {
 	if q.Currency == "EUR" {
-		q.Price, q.FXRate, q.FXRateDate = q.OrigPrice, "", ""
+		q.Price, q.FXRate, q.FXRateDate, q.FXSource = q.OrigPrice, "", "", ""
 		return nil
 	}
 	if fx == nil {
@@ -427,15 +431,16 @@ func ApplyFX(q *Quote, fx *FXRate) error {
 	if err != nil {
 		return err
 	}
-	q.Price, q.FXRate, q.FXRateDate = Fixed(v, 4), Fixed(fx.Rate, 8), fx.Date
+	q.Price, q.FXRate, q.FXRateDate, q.FXSource = Fixed(v, 4), Fixed(fx.Rate, 8), fx.Date, fx.Source
 	return nil
 }
 
 // ForDate returns q converted at fx, the rate for the transaction date. When q
-// was converted at a different publication, the result is a new, unsaved quote
-// (ID 0) with the same original price, quote date and fetch time; otherwise q.
+// was converted at a different publication (or a live rather than ECB rate), the
+// result is a new, unsaved quote (ID 0) with the same original price, quote date
+// and fetch time; otherwise q.
 func (q *Quote) ForDate(fx *FXRate) (*Quote, error) {
-	if q.Currency == "EUR" || (fx != nil && q.FXRateDate == fx.Date && q.FXRate == Fixed(fx.Rate, 8)) {
+	if q.Currency == "EUR" || (fx != nil && q.FXRateDate == fx.Date && q.FXRate == Fixed(fx.Rate, 8) && q.FXSource == fx.Source) {
 		return q, nil
 	}
 	c := *q
@@ -489,6 +494,9 @@ var berlin = func() *time.Location {
 }()
 
 func BerlinDay(t time.Time) string { return t.In(berlin).Format("2006-01-02") }
+
+// Berlin is the Europe/Berlin location used for calendar days and display times.
+func Berlin() *time.Location { return berlin }
 func AllowedDate(date string, now time.Time) bool {
 	t := now.In(berlin)
 	prev := t.AddDate(0, 0, -1)

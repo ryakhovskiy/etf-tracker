@@ -75,7 +75,13 @@ export function fetchDateAllowed(date:string,now=new Date()) {
 export const fetchable = (r: { isin?: string; yahooSymbol?: string; avSymbol?: string }) => !!(r.isin || r.yahooSymbol || r.avSymbol);
 // Every provider prices past dates from daily history: any day from 1990 up to today (Berlin).
 export const fetchDateInRange = (date: string, now = new Date()) => date >= "1990-01-01" && date <= new Intl.DateTimeFormat("sv-SE",{timeZone:"Europe/Berlin",year:"numeric",month:"2-digit",day:"2-digit"}).format(now);
-export function fetchedSource(q:{quoteDate?:string;currency?:string;fxRate?:string;fxRateDate?:string;provider?:string}) {
+/** Market time of a real-time quote as HH:MM in Berlin. */
+export const berlinTime = (iso: string) => new Date(iso).toLocaleTimeString("de-DE", { timeZone: "Europe/Berlin", hour: "2-digit", minute: "2-digit" });
+// Mirrors the backend's priceSource label (database.applyQuoteDefaults).
+export function fetchedSource(q:{quoteDate?:string;quoteTime?:string;currency?:string;fxRate?:string;fxRateDate?:string;fxSource?:string;provider?:string}) {
  const date=(d?:string)=>d?.split("-").reverse().join(".")??"";
- return `Fetched ${date(q.quoteDate)}${q.provider==="EULERPOOL"?" · Eulerpool":q.provider==="YAHOO"?" · Yahoo Finance":""}${q.fxRate?` · 1 ${q.currency==="GBX"||q.currency==="GBp"?"GBP":q.currency} = ${new Decimal(q.fxRate).toFixed(4).replace(".",",")} € (ECB ${date(q.fxRateDate)})`:""}`;
+ const time=q.quoteTime?` ${berlinTime(q.quoteTime)}`:"";
+ const provider=q.provider==="EULERPOOL"?" · Eulerpool":q.provider==="YAHOO"?` · Yahoo Finance${q.quoteTime?" real-time":""}`:"";
+ const fx=q.fxSource==="YAHOO"?"Yahoo live":`ECB ${date(q.fxRateDate)}`;
+ return `Fetched ${date(q.quoteDate)}${time}${provider}${q.fxRate?` · 1 ${q.currency==="GBX"||q.currency==="GBp"?"GBP":q.currency} = ${new Decimal(q.fxRate).toFixed(4).replace(".",",")} € (${fx})`:""}`;
 }

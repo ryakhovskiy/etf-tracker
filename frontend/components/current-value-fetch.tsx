@@ -4,16 +4,19 @@ import { useEffect, useRef, useState } from "react";
 import { api, APIError } from "../lib/api";
 import { today, type Performance } from "../lib/transactions";
 import { BackupFetch, BACKUP_STATUSES } from "./backup-fetch";
+import { REALTIME_TITLE } from "./price-fetch";
 
 type Budget = { globalRemaining: number; userRemaining: number; nextSlotAt: string; blockedUntil?: string };
-type Estimate = { requestsNeeded: number; fresh: number[]; noSymbol: number[]; budget: Budget; provider?: string; eulerpool?: { requests: number; remaining: number; noIsin?: number[] }; yahoo?: { requests: number; remaining: number; noSymbol: number[] } };
+type Estimate = { requestsNeeded: number; fresh: number[]; noSymbol: number[]; budget: Budget; provider?: string; eulerpool?: { requests: number; remaining: number; noIsin?: number[] }; yahoo?: { requests: number; remaining: number; noSymbol: number[] }; realtime?: { requests: number; remaining: number; noSymbol: number[] } | null };
+type Kind = "regular" | "realtime";
 type Job = { status: string; nextRequestAt: string; items: { instrumentId: number; status: string }[] };
 
 export function CurrentValueFetch({ id, performance, reload }: { id: string; performance: Performance; reload: () => Promise<unknown> }) {
  const [estimate, setEstimate] = useState<Estimate | null>(null);
  const [jobId, setJobId] = useState<string | null>(null);
  const [job, setJob] = useState<Job | null>(null);
- const [starting, setStarting] = useState(false);
+ const [starting, setStarting] = useState<Kind | null>(null);
+ const [kind, setKind] = useState<Kind>("regular");
  const [error, setError] = useState("");
  const [now, setNow] = useState(Date.now());
  const [version, setVersion] = useState(0);
@@ -24,6 +27,7 @@ export function CurrentValueFetch({ id, performance, reload }: { id: string; per
  const storageKey = `current-value-fetch:${id}`;
  useEffect(() => {
   setJobId(sessionStorage.getItem(storageKey));
+  setKind(sessionStorage.getItem(`${storageKey}:kind`) === "realtime" ? "realtime" : "regular");
   const timer = setInterval(() => setNow(Date.now()), 1000);
   const refresh = () => setVersion(v => v+1);
   window.addEventListener("av-budget-changed", refresh);
@@ -52,7 +56,7 @@ export function CurrentValueFetch({ id, performance, reload }: { id: string; per
   let active = true;
   let timer: ReturnType<typeof setTimeout>;
   const finish = async () => {
-   sessionStorage.removeItem(storageKey); setJobId(null);
+   sessionStorage.removeItem(storageKey); sessionStorage.removeItem(`${storageKey}:kind`); setJobId(null);
    await reloadRef.current();
    window.dispatchEvent(new window.Event("av-budget-changed"));
   };
@@ -61,7 +65,7 @@ export function CurrentValueFetch({ id, performance, reload }: { id: string; per
     const next = await api<Job>(`/api/price-fetch-jobs/${jobId}`);
     if (!active) return;
     setJob(next);
-    if (next.status === "DONE") { setBackup(next.items.filter(i => (mode === "ALPHAVANTAGE" ? ["NEEDS_BACKUP"] : BACKUP_STATUSES).includes(i.status)).map(i => i.instrumentId)); await finish(); }
+    if (next.status === "DONE") { setBackup(next.items.filter(i => (mode === "ALPHAVANTAGE" && kind === "regular" ? ["NEEDS_BACKUP"] : BACKUP_STATUSES).includes(i.status)).map(i => i.instrumentId)); await finish(); }
     else timer = setTimeout(poll, 2000);
    } catch (e) {
     if (!active) return;
@@ -74,14 +78,15 @@ export function CurrentValueFetch({ id, performance, reload }: { id: string; per
   };
   void poll();
   return () => { active = false; clearTimeout(timer); };
- }, [jobId, storageKey]);
- const start = async () => {
-  setStarting(true); setError(""); setBackup([]);
+ }, [jobId, storageKey, kind]);
+ const start = async (next: Kind) => {
+  setStarting(next); setError(""); setBackup([]);
   try {
-   const created = await api<{ jobId: string }>(`/api/portfolios/${id}/price-fetch-jobs`, { method: "POST", body: JSON.stringify({ date, instrumentIds: ids.split(",").map(Number), priority: "HOLDINGS_VALUE" }) });
-   sessionStorage.setItem(storageKey, created.jobId); setJob(null); setJobId(created.jobId);
+   const created = await api<{ jobId: string }>(`/api/portfolios/${id}/price-fetch-jobs`, { method: "POST", body: JSON.stringify({ date, instrumentIds: ids.split(",").map(Number), priority: "HOLDINGS_VALUE", ...(next === "realtime" ? { realtime: true } : {}) }) });
+   sessionStorage.setItem(storageKey, created.jobId); sessionStorage.setItem(`${storageKey}:kind`, next);
+   setKind(next); setJob(null); setJobId(created.jobId);
   } catch (e) { setError((e as Error).message); setVersion(v => v+1); }
-  finally { setStarting(false); }
+  finally { setStarting(null); }
  };
  // The primary provider comes with the estimate; older servers without it mean Alpha Vantage.
  const mode = estimate?.provider ?? (estimate?.eulerpool ? "EULERPOOL" : "ALPHAVANTAGE");
@@ -98,20 +103,28 @@ export function CurrentValueFetch({ id, performance, reload }: { id: string; per
  const epLimited = eulerpool && epRequests > 0 && epRemaining === 0;
  const nextAt = estimate ? new Date(Math.max(Date.parse(estimate.budget.nextSlotAt), Date.parse(estimate.budget.blockedUntil ?? "") || 0)).toLocaleString("de-DE", { timeZone: "Europe/Berlin", dateStyle: "short", timeStyle: "short" }) : "";
  const label = !estimate ? "Fetch current value (estimating…)" : eulerpool ? (epRequests === 0 ? "Up to date (uses 0 requests)" : `Fetch current value (${epRequests} ${sourceName} ${epRequests === 1 ? "request" : "requests"})`) : allUnlinked ? "Fetch current value" : estimate.requestsNeeded === 0 ? `${missingSymbols.length ? "Refresh current value" : "Up to date"} (uses 0 requests)` : estimate.requestsNeeded > remaining ? `Fetch ${remaining} of ${estimate.requestsNeeded} (budget limit)` : `Fetch current value (uses ${estimate.requestsNeeded} requests)`;
+ const realtime = estimate?.realtime;
+ const realtimeIds = ids.split(",").filter(Boolean).length - (realtime?.noSymbol.length ?? 0);
+ const realtimeOut = !!realtime && realtime.requests > realtime.remaining;
+ const realtimeLabel = realtime ? `Fetch real-time value (${realtime.requests} Yahoo ${realtime.requests === 1 ? "request" : "requests"})` : "";
  const updated = job?.items.filter(i => ["OK", "FRESH"].includes(i.status)).length ?? 0;
- const failures = job?.items.filter(i => !["PENDING", "OK", "FRESH", "NO_SYMBOL", "NEEDS_BACKUP", ...(mode === "ALPHAVANTAGE" ? [] : BACKUP_STATUSES)].includes(i.status)) ?? [];
+ const failures = job?.items.filter(i => !["PENDING", "OK", "FRESH", "NO_SYMBOL", "NEEDS_BACKUP", ...(mode === "ALPHAVANTAGE" && kind === "regular" ? [] : BACKUP_STATUSES)].includes(i.status)) ?? [];
  return <div className="current-fetch" aria-label="Market prices">
   <div className="fetch-toolbar">
    <div className="fetch-description"><strong>Market prices</strong><p>{allUnlinked ? eulerpool ? "No symbols are linked. Link your holdings to fetch current value." : "No price symbols are linked. Link your holdings to fetch current value." : "Update current value using the latest available quotes."}</p>{eulerpool && <small className="muted">Data by {yahoo ? "Yahoo Finance" : "Eulerpool"}</small>}{allUnlinked && <Link href={`/portfolios/${id}/transactions`}>Link symbols in Transactions</Link>}</div>
-   <span className="fetch-action" title={limited ? `Alpha Vantage limit reached, next request possible at ${nextAt}` : allUnlinked ? "Link price symbols in Transactions first." : undefined}><button type="button" disabled={!ids || !estimate || allUnlinked || limited || epLimited || starting || !!jobId} title={limited ? `Alpha Vantage limit reached, next request possible at ${nextAt}` : allUnlinked ? eulerpool ? "Link ISINs in Transactions first." : "Link price symbols in Transactions first." : undefined} onClick={() => void start()}>{starting ? "Starting…" : jobId ? "Fetching prices…" : label}</button></span>
+   <div className="fetch-actions">
+   <span className="fetch-action" title={limited ? `Alpha Vantage limit reached, next request possible at ${nextAt}` : allUnlinked ? "Link price symbols in Transactions first." : undefined}><button type="button" disabled={!ids || !estimate || allUnlinked || limited || epLimited || !!starting || !!jobId} title={limited ? `Alpha Vantage limit reached, next request possible at ${nextAt}` : allUnlinked ? eulerpool ? "Link ISINs in Transactions first." : "Link price symbols in Transactions first." : undefined} onClick={() => void start("regular")}>{starting === "regular" ? "Starting…" : jobId && kind === "regular" ? "Fetching prices…" : label}</button></span>
+   {realtime && <span className="fetch-action"><button type="button" disabled={!ids || realtimeIds <= 0 || realtimeOut || !!starting || !!jobId} title={REALTIME_TITLE} onClick={() => void start("realtime")}>{starting === "realtime" ? "Starting…" : jobId && kind === "realtime" ? "Fetching real-time prices…" : realtimeLabel}</button></span>}
+   </div>
   </div>
   {epLimited && <p className="fetch-notice">{sourceName} request budget is used up for now.</p>}
   {limited && <p className="fetch-notice">Alpha Vantage limit reached. Next request possible at {nextAt}.</p>}
   {!eulerpool && !limited && estimate && estimate.requestsNeeded > remaining && <p className="fetch-notice">The available budget covers {remaining} of {estimate.requestsNeeded} requests. Largest holdings are updated first.</p>}
-  {job && <p className="fetch-progress" role="status">{job.status === "DONE" ? updated ? `${updated} of ${job.items.length} holdings updated` : "No prices updated. Link symbols or review the fetch results below." : `${job.items.filter(i => i.status !== "PENDING").length}/${job.items.length} · next request in ${Math.max(0, Math.ceil((Date.parse(job.nextRequestAt)-now)/1000))} s`}</p>}
+  {job && <p className="fetch-progress" role="status">{job.status === "DONE" ? updated ? `${updated} of ${job.items.length} holdings updated${kind === "realtime" ? " with real-time prices" : ""}` : "No prices updated. Link symbols or review the fetch results below." : `${job.items.filter(i => i.status !== "PENDING").length}/${job.items.length} · ${kind === "realtime" ? "fetching real-time prices…" : `next request in ${Math.max(0, Math.ceil((Date.parse(job.nextRequestAt)-now)/1000))} s`}`}</p>}
+  {realtimeOut && <p className="fetch-notice">Yahoo Finance is rate limited right now. Try real-time prices again later.</p>}
   {failures.length > 0 && <details className="fetch-details"><summary>{failures.length} {failures.length === 1 ? "price could" : "prices could"} not be updated</summary><ul>{failures.map(i => <li key={i.instrumentId}>{performance.series.find(s => s.instrumentId === i.instrumentId)?.name}: {i.status.replaceAll("_", " ")}</li>)}</ul></details>}
   {missingSymbols.length > 0 && <details className="fetch-details"><summary>{missingSymbols.length} {missingSymbols.length === 1 ? "holding needs" : "holdings need"} {yahoo ? "a Yahoo symbol" : eulerpool ? "an ISIN" : "a price symbol"}</summary><ul>{missingSymbols.map(instrumentId => <li key={instrumentId}><span>{performance.series.find(s => s.instrumentId === instrumentId)?.name}</span><Link href={`/portfolios/${id}/transactions`}>Link symbol in Transactions tab</Link></li>)}</ul></details>}
   {error && <p className="error" role="alert">{error}</p>}
-  {!jobId && backup.length > 0 && <BackupFetch portfolioId={id} date={date} primary={mode} ids={backup} names={Object.fromEntries(performance.series.map(x => [x.instrumentId, x.name]))} onItems={() => {}} onDone={async () => { await reloadRef.current(); }} />}
+  {!jobId && backup.length > 0 && <BackupFetch portfolioId={id} date={date} primary={kind === "realtime" ? "YAHOO" : mode} ids={backup} names={Object.fromEntries(performance.series.map(x => [x.instrumentId, x.name]))} onItems={() => {}} onDone={async () => { await reloadRef.current(); }} />}
  </div>;
 }

@@ -10,12 +10,18 @@ type Budget = { globalRemaining: number; userRemaining: number; userLimit: numbe
 type Estimate = {
   requestsNeeded: number; fresh: number[]; noSymbol: number[]; budget: Budget; provider?: string;
   eulerpool?: { requests: number; remaining: number }; yahoo?: { requests: number; remaining: number };
+  // Present for today only (and only on servers that support real-time prices).
+  realtime?: Realtime | null;
 };
+type Realtime = { requests: number; remaining: number; noSymbol: number[] };
+type Kind = "regular" | "realtime";
 type QuoteItem = JobItem;
 type Job = { status: "QUEUED" | "RUNNING" | "DONE"; nextRequestAt: string; items: QuoteItem[] };
 type Reload = (recoverPrices?: boolean) => Promise<unknown>;
 const count = (n: number | undefined, who: string) => `${n ?? "…"} ${who} ${n === 1 ? "request" : "requests"}`;
 const german = (iso: string) => iso.split("-").reverse().join(".");
+/** Explains the real-time button: what it fetches and how fresh it really is. */
+export const REALTIME_TITLE = "Fetches the latest Yahoo Finance price now, even if today's price was already fetched, and converts it at the live Yahoo FX rate. US listings are real time; European exchanges are delayed by about 15 minutes.";
 
 export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, onFetching }: {
  id: string; date: string; rows: PlanRow[]; selected: number[];
@@ -27,7 +33,9 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
  const [jobId, setJobId] = useState<string | null>(null);
  const [job, setJob] = useState<Job | null>(null);
  const [error, setError] = useState("");
- const [starting, setStarting] = useState(false);
+ const [starting, setStarting] = useState<Kind | null>(null);
+ // Which button started the running job; kept with the job ID across remounts.
+ const [kind, setKind] = useState<Kind>("regular");
  const [now, setNow] = useState(Date.now());
  const [backup, setBackup] = useState<number[]>([]);
  // Draft setters belong to the parent; polling always uses their current versions.
@@ -47,9 +55,10 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
   refresh();
   window.addEventListener("av-budget-changed", refresh);
   setJobId(sessionStorage.getItem(storageKey));
+  setKind(sessionStorage.getItem(`${storageKey}:kind`) === "realtime" ? "realtime" : "regular");
   return () => window.removeEventListener("av-budget-changed", refresh);
  }, [storageKey, refreshBudget]);
- useEffect(() => { callbacks.current.onFetching(starting || !!jobId); }, [starting, jobId]);
+ useEffect(() => { callbacks.current.onFetching(!!starting || !!jobId); }, [starting, jobId]);
  useEffect(() => {
   setEstimate(null);
   if (!allowed || !ids) return;
@@ -74,9 +83,9 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
     applyItems(next.items, applied);
     if (next.status === "DONE") {
      // Whatever the primary source could not price can be fetched from a backup, on request.
-     const offer = mode === "ALPHAVANTAGE" ? ["NEEDS_BACKUP"] : BACKUP_STATUSES;
+     const offer = mode === "ALPHAVANTAGE" && kind === "regular" ? ["NEEDS_BACKUP"] : BACKUP_STATUSES;
      setBackup(next.items.filter(i => offer.includes(i.status)).map(i => i.instrumentId));
-     sessionStorage.removeItem(storageKey); setJobId(null);
+     sessionStorage.removeItem(storageKey); sessionStorage.removeItem(`${storageKey}:kind`); setJobId(null);
      await refreshBudget();
      callbacks.current.changed();
     } else if (active) timer = setTimeout(poll, 2000);
@@ -85,7 +94,7 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
     const err = e as APIError;
     setError(err.status === 404 ? "Fetch interrupted. Prices fetched so far were saved." : err.message);
     if (err.status === 404) {
-     sessionStorage.removeItem(storageKey); setJobId(null);
+     sessionStorage.removeItem(storageKey); sessionStorage.removeItem(`${storageKey}:kind`); setJobId(null);
      try { await callbacks.current.reload(true); await refreshBudget(); callbacks.current.changed(); } catch (recoveryError) { if (active) setError(`Fetch interrupted. ${(recoveryError as Error).message}`); }
     } else timer = setTimeout(poll, 2000);
    }
@@ -93,7 +102,7 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
   void poll();
   const tick = setInterval(() => setNow(Date.now()), 1000);
   return () => { active = false; clearTimeout(timer); clearInterval(tick); };
- }, [jobId, storageKey, refreshBudget, mode]);
+ }, [jobId, storageKey, refreshBudget, mode, kind]);
  // Applies fetched prices to the draft rows, once per item.
  const appliedItems = useRef(new Set<number>());
  const applyItems = (items: QuoteItem[], applied: Set<number> = appliedItems.current) => {
@@ -104,13 +113,14 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
    return item?.priceEur ? { ...editRow(row, "price", item.priceEur), quoteId: item.quoteId, priceSource: fetchedSource(item) } : row;
   }) ?? null);
  };
- const start = async () => {
-  setStarting(true); setError(""); setBackup([]);
+ const start = async (next: Kind) => {
+  setStarting(next); setError(""); setBackup([]);
   try {
-   const created = await api<{ jobId: string }>(`/api/portfolios/${id}/price-fetch-jobs`, { method: "POST", body: JSON.stringify({ date, instrumentIds: ids.split(",").map(Number) }) });
-   sessionStorage.setItem(storageKey, created.jobId); setJob(null); setJobId(created.jobId);
+   const created = await api<{ jobId: string }>(`/api/portfolios/${id}/price-fetch-jobs`, { method: "POST", body: JSON.stringify({ date, instrumentIds: ids.split(",").map(Number), ...(next === "realtime" ? { realtime: true } : {}) }) });
+   sessionStorage.setItem(storageKey, created.jobId); sessionStorage.setItem(`${storageKey}:kind`, next);
+   setKind(next); setJob(null); setJobId(created.jobId);
   } catch (e) { setError((e as Error).message); void refreshBudget().catch(() => {}); }
-  finally { setStarting(false); }
+  finally { setStarting(null); }
  };
  const av = mode === "ALPHAVANTAGE";
  const over = av && !!estimate && (estimate.requestsNeeded > estimate.budget.userRemaining || estimate.requestsNeeded > estimate.budget.globalRemaining);
@@ -120,19 +130,25 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
   : mode === "EULERPOOL" ? `Fetch prices (${count(estimate?.eulerpool?.requests, "Eulerpool")})`
   : `Fetch prices (uses ${estimate?.requestsNeeded ?? "…"} requests)`;
  const past = date !== today();
+ const realtime = estimate?.realtime;
+ const realtimeOut = !!realtime && realtime.requests > realtime.remaining;
+ const realtimeLabel = `Fetch real-time prices (${count(realtime?.requests, "Yahoo")})`;
+ // A real-time run is always Yahoo, so its leftovers are offered the backups that follow Yahoo.
+ const backupPrimary = kind === "realtime" ? "YAHOO" : mode;
  const attribution = mode === "YAHOO" ? "Data by Yahoo Finance" : mode === "EULERPOOL" ? "Data by Eulerpool" : "";
- const failures = job?.items.filter(i => !["PENDING", "OK", "FRESH", "NEEDS_BACKUP", ...(av ? [] : BACKUP_STATUSES)].includes(i.status)) ?? [];
+ const failures = job?.items.filter(i => !["PENDING", "OK", "FRESH", "NEEDS_BACKUP", ...(av && kind === "regular" ? [] : BACKUP_STATUSES)].includes(i.status)) ?? [];
  return <div className="price-fetch">
   {(estimate ? av : !budget?.primary) && <span className="badge" title={budget ? `${budget.globalRemaining} requests left app-wide` : undefined}>{budget ? `AV: ${Math.min(budget.userRemaining, budget.globalRemaining)} of ${budget.userLimit} left today` : "AV budget loading…"}</span>}
-  <button type="button" disabled={busy || starting || !!jobId || !allowed || !ids || !estimate || over || blocked || yahooOut} title={!allowed ? "Choose a date from 1990-01-01 through today." : undefined} onClick={() => void start()}>{starting ? "Starting…" : label}</button>
+  <button type="button" disabled={busy || !!starting || !!jobId || !allowed || !ids || !estimate || over || blocked || yahooOut} title={!allowed ? "Choose a date from 1990-01-01 through today." : undefined} onClick={() => void start("regular")}>{starting === "regular" ? "Starting…" : label}</button>
+  {realtime && <button type="button" disabled={busy || !!starting || !!jobId || !ids || realtimeOut} title={REALTIME_TITLE} onClick={() => void start("realtime")}>{starting === "realtime" ? "Starting…" : jobId && kind === "realtime" ? "Fetching real-time prices…" : realtimeLabel}</button>}
   {(attribution || past) && allowed && <small className="muted">{past ? `Closing price on or before ${german(date)}` : ""}{past && attribution ? " · " : ""}{attribution}</small>}
-  {yahooOut && <p>Yahoo Finance is rate limited right now. Try again later.</p>}
+  {(yahooOut || (realtimeOut && mode !== "YAHOO")) && <p>Yahoo Finance is rate limited right now. Try again later.</p>}
   {over && <p>Deselect rows to fit the available budget.</p>}
   {blocked && <p>Alpha Vantage is temporarily paused.</p>}
-  {job && <p role="status">{job.items.filter(i => i.status !== "PENDING").length}/{job.items.length} · {job.status === "DONE" ? "Done" : av ? `next request in ${Math.max(0, Math.ceil((Date.parse(job.nextRequestAt) - now) / 1000))} s` : "Fetching…"}</p>}
+  {job && <p role="status">{job.items.filter(i => i.status !== "PENDING").length}/{job.items.length} · {job.status === "DONE" ? "Done" : av && kind === "regular" ? `next request in ${Math.max(0, Math.ceil((Date.parse(job.nextRequestAt) - now) / 1000))} s` : "Fetching…"}</p>}
   {failures.map(i => <p key={i.instrumentId}>{rows.find(r => r.instrumentId === i.instrumentId)?.ticker}: {i.status.replaceAll("_", " ")}</p>)}
   {error && <p className="error" role="alert">{error}</p>}
-  {!jobId && backup.length > 0 && <BackupFetch portfolioId={id} date={date} primary={mode} ids={backup} names={Object.fromEntries(rows.map(r => [r.instrumentId, r.ticker]))} onItems={items => applyItems(items)} onDone={async () => { await callbacks.current.reload(true); callbacks.current.changed(); }} />}
+  {!jobId && backup.length > 0 && <BackupFetch portfolioId={id} date={date} primary={backupPrimary} ids={backup} names={Object.fromEntries(rows.map(r => [r.instrumentId, r.ticker]))} onItems={items => applyItems(items)} onDone={async () => { await callbacks.current.reload(true); callbacks.current.changed(); }} />}
  </div>;
 }
 

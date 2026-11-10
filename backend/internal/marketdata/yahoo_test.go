@@ -320,3 +320,49 @@ func TestMockYahooEnforcesTheCrumb(t *testing.T) {
 		t.Fatal(status)
 	}
 }
+
+func TestYahooLatestFromChartMeta(t *testing.T) {
+	q, err := ParseYahooLatest(yfixture(t, "chart-div-ulvr"))
+	if err != nil || q.Symbol != "ULVR.L" || q.Currency != "GBp" || q.Price != "4930.0000" || q.At.Unix() != 1793983038 {
+		t.Fatalf("%+v %v", q, err)
+	}
+	if _, err = ParseYahooLatest(yfixture(t, "chart-not-found")); !errors.Is(err, ErrYahooNotFound) {
+		t.Fatal(err)
+	}
+	if _, err = ParseYahooLatest([]byte(`{"chart":{"result":[{"meta":{"symbol":"X","currency":"EUR"}}]}}`)); !errors.Is(err, ErrYahooNotFound) {
+		t.Fatal("a meta block without price must be rejected:", err)
+	}
+
+	g := NewYahooGateway(&memStore{state: map[string]string{}}, MockYahoo{}, 100, 0, time.Hour)
+	fx, err := g.LiveFX(context.Background(), "u", "USD")
+	if err != nil || fx.Base != "USD" || fx.Quote != "EUR" || fx.Rate != 89560000 || fx.Source != FXSourceYahoo || fx.Date != "2026-11-10" {
+		t.Fatalf("%+v %v", fx, err)
+	}
+	// Pence use the pound pair; EUR needs no rate.
+	if fx, err = g.LiveFX(context.Background(), "u", "GBp"); err != nil || fx.Base != "GBP" || fx.Rate != 119490000 {
+		t.Fatalf("%+v %v", fx, err)
+	}
+	if fx, err = g.LiveFX(context.Background(), "u", "EUR"); fx != nil || err != nil {
+		t.Fatal(fx, err)
+	}
+	if _, err = g.LiveFX(context.Background(), "u", "CHF"); !errors.Is(err, ErrYahooNotFound) {
+		t.Fatal(err)
+	}
+}
+
+func TestForDateReconvertsLiveFXAtTheReferenceRate(t *testing.T) {
+	live := &FXRate{Date: "2026-11-10", Base: "USD", Quote: "EUR", Rate: 89560000, Source: FXSourceYahoo}
+	q := &Quote{ID: 5, OrigPrice: "100.0000", Currency: "USD", QuoteDate: "2026-11-10", QuoteTime: time.Unix(1794343993, 0)}
+	if err := ApplyFX(q, live); err != nil || q.Price != "89.5600" || q.FXSource != FXSourceYahoo {
+		t.Fatalf("%+v %v", q, err)
+	}
+	if same, _ := q.ForDate(live); same != q {
+		t.Fatal("the same live rate must reuse the quote")
+	}
+	// Same date and value, but an ECB publication: a new, unsaved quote.
+	ecb := &FXRate{Date: "2026-11-10", Base: "USD", Quote: "EUR", Rate: 89560000}
+	c, err := q.ForDate(ecb)
+	if err != nil || c == q || c.ID != 0 || c.FXSource != "" || !c.QuoteTime.Equal(q.QuoteTime) {
+		t.Fatalf("%+v %v", c, err)
+	}
+}

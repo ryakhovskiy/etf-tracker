@@ -20,6 +20,8 @@ type FXRate struct {
 	Base  string `json:"base"`
 	Quote string `json:"quote"`
 	Rate  int64  `json:"-"`
+	// Source is empty for ECB reference rates and FXSourceYahoo for a live rate.
+	Source string `json:"-"`
 }
 type FXProvider interface {
 	Currencies(context.Context) (map[string]bool, error)
@@ -375,7 +377,7 @@ func (f *Frankfurter) Rates(ctx context.Context, currency, from, to string) ([]F
 			logUpstream(f.Log, slog.LevelError, "FRANKFURTER", "rejected rates response: invalid rate", "currency", currency, "row", fmt.Sprintf("%+v", r), "error", err.Error())
 			return nil, err
 		}
-		out = append(out, FXRate{r.Date, r.Base, r.Quote, n})
+		out = append(out, FXRate{Date: r.Date, Base: r.Base, Quote: r.Quote, Rate: n})
 	}
 	dates := make([]string, len(out))
 	for i, r := range out {
@@ -420,7 +422,7 @@ func (MockFX) Rates(ctx context.Context, currency, from, to string) ([]FXRate, e
 	out := []FXRate{}
 	for ; !d.Before(start); d = d.AddDate(0, 0, -1) {
 		if d.Weekday() != time.Saturday && d.Weekday() != time.Sunday {
-			out = append(out, FXRate{d.Format("2006-01-02"), currency, "EUR", n})
+			out = append(out, FXRate{Date: d.Format("2006-01-02"), Base: currency, Quote: "EUR", Rate: n})
 		}
 	}
 	return out, nil

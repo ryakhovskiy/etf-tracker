@@ -188,3 +188,38 @@ test('fresh linked holdings with missing symbols offer a free refresh without cl
  assert.equal(button.disabled,false);
  assert.ok(screen.getByText('1 holding needs a price symbol'));
 });
+
+test('real-time value button submits a real-time holdings job and reports it', async t => {
+ let submitted, reloads = 0, polls = 0;
+ const rt = estimate(1, 10, { realtime: { requests: 3, remaining: 900, noSymbol: [] } });
+ t.mock.method(globalThis,'fetch',async (url,init) => {
+  if (url.includes('/estimate')) return json(rt);
+  if (url.endsWith('/price-fetch-jobs')) { submitted = JSON.parse(init.body); return json({ jobId: 'rt' }, 202); }
+  if (url.endsWith('/price-fetch-jobs/rt')) { polls++; return json({ status: polls > 1 ? 'DONE' : 'RUNNING', nextRequestAt: new Date(Date.now()+9000).toISOString(), items: [{ instrumentId: 1, status: polls > 1 ? 'OK' : 'PENDING' }, { instrumentId: 2, status: 'NO_SYMBOL' }] }); }
+  throw Error(`Unexpected call ${url}`);
+ });
+ mountFetch(p, async () => { reloads++; });
+ const button = await screen.findByRole('button', { name: 'Fetch real-time value (3 Yahoo requests)' });
+ assert.match(button.title, /delayed by about 15 minutes/);
+ assert.equal(screen.getByRole('button', { name: 'Fetch current value (uses 1 requests)' }).disabled, false);
+ fireEvent.click(button);
+ await waitFor(() => assert.deepEqual(submitted, { date: today(), instrumentIds: [1,2], priority: 'HOLDINGS_VALUE', realtime: true }));
+ await screen.findByText('1/2 · fetching real-time prices…');
+ assert.equal(screen.getByRole('button', { name: 'Fetching real-time prices…' }).disabled, true);
+ assert.equal(screen.getByRole('button', { name: 'Fetch current value (uses 1 requests)' }).disabled, true, 'one job at a time');
+ await screen.findByText('1 of 2 holdings updated with real-time prices', {}, { timeout: 4000 });
+ assert.equal(reloads, 1);
+ assert.equal(sessionStorage.getItem('current-value-fetch:1:kind'), null);
+});
+
+test('no real-time value button without a real-time estimate, or when all holdings are unlinked', async t => {
+ for (const [est, shown] of [[estimate(1, 10), false], [estimate(1, 10, { realtime: null }), false], [estimate(0, 10, { noSymbol: [1,2], realtime: { requests: 0, remaining: 900, noSymbol: [1,2] } }), true]]) {
+  const mock = t.mock.method(globalThis,'fetch',async () => json(est));
+  const view = mountFetch();
+  await screen.findByRole('button', { name: /current value|Up to date/ });
+  const button = screen.queryByRole('button', { name: /real-time/ });
+  assert.equal(!!button, shown);
+  if (button) assert.equal(button.disabled, true, 'nothing to fetch without symbols');
+  view.unmount(); mock.mock.restore();
+ }
+});

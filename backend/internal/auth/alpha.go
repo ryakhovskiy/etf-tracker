@@ -41,6 +41,9 @@ type fetchInput struct {
 	// Provider selects the price source: EULERPOOL or ALPHAVANTAGE (the backup).
 	// Empty means the configured primary.
 	Provider string `json:"provider,omitempty"`
+	// Realtime fetches the latest Yahoo price now, ignoring today's cached quote,
+	// and converts it at a live Yahoo FX rate. Today only; always Yahoo.
+	Realtime bool `json:"realtime,omitempty"`
 }
 
 func marketError(w http.ResponseWriter, err error) {
@@ -92,6 +95,14 @@ func (h *Handler) fetchRows(ctx context.Context, user string, id int64, in fetch
 	}
 	if (in.Priority != "" && in.Priority != "HOLDINGS_VALUE") || len(in.IDs) > 100 {
 		return nil, database.ErrInvalid
+	}
+	if in.Realtime {
+		if in.Provider != "" && in.Provider != marketdata.ProviderYahoo {
+			return nil, database.ErrInvalid
+		}
+		if in.Date != marketdata.BerlinDay(time.Now()) {
+			return nil, &database.ValidationError{Code: "VALIDATION_ERROR", Message: "Real-time prices are only available for today.", Fields: map[string]string{"date": "Real-time prices are only available for today."}}
+		}
 	}
 	byID := map[int64]database.SavingPlanItem{}
 	for _, r := range rows {
@@ -201,7 +212,15 @@ func (h *Handler) registerAlphaRoutes(mux *http.ServeMux) {
 			storeError(w, err)
 			return
 		}
-		httpapi.JSON(w, 200, map[string]any{"requestsNeeded": needed, "fresh": fresh, "noSymbol": noSymbol, "budget": b, "provider": h.jobProvider(in), "eulerpool": eulerpool, "yahoo": yahoo, "alphavantage": map[string]int{"requests": needed, "remaining": min(b.GlobalRemaining, b.UserRemaining)}})
+		// Real-time prices exist for today only; the field is absent otherwise.
+		var realtime *realtimeEstimate
+		if in.Date == marketdata.BerlinDay(time.Now()) {
+			if realtime, err = h.realtimeEstimate(r.Context(), rows); err != nil {
+				storeError(w, err)
+				return
+			}
+		}
+		httpapi.JSON(w, 200, map[string]any{"requestsNeeded": needed, "fresh": fresh, "noSymbol": noSymbol, "budget": b, "provider": h.jobProvider(in), "eulerpool": eulerpool, "yahoo": yahoo, "realtime": realtime, "alphavantage": map[string]int{"requests": needed, "remaining": min(b.GlobalRemaining, b.UserRemaining)}})
 	}))
 	mux.HandleFunc("POST /api/portfolios/{id}/price-fetch-jobs", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
 		id, ok := portfolioID(w, r)
@@ -247,10 +266,12 @@ func (h *Handler) registerAlphaRoutes(mux *http.ServeMux) {
 		h.jobs.entries[key] = job
 		h.jobs.mu.Unlock()
 		time.AfterFunc(time.Hour, func() { h.jobs.mu.Lock(); delete(h.jobs.entries, key); h.jobs.mu.Unlock() })
-		switch h.jobProvider(in) {
-		case marketdata.ProviderEulerpool:
+		switch provider := h.jobProvider(in); {
+		case in.Realtime:
+			go h.runYahooRealtime(job, rows, in.Date)
+		case provider == marketdata.ProviderEulerpool:
 			go h.runEulerpoolPrices(job, rows, in.Date)
-		case marketdata.ProviderYahoo:
+		case provider == marketdata.ProviderYahoo:
 			go h.runYahooPrices(job, rows, in.Date)
 		default:
 			go h.runPrices(job, rows, in.Date)

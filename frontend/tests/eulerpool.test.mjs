@@ -16,6 +16,7 @@ const { Transactions } = await import('../components/transactions.tsx');
 const { TransactionDraftProvider } = await import('../components/transaction-draft.tsx');
 const { AppRouterContext } = await import('next/dist/shared/lib/app-router-context.shared-runtime.js');
 const { formatAum, formatPercent, formatDate, highlightParts } = await import('../lib/etf.ts');
+const { today } = await import('../lib/transactions.ts');
 const axe = (await import('axe-core')).default;
 afterEach(() => { cleanup(); sessionStorage.clear(); });
 
@@ -396,4 +397,41 @@ test('search (Yahoo): section title, exchange and sector, attribution, no Alpha 
   fireEvent.click(screen.getByRole('button', { name: 'Search' }));
   await screen.findByText('Yahoo Finance is rate limited, showing Eulerpool results');
   assert.ok(screen.getByText('Online · Eulerpool') !== null);
+});
+
+test('prices: the real-time button fetches Yahoo now with live FX, whatever the primary, and only for today', async t => {
+  let posted = null, realtime = { requests: 2, remaining: 900, noSymbol: [] };
+  mockFetch(t, (url, init) => {
+    if (url.endsWith('/saving-plan')) return json([{ ...stock, avSymbol: undefined }]);
+    if (url.includes('/market-data/budget')) return json(budget());
+    if (url.includes('/price-fetch/estimate')) return json(estimateOf('EULERPOOL', { eulerpool: { requests: 1, remaining: 400 }, realtime: url.includes(`date=${today()}`) ? realtime : null }));
+    if (url.endsWith('/price-fetch-jobs') && init.method === 'POST') { posted = JSON.parse(init.body); return json({ jobId: 'rt' }, 202); }
+    if (url.includes('/price-fetch-jobs/rt')) return json(jobDone([{ instrumentId: 1, status: 'OK', priceEur: '313.2000', origPrice: '349.7150', currency: 'USD', fxRate: '0.89560000', fxRateDate: '2026-11-10', fxSource: 'YAHOO', quoteDate: '2026-11-10', quoteTime: '2026-11-10T20:52:55Z', provider: 'YAHOO', quoteId: 11 }]));
+  });
+  mountTx();
+  const button = await screen.findByRole('button', { name: 'Fetch real-time prices (2 Yahoo requests)' });
+  assert.match(button.title, /live Yahoo FX rate/);
+  assert.match(button.title, /delayed by about 15 minutes/);
+  fireEvent.click(button);
+  await waitFor(() => assert.equal(screen.getByLabelText('AAPL price').value, '313,2000'));
+  assert.deepEqual(posted, { date: today(), instrumentIds: [1], realtime: true });
+  assert.ok(screen.getByText('Fetched 10.11.2026 21:52 · Yahoo Finance real-time · 1 USD = 0,8956 € (Yahoo live)') !== null);
+  assert.equal(sessionStorage.getItem('price-fetch:1:kind'), null, 'the finished run forgets its kind');
+
+  // No real-time price for a past date.
+  fireEvent.change(screen.getByLabelText('Transaction date'), { target: { value: '2025-03-15' } });
+  await screen.findByRole('button', { name: 'Fetch prices (1 Eulerpool request)' });
+  await waitFor(() => assert.ok(screen.queryByRole('button', { name: /real-time/ }) === null));
+});
+
+test('prices: the real-time button is disabled while Yahoo is rate limited', async t => {
+  mockFetch(t, url => {
+    if (url.endsWith('/saving-plan')) return json([{ ...stock, yahooSymbol: 'AAPL', avSymbol: undefined }]);
+    if (url.includes('/market-data/budget')) return json({ ...budget(), primary: 'YAHOO' });
+    if (url.includes('/price-fetch/estimate')) return json(estimateOf('YAHOO', { yahoo: { requests: 0, remaining: 0, noSymbol: [] }, realtime: { requests: 1, remaining: 0, noSymbol: [] } }));
+  });
+  mountTx();
+  const button = await screen.findByRole('button', { name: 'Fetch real-time prices (1 Yahoo request)' });
+  assert.equal(button.disabled, true);
+  assert.equal(screen.getByRole('button', { name: 'Fetch prices (0 Yahoo requests)' }).disabled, false, 'cached prices stay available');
 });

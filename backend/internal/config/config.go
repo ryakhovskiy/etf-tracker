@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"strconv"
@@ -50,16 +51,31 @@ type Config struct {
 	SecureSessionCookie bool
 }
 
+func loadEnv() error {
+	mode := os.Getenv("APP_ENV")
+	if mode == "" {
+		mode = "development"
+	}
+
+	files := []string{".env." + mode + ".local"}
+	if mode != "test" {
+		files = append(files, ".env.local")
+	}
+	files = append(files, ".env."+mode, ".env")
+
+	for _, f := range files {
+		if err := godotenv.Load(f); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("failed to load %s: %v", f, err)
+		}
+	}
+	return nil
+}
+
 func Load() (Config, error) {
 
-	// Environment variables are sufficient in deployments; a local file is optional.
-	if err := godotenv.Load(".env"); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return Config{}, err
-		}
-		if err := godotenv.Load("../.env"); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return Config{}, err
-		}
+	err := loadEnv()
+	if err != nil {
+		return Config{}, err
 	}
 
 	secureCookie, err := boolValue("SECURE_SESSION_COOKIE", false)
@@ -186,6 +202,8 @@ func Load() (Config, error) {
 	if len(cfg.JWTSecret) < 16 {
 		return Config{}, errors.New("JWT_SECRET must be at least 16 characters")
 	}
+
+	fmt.Println("cfg.Environment:", cfg.Environment)
 
 	if cfg.IsProduction() {
 		if os.Getenv("JWT_SECRET") == "" || string(cfg.JWTSecret) == developmentJWTSecret || string(cfg.JWTSecret) == "replace-with-a-long-random-value" {

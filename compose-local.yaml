@@ -1,0 +1,44 @@
+name: holdings
+
+services:
+  backend:
+    image: holdings-backend:latest
+    build:
+      context: ./backend
+    env_file: .env
+    environment:
+      APP_ENV: development
+      SECURE_SESSION_COOKIE: "true"
+      PORT: "9000"
+      DATABASE_PATH: /app/data/holdings.db
+    volumes:
+      - holdings-data:/app/data
+    expose:
+      - "9000"
+    networks:
+      - holdings
+    restart: unless-stopped
+    init: true
+
+  frontend:
+    image: holdings-frontend:latest
+    build:
+      context: ./frontend
+    ports:
+      # Loopback only: the host's cloudflared daemon is the sole public entry point.
+      - "127.0.0.1:9443:9443"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - holdings
+    restart: unless-stopped
+    init: true
+
+networks:
+  holdings:
+    name: holdings-network
+    driver: bridge
+
+volumes:
+  holdings-data:

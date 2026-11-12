@@ -8,14 +8,17 @@ for (const key of ['window','document','HTMLElement','SVGElement','Node','Mutati
 globalThis.self = dom.window;
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
-const { render, screen, fireEvent, waitFor, cleanup } = await import('@testing-library/react');
+const { render, screen, fireEvent, waitFor, cleanup, within, act } = await import('@testing-library/react');
 const { PerformanceAmount, PerformanceFigures } = await import('../components/performance-figures.tsx');
 const { CurrentValueFetch } = await import('../components/current-value-fetch.tsx');
-const { HoldingsChart, HoldingsTooltip } = await import('../components/holdings-chart.tsx');
+const { HoldingsChart, HoldingsPlot, HoldingsTooltip } = await import('../components/holdings-chart.tsx');
+
+const plotFor = performance => HoldingsPlot({ performance, domain: [Date.parse(`${performance.dates[0]}T00:00:00Z`), Date.parse(`${performance.current?.chartPoint ? performance.current.asOfTo : performance.dates.at(-1)}T00:00:00Z`)] });
 const { Dashboard } = await import('../components/dashboard.tsx');
+const { PerformanceOverview } = await import('../components/performance-overview.tsx');
 const { performanceDisplay, axisEuro, quoteDates } = await import('../lib/performance.ts');
 const { chartData, today } = await import('../lib/transactions.ts');
-afterEach(() => { cleanup(); sessionStorage.clear(); });
+afterEach(() => { cleanup(); sessionStorage.clear(); window.localStorage.clear(); });
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status });
 const p = {
  dates: ['2026-10-01','2026-11-01'], series: [{ instrumentId: 1, name: 'Apple', values: ['100.00','110.00'] }, { instrumentId: 2, name: 'SAP', values: ['100.00','100.00'] }],
@@ -27,6 +30,114 @@ const current = {
 };
 const estimate = (needed = 2, remaining = 10, extra = {}) => ({ requestsNeeded: needed, fresh: [], noSymbol: [], budget: { userRemaining: remaining, globalRemaining: 25, nextSlotAt: '2026-11-06T13:32:00Z' }, ...extra });
 const mountFetch = (performance = p, reload = async () => {}) => render(React.createElement(CurrentValueFetch, { id: '1', performance, reload }));
+
+const fullSelection = {...p,current};
+const appleSelection = {...p,series:[p.series[0]],invested:'100.00',totals:['100.00','110.00'],atPurchase:{value:'110.00',performance:'10.00',performancePct:'10.00'},current:{...current,value:'120.00',performance:'20.00',performancePct:'20.00',partial:false,items:[current.items[0]],asOfFrom:'2026-11-04'}};
+const sapSelection = {...p,series:[p.series[1]],invested:'100.00',totals:['100.00','100.00'],atPurchase:{value:'100.00',performance:'0.00',performancePct:'0.00'},current:null};
+const emptySelection = {dates:[],series:[],totals:[],invested:'0.00',atPurchase:{value:'0.00',performance:'0.00',performancePct:null},current:null};
+function selectionAPI(t,override=()=>undefined){
+ const calls=[];
+ t.mock.method(globalThis,'fetch',async(url,init)=>{
+  calls.push({url,init});
+  const overridden=override(url,init);
+  if(overridden!==undefined)return overridden;
+  if(url.includes('/performance?instrumentIds='))return json({'1':appleSelection,'2':sapSelection,'':emptySelection}[new URL(url,'http://localhost').searchParams.get('instrumentIds')]);
+  if(url.endsWith('/performance'))return json(fullSelection);
+  if(url.includes('/transactions?'))return json({lines:[],total:0,page:1,groups:{}});
+  if(url.includes('/estimate'))return json(estimate(0,10,{fresh:[1],noSymbol:[2]}));
+  if(url.endsWith('/portfolios/1'))return json({itemCount:2});
+  throw Error(`Unexpected request ${url}`);
+ });
+ return calls;
+}
+const figureValue=label=>within(screen.getByLabelText('Portfolio figures')).getByText(label,{exact:true}).parentElement.querySelector('strong').textContent;
+
+test('legend toggles remove positions and recalculate all five figures, quote metadata and chart areas',async t=>{
+ t.mock.method(HTMLElement.prototype,'getBoundingClientRect',()=>({x:0,y:0,left:0,top:0,right:900,bottom:340,width:900,height:340}));
+ const calls=selectionAPI(t);
+ const view=render(React.createElement(Dashboard,{id:'1'}));
+ const legend=await screen.findByRole('group',{name:'Chart positions'});
+ await waitFor(()=>assert.equal(view.container.querySelectorAll('path.recharts-area-area').length,4));
+ assert.equal(figureValue('Total invested'),'200,00 €');
+ fireEvent.change(screen.getByRole('combobox',{name:'Chart time period'}),{target:{value:'6'}});
+ const range=screen.getByLabelText('Visible chart period').textContent;
+ const priceEstimates=calls.filter(call=>call.url.includes('/estimate')).length;
+ fireEvent.click(within(legend).getByRole('button',{name:'SAP',exact:true}));
+ await waitFor(()=>assert.equal(figureValue('Total invested'),'100,00 €'));
+ assert.equal(figureValue('Holdings value at purchase prices'),'110,00 €');
+ assert.equal(figureValue('Performance at purchase prices'),'▲ +10,00 € (+10,00 %)');
+ assert.equal(figureValue('Current value'),'120,00 €');
+ assert.equal(figureValue('Current performance'),'▲ +20,00 € (+20,00 %)');
+ assert.equal(within(legend).getByRole('button',{name:'SAP',exact:true}).getAttribute('aria-pressed'),'false');
+ assert.equal(within(legend).getByRole('button',{name:'Apple',exact:true}).getAttribute('aria-pressed'),'true');
+ assert.equal(within(screen.getByLabelText('Portfolio figures')).queryAllByText('partial',{exact:true}).length,0);
+ await waitFor(()=>assert.equal(view.container.querySelectorAll('path.recharts-area-area').length,2));
+ assert.equal(screen.getByRole('combobox',{name:'Chart time period'}).value,'6');
+ assert.equal(screen.getByLabelText('Visible chart period').textContent,range);
+ assert.equal(calls.filter(call=>call.url.includes('/estimate')).length,priceEstimates);
+ assert.ok(calls.some(call=>call.url.includes('/performance?instrumentIds=1')));
+ fireEvent.click(within(legend).getByRole('button',{name:'Apple',exact:true}));
+ await screen.findByText('No positions selected. Use the legend to show a position.');
+ for(const label of ['Total invested','Holdings value at purchase prices','Current value'])assert.equal(figureValue(label),'0,00 €');
+ for(const label of ['Performance at purchase prices','Current performance'])assert.equal(figureValue(label),'0,00 € (–)');
+ assert.equal(view.container.querySelectorAll('path.recharts-area-area').length,0);
+ fireEvent.click(within(legend).getByRole('button',{name:'SAP',exact:true}));
+ await waitFor(()=>assert.equal(figureValue('Total invested'),'100,00 €'));
+ assert.equal(figureValue('Current value'),'Unavailable');
+ assert.equal(figureValue('Current performance'),'Unavailable');
+ fireEvent.click(screen.getByRole('button',{name:'Show all'}));
+ assert.equal(figureValue('Total invested'),'200,00 €');
+ assert.equal(figureValue('Holdings value at purchase prices'),'210,00 €');
+ assert.equal(figureValue('Current value'),'220,00 €');
+ assert.equal(figureValue('Current performance'),'▲ +20,00 € (+10,00 %)');
+ assert.equal(within(legend).getByRole('button',{name:'Apple',exact:true}).getAttribute('aria-pressed'),'true');
+ assert.equal(calls.some(call=>call.init.method==='POST'||call.init.method==='DELETE'),false);
+});
+
+test('rapid toggles ignore stale responses and preserve the most recent selection',async t=>{
+ let finishApple,finishEmpty;
+ selectionAPI(t,url=>{
+  if(url.endsWith('/performance?instrumentIds=1'))return new Promise(resolve=>{finishApple=()=>resolve(json(appleSelection));});
+  if(url.endsWith('/performance?instrumentIds='))return new Promise(resolve=>{finishEmpty=()=>resolve(json(emptySelection));});
+ });
+ render(React.createElement(PerformanceOverview,{id:'1',performance:fullSelection,reload:async()=>{}}));
+ const legend=screen.getByRole('group',{name:'Chart positions'});
+ fireEvent.click(within(legend).getByRole('button',{name:'SAP',exact:true}));
+ await waitFor(()=>assert.equal(typeof finishApple,'function'));
+ fireEvent.click(within(legend).getByRole('button',{name:'Apple',exact:true}));
+ await waitFor(()=>assert.equal(typeof finishEmpty,'function'));
+ await act(async()=>finishEmpty());
+ assert.equal(figureValue('Total invested'),'0,00 €');
+ await act(async()=>finishApple());
+ assert.equal(figureValue('Total invested'),'0,00 €');
+ assert.equal(within(legend).getByRole('button',{name:'Apple',exact:true}).getAttribute('aria-pressed'),'false');
+ assert.equal(within(legend).getByRole('button',{name:'SAP',exact:true}).getAttribute('aria-pressed'),'false');
+});
+
+test('selection survives a quote refresh and failed requests restore the displayed selection with an error',async t=>{
+ let refreshed=false,failEmpty=false;
+ selectionAPI(t,url=>{
+  if(url.endsWith('/performance?instrumentIds=1')&&refreshed)return json({...appleSelection,current:{...appleSelection.current,value:'130.00',performance:'30.00',performancePct:'30.00'}});
+  if(url.endsWith('/performance?instrumentIds=')&&failEmpty)return json({error:{code:'INTERNAL_ERROR',message:'Try again.'}},500);
+ });
+ const view=render(React.createElement(PerformanceOverview,{id:'1',performance:fullSelection,reload:async()=>{}}));
+ const legend=screen.getByRole('group',{name:'Chart positions'});
+ fireEvent.click(within(legend).getByRole('button',{name:'SAP',exact:true}));
+ await waitFor(()=>assert.equal(figureValue('Current value'),'120,00 €'));
+ refreshed=true;
+ view.rerender(React.createElement(PerformanceOverview,{id:'1',performance:{...fullSelection,current:{...current,value:'230.00'}},reload:async()=>{}}));
+ await waitFor(()=>assert.equal(figureValue('Current value'),'130,00 €'));
+ assert.equal(within(legend).getByRole('button',{name:'SAP',exact:true}).getAttribute('aria-pressed'),'false');
+ failEmpty=true;
+ fireEvent.click(within(legend).getByRole('button',{name:'Apple',exact:true}));
+ const error=await screen.findByRole('alert');
+ assert.match(error.textContent,/Could not update the chart selection/);
+ await waitFor(()=>assert.equal(within(legend).getByRole('button',{name:'Apple',exact:true}).getAttribute('aria-pressed'),'true'));
+ assert.equal(figureValue('Current value'),'130,00 €');
+ fireEvent.click(screen.getByRole('button',{name:'Show all'}));
+ assert.ok(screen.queryByRole('alert')===null);
+ assert.equal(figureValue('Current value'),'230,00 €');
+});
 
 test('performance signs, rounded color thresholds, arrows and zero-investment percentage', () => {
  const cases = [
@@ -123,8 +234,7 @@ test('current chart point uses a dashed segment and marker with per-instrument t
  const points = chartData(performance);
  assert.equal(points.length,3);assert.equal(points[2].date,Date.parse('2026-11-04T00:00:00Z'));
  assert.equal(points[2].i1,null);assert.equal(points[2].c1,120);assert.equal(points[1].c1,110);assert.equal(points[0].c1,null);
- const tree = HoldingsChart({performance});
- const chart = tree.props.children[1].props.children;
+ const chart = plotFor(performance);
  const {container} = render(React.cloneElement(chart,{width:900,height:340}));
  await waitFor(()=>assert.equal(container.querySelectorAll('path.recharts-area-curve[stroke-dasharray="6 4"]').length,2));
  assert.equal(container.querySelectorAll('.current-value-dot').length,2);
@@ -150,7 +260,7 @@ test('stale quote hint replaces chart extension when chartPoint is false', () =>
 for (const max of [40000,9999999]) test(`Y axis reserves measured space for ${max} EUR without decimals`, async t => {
  t.mock.method(SVGElement.prototype,'getBoundingClientRect',function(){return {x:0,y:0,width:this.textContent.length*8,height:16,top:0,left:0,bottom:16,right:this.textContent.length*8};});
  const performance = {...p,series:[{instrumentId:1,name:'Apple',values:['0',String(max)]}],totals:['0',String(max)]};
- const chart = HoldingsChart({performance}).props.children[1].props.children;
+ const chart = plotFor(performance);
  const children = React.Children.toArray(chart.props.children).map(child => child?.props?.width==='auto' ? React.cloneElement(child,{ticks:[0,max],domain:[0,max]}) : child);
  const {container} = render(React.cloneElement(chart,{width:900,height:340},children));
  const label = axisEuro(max);

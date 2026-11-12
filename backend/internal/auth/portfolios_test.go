@@ -120,7 +120,7 @@ func TestSignupCapCallback(t *testing.T) {
 func TestTransactionAPI(t *testing.T) {
 	h, handler := auditHandler(t, ":memory:")
 	cookies := auditLogin(t, h, handler)
-	for _, tc := range []struct{ method, path string }{{"GET", "/saving-plan"}, {"GET", "/performance"}, {"GET", "/transactions"}, {"POST", "/transactions"}, {"DELETE", "/transactions/1"}} {
+	for _, tc := range []struct{ method, path string }{{"GET", "/saving-plan"}, {"GET", "/performance"}, {"GET", "/performance?instrumentIds=1"}, {"GET", "/performance?instrumentIds="}, {"GET", "/transactions"}, {"POST", "/transactions"}, {"DELETE", "/transactions/1"}} {
 		w := featureRequest(handler, tc.method, "/api/portfolios/1"+tc.path, "")
 		if w.Code != 401 {
 			t.Fatalf("%s: %d", tc.path, w.Code)
@@ -145,6 +145,23 @@ func TestTransactionAPI(t *testing.T) {
 		ID int64 `json:"id"`
 	}
 	json.Unmarshal(w.Body.Bytes(), &tx)
+	for _, query := range []string{"?instrumentIds=1", "?instrumentIds=1,1", "?instrumentIds=", "?instrumentIds=99"} {
+		w := request("GET", path+"/performance"+query, "", 200)
+		var perf database.Performance
+		if err := json.Unmarshal(w.Body.Bytes(), &perf); err != nil {
+			t.Fatal(err)
+		}
+		want := "0.00"
+		if strings.Contains(query, "=1") {
+			want = "20.00"
+		}
+		if perf.Invested != want {
+			t.Fatal(query, perf)
+		}
+	}
+	for _, query := range []string{"?instrumentIds=0", "?instrumentIds=-1", "?instrumentIds=abc", "?instrumentIds=1,", "?instrumentIds=1&instrumentIds=2", "?instrumentIds=" + strings.Repeat("1,", 100) + "1"} {
+		request("GET", path+"/performance"+query, "", 400)
+	}
 	w = request("POST", path+"/transactions", body, 409)
 	if !bytes.Contains(w.Body.Bytes(), []byte("DUPLICATE_TRANSACTION")) {
 		t.Fatal(w.Body.String())
@@ -156,7 +173,7 @@ func TestTransactionAPI(t *testing.T) {
 		request("GET", path+"/transactions?pageSize="+size, "", 400)
 	}
 	request("GET", path+"/transactions?pageSize=25", "", 200)
-	for _, endpoint := range []string{"saving-plan", "transactions", "performance"} {
+	for _, endpoint := range []string{"saving-plan", "transactions", "performance", "performance?instrumentIds=1", "performance?instrumentIds="} {
 		request("GET", path+"/"+endpoint, "", 200)
 	}
 	request("DELETE", path+"/items/1", "", 409)

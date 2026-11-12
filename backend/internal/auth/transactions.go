@@ -5,6 +5,7 @@ import (
 	"holdings/backend/internal/httpapi"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 func (h *Handler) registerTransactionRoutes(mux *http.ServeMux) {
@@ -20,7 +21,25 @@ func (h *Handler) registerTransactionRoutes(mux *http.ServeMux) {
 			case "saving-plan":
 				value, err = h.store.SavingPlan(r.Context(), user, id)
 			case "performance":
-				value, err = h.store.Performance(r.Context(), user, id)
+				var instrumentIDs []int64
+				if values, present := r.URL.Query()["instrumentIds"]; present {
+					instrumentIDs = []int64{}
+					if len(values) != 1 || len(strings.Split(values[0], ",")) > 100 {
+						apiError(w, 400, "INVALID_ITEMS", "Choose up to 100 instrument IDs.")
+						return
+					}
+					if values[0] != "" {
+						for _, raw := range strings.Split(values[0], ",") {
+							instrumentID, parseErr := strconv.ParseInt(raw, 10, 64)
+							if parseErr != nil || instrumentID < 1 {
+								apiError(w, 400, "INVALID_ITEMS", "Instrument IDs must be positive integers.")
+								return
+							}
+							instrumentIDs = append(instrumentIDs, instrumentID)
+						}
+					}
+				}
+				value, err = h.store.PerformanceForInstruments(r.Context(), user, id, instrumentIDs)
 			case "transactions":
 				page := 1
 				if raw := r.URL.Query().Get("page"); raw != "" {

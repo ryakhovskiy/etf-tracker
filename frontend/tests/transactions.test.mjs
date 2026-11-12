@@ -10,8 +10,11 @@ globalThis.ResizeObserver=class{observe(){} unobserve(){} disconnect(){}};
 const {render,screen,fireEvent,waitFor,cleanup}=await import('@testing-library/react');
 const {Transactions}=await import('../components/transactions.tsx');
 const {TransactionDraftProvider}=await import('../components/transaction-draft.tsx');
-const {Dashboard,HoldingsChart}=await import('../components/dashboard.tsx');
+const {Dashboard}=await import('../components/dashboard.tsx');
+const {HoldingsPlot}=await import('../components/holdings-chart.tsx');
 const {TransactionPerformance,TransactionPerformanceTotal}=await import('../components/transaction-performance.tsx');
+
+const plotFor = performance => HoldingsPlot({ performance, domain: [Date.parse(`${performance.dates[0]}T00:00:00Z`), Date.parse(`${performance.current?.chartPoint ? performance.current.asOfTo : performance.dates.at(-1)}T00:00:00Z`)] });
 const {AppRouterContext}=await import('next/dist/shared/lib/app-router-context.shared-runtime.js');
 const {editRow,planRow,total,euro,chartData}=await import('../lib/transactions.ts');
 afterEach(()=>{cleanup();sessionStorage.clear();});
@@ -46,7 +49,7 @@ const performance={dates:['2025-01-01','2025-01-02','2025-03-01'],series:[{instr
 test('chart uses timestamps with unequal gaps and declares stacked time axes',()=>{
  const points=chartData(performance);assert.equal(points[1].date-points[0].date,86400000);assert.equal(points[2].date-points[1].date,58*86400000);
  // Inspect Recharts component props without depending on browser layout internals.
- const tree=HoldingsChart({performance});const container=tree.props.children[1];const chart=container.props.children;const children=chart.props.children;
+ const chart=plotFor(performance);const children=chart.props.children;
  const axis=children.find(c=>c?.props?.dataKey==='date');assert.equal(axis.props.type,'number');assert.equal(axis.props.scale,'time');
  const areas=children.at(-1);assert.equal(areas[0].props.stackId,'holdings');
 });
@@ -59,7 +62,7 @@ test('dashboard paginates 50 lines and deletion reloads totals and chart',async 
 });
 
 test('rendered chart spaces uneven purchase dates by elapsed time',async()=>{
- const tree=HoldingsChart({performance});const chart=tree.props.children[1].props.children;
+ const chart=plotFor(performance);
  const children=chart.props.children.map(child=>Array.isArray(child)?child.map(area=>React.cloneElement(area,{dot:true})):child);
  const {container}=render(React.cloneElement(chart,{width:900,height:340},children));
  await waitFor(()=>assert.equal(container.querySelectorAll('.recharts-area-dot').length,3));

@@ -4,11 +4,82 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"reflect"
 	"testing"
 	"time"
 
 	"holdings/backend/internal/marketdata"
 )
+
+func TestPerformanceInstrumentSelectionUsesCompleteHistoryAndExactTotals(t *testing.T) {
+	s := featureStore(t)
+	ctx := context.Background()
+	p, err := s.SavePortfolio(ctx, "alice", 0, "Selection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AddItems(ctx, "alice", p.ID, []int64{1, 2, 3}); err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range []TransactionInput{
+		{Date: "2025-01-01", Lines: []TransactionLine{
+			{InstrumentID: 1, Amount: "0.50", Price: "1", Quantity: "0.5"},
+			{InstrumentID: 2, Amount: "0.50", Price: "1", Quantity: "0.5"},
+			{InstrumentID: 3, Amount: "20", Price: "10", Quantity: "2"},
+		}},
+		{Date: "2025-01-02", Lines: []TransactionLine{{InstrumentID: 1, Amount: "1", Price: "2", Quantity: "0.5"}}},
+	} {
+		if _, err := s.CreateTransaction(ctx, "alice", p.ID, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at := time.Date(2025, 1, 6, 12, 0, 0, 0, time.UTC)
+	for i, q := range []marketdata.Quote{
+		{InstrumentID: 1, Price: "2.0050", OrigPrice: "2.0050", Currency: "EUR", QuoteDate: "2025-01-03"},
+		{InstrumentID: 2, Price: "1.0100", OrigPrice: "1.0100", Currency: "EUR", QuoteDate: "2025-01-04"},
+	} {
+		q.FetchedAt = at.Add(time.Duration(i) * time.Hour)
+		if err := s.SaveQuote(ctx, &q, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	full, err := s.Performance(ctx, "alice", p.ID)
+	if err != nil || full.Invested != "22.00" || full.Current == nil || full.Current.Value != "22.51" {
+		t.Fatal(full, err)
+	}
+	selected, err := s.PerformanceForInstruments(ctx, "alice", p.ID, []int64{1, 2, 2})
+	if err != nil || selected.Invested != "2.00" || selected.AtPurchase.Value != "2.50" || selected.AtPurchase.Performance != "0.50" || *selected.AtPurchase.PerformancePct != "25.00" || len(selected.Series) != 2 {
+		t.Fatal(selected, err)
+	}
+	c := selected.Current
+	// Sum unrounded instrument values: 2.005 + 0.505 = 2.51, not 2.01 + 0.51.
+	if c == nil || c.Value != "2.51" || c.Performance != "0.51" || *c.PerformancePct != "25.50" || c.Partial || !c.ChartPoint || c.AsOfFrom != "2025-01-03" || c.AsOfTo != "2025-01-04" {
+		t.Fatal(c)
+	}
+	partial, err := s.PerformanceForInstruments(ctx, "alice", p.ID, []int64{1, 3})
+	if err != nil || partial.Invested != "21.50" || partial.Current == nil || !partial.Current.Partial || partial.Current.Value != "22.01" || partial.Current.AsOfFrom != "2025-01-03" || partial.Current.AsOfTo != "2025-01-03" || !partial.Current.LastFetchedAt.Equal(at) {
+		t.Fatal(partial, err)
+	}
+	noQuote, err := s.PerformanceForInstruments(ctx, "alice", p.ID, []int64{3})
+	if err != nil || noQuote.Current != nil || noQuote.Invested != "20.00" || noQuote.AtPurchase.Value != "20.00" {
+		t.Fatal(noQuote, err)
+	}
+	for _, ids := range [][]int64{{}, {99}} {
+		empty, err := s.PerformanceForInstruments(ctx, "alice", p.ID, ids)
+		if err != nil || empty.Invested != "0.00" || empty.AtPurchase.Value != "0.00" || empty.AtPurchase.Performance != "0.00" || empty.AtPurchase.PerformancePct != nil || empty.Current != nil || len(empty.Series) != 0 {
+			t.Fatal(empty, err)
+		}
+	}
+	again, err := s.PerformanceForInstruments(ctx, "alice", p.ID, nil)
+	if err != nil || !reflect.DeepEqual(full, again) {
+		t.Fatal("filtering must not change saved portfolio values", again, err)
+	}
+	for _, ids := range [][]int64{nil, {}, {1}} {
+		if _, err := s.PerformanceForInstruments(ctx, "bob", p.ID, ids); !errors.Is(err, ErrNotFound) {
+			t.Fatal("empty and nonempty selections must remain user-scoped", ids, err)
+		}
+	}
+}
 
 func TestValuationSignsZeroAndHalfUp(t *testing.T) {
 	for _, tc := range []struct{ value, invested, gain, pct string }{

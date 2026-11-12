@@ -146,10 +146,29 @@ type Performance struct {
 }
 
 func (s *Store) Performance(ctx context.Context, user string, id int64) (Performance, error) {
+	return s.PerformanceForInstruments(ctx, user, id, nil)
+}
+
+// A nil selection means the entire portfolio; an empty selection means no positions.
+// Filter the user-scoped transaction history before any valuation or rounding.
+func (s *Store) PerformanceForInstruments(ctx context.Context, user string, id int64, instrumentIDs []int64) (Performance, error) {
 	lines, err := s.transactionRows(ctx, user, id)
 	result := Performance{Dates: []string{}, Series: []PerformanceSeries{}, Totals: []string{}, Invested: "0.00"}
 	if err != nil {
 		return result, err
+	}
+	if instrumentIDs != nil {
+		selected := make(map[int64]bool, len(instrumentIDs))
+		for _, instrumentID := range instrumentIDs {
+			selected[instrumentID] = true
+		}
+		filtered := make([]TransactionRow, 0, len(lines))
+		for _, line := range lines {
+			if selected[line.InstrumentID] {
+				filtered = append(filtered, line)
+			}
+		}
+		lines = filtered
 	}
 	result = purchasePerformance(lines)
 	result.Current, err = s.currentValuation(ctx, lines, result)

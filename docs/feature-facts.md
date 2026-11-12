@@ -186,6 +186,25 @@ Item removal is API-only and rejects items with transactions (`ITEM_HAS_TRANSACT
 - Stacked time-scale chart uses stable instrument colors and exact tooltip values;
   a later quote date adds a dashed current-value extension, marker and source-aware
   tooltip. Older quotes show a hint. Y-axis labels omit cents and size automatically.
+- The chart defaults to 12 months and remembers the last explicitly selected
+  preset in browser local storage across visits and portfolios. Custom zoom/pan
+  ranges never overwrite that preference; reopening restores the last preset,
+  or 12 months if none was selected. Max runs from the first transaction through
+  today. The top-right selector offers the last 3, 6, 12, 18, 24, 48, or 60 calendar
+  months. Users can zoom
+  with +/− or Ctrl/⌘ + scroll, and pan by dragging, the left/right buttons, or arrow
+  keys; Home/Reset returns to Max. Navigation stays inside the portfolio history,
+  with a minimum one-day window. Prior holdings remain in the plot when zooming;
+  the last stored value continues through today with its original tooltip date.
+- Each position's legend button toggles it in the chart and all five summary
+  figures. The API accepts optional `instrumentIds=1,2` on the performance route
+  and recalculates selected positions from the complete user-scoped transaction
+  history and stored quotes before rounding; an empty list selects no positions.
+  Chart periods stay in place when toggling. Show all restores the full portfolio;
+  hiding every position shows zero totals and an empty chart. Selected positions
+  without usable quotes show unavailable current figures. This view selection
+  persists through tab switches and data refreshes; market-price fetches still
+  cover the full portfolio.
 
 ## Market data: current behavior
 

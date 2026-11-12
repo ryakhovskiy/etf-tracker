@@ -136,6 +136,14 @@ Item removal is API-only and rejects items with transactions (`ITEM_HAS_TRANSACT
 - History groups lines by transaction, newest first, default 50 lines/page with
   configurable page size/columns. Confirmed transaction deletion refreshes figures
   and chart. Editing transactions uses delete and re-enter.
+- The Dashboard history's Performance column shows the newest stored EUR quote
+  on or after each purchase, its date, the per-unit EUR/percentage difference
+  from the buy price, and the difference multiplied by the purchased quantity.
+  Transaction headers sum these quantity-weighted differences across all lines,
+  including lines on other pages; percentages use the priced lines' purchase
+  price × quantity as the base. Unpriced lines stay unavailable and make totals
+  partial. Gains are green, losses red, and zero neutral. No provider fetch is
+  triggered by displaying performance.
 
 ### CSV import
 

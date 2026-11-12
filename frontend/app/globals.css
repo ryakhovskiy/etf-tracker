@@ -92,6 +92,11 @@ button{cursor:pointer;border:1px solid #d8ded9;border-radius:8px;background:#fff
 .performance-amount{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
 .performance-value{white-space:nowrap}.performance-percent{font-size:16px;white-space:nowrap}
 .performance-positive{color:var(--positive)}.performance-negative{color:var(--negative)}.performance-neutral{color:var(--text)}
+.transaction-performance{display:flex;flex-direction:column;gap:5px;min-width:240px;padding:10px 12px;border-radius:8px;font-variant-numeric:tabular-nums}
+.transaction-performance.performance-positive{background:color-mix(in srgb,var(--positive) 8%,transparent)}
+.transaction-performance.performance-negative{background:color-mix(in srgb,var(--negative) 8%,transparent)}
+.transaction-performance small{font-size:11px}
+.transaction-performance-total{display:inline-block;margin:6px 16px;font-variant-numeric:tabular-nums;white-space:normal}
 .current-fetch{display:flex;flex-direction:column;gap:12px;min-width:0;padding:18px 20px;border:1px solid var(--line);border-radius:10px;background:var(--cream)}
 .fetch-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px 24px;min-width:0}
 .fetch-description{flex:1 1 280px;min-width:0}.fetch-description>strong{display:block;font-size:14px;font-weight:600;margin-bottom:5px}

@@ -236,12 +236,13 @@ func (s *Store) SavingPlan(ctx context.Context, user string, id int64) ([]Saving
 
 type TransactionRow struct {
 	TransactionLine
-	ID            int64  `json:"id"`
-	TransactionID int64  `json:"transactionId"`
-	Date          string `json:"date"`
-	Ticker        string `json:"ticker"`
-	Name          string `json:"name"`
-	Source        string `json:"source"`
+	ID            int64                       `json:"id"`
+	TransactionID int64                       `json:"transactionId"`
+	Date          string                      `json:"date"`
+	Ticker        string                      `json:"ticker"`
+	Name          string                      `json:"name"`
+	Source        string                      `json:"source"`
+	Performance   *TransactionLinePerformance `json:"performance"`
 	a, q, p       int64
 }
 
@@ -276,13 +277,18 @@ func (s *Store) transactionRows(ctx context.Context, user string, id int64) ([]T
 }
 
 type TransactionPage struct {
-	Lines []TransactionRow `json:"lines"`
-	Total int              `json:"total"`
-	Page  int              `json:"page"`
+	Lines  []TransactionRow                      `json:"lines"`
+	Total  int                                   `json:"total"`
+	Page   int                                   `json:"page"`
+	Groups map[int64]TransactionGroupPerformance `json:"groups"`
 }
 
 func (s *Store) Transactions(ctx context.Context, user string, id int64, page, pageSize int) (TransactionPage, error) {
 	all, err := s.transactionRows(ctx, user, id)
+	if err != nil {
+		return TransactionPage{}, err
+	}
+	groups, err := s.transactionPerformance(ctx, all)
 	if err != nil {
 		return TransactionPage{}, err
 	}
@@ -297,7 +303,12 @@ func (s *Store) Transactions(ctx context.Context, user string, id int64, page, p
 		end = start
 	}
 	start := min((page-1)*pageSize, len(ordered))
-	return TransactionPage{ordered[start:min(start+pageSize, len(ordered))], len(ordered), page}, nil
+	lines := ordered[start:min(start+pageSize, len(ordered))]
+	visibleGroups := make(map[int64]TransactionGroupPerformance)
+	for _, line := range lines {
+		visibleGroups[line.TransactionID] = groups[line.TransactionID]
+	}
+	return TransactionPage{Lines: lines, Total: len(ordered), Page: page, Groups: visibleGroups}, nil
 }
 func (s *Store) DeleteTransaction(ctx context.Context, user string, id, txID int64) error {
 	return s.write(ctx, func(conn *sql.Conn) error {

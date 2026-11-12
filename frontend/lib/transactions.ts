@@ -7,7 +7,11 @@ export type Valuation = { value: string; performance: string; performancePct: st
 export type CurrentItem = { instrumentId: number; units: string; priceEur: string; value: string; source: "QUOTE" | "PURCHASE"; reason?: "NO_SYMBOL" | "NO_QUOTE" | "PURCHASE_NEWER"; quoteDate?: string; fxRate: string | null; fxRateDate: string | null };
 export type CurrentValuation = Valuation & { asOfFrom: string; asOfTo: string; lastFetchedAt: string; partial: boolean; chartPoint: boolean; items: CurrentItem[] };
 export type Performance = { atPurchase: Valuation; current: CurrentValuation | null; dates: string[]; series: { instrumentId: number; name: string; values: string[] }[]; totals: string[]; invested: string };
-export type TransactionRow = Line & { id: number; transactionId: number; date: string; ticker: string; name: string; source: string };
+export type TransactionChange = { change: string; changePct: string | null };
+export type TransactionLinePerformance = TransactionChange & { currentPrice: string; quoteDate: string; priceChange: string; priceChangePct: string | null };
+export type TransactionGroupPerformance = Partial<TransactionChange> & { pricedLines: number; totalLines: number };
+export type TransactionRow = Line & { id: number; transactionId: number; date: string; ticker: string; name: string; source: string; performance: TransactionLinePerformance | null };
+export type TransactionPage = { lines: TransactionRow[]; total: number; page: number; groups: Record<string, TransactionGroupPerformance> };
 export const today = () => new Intl.DateTimeFormat("sv-SE",{timeZone:"Europe/Berlin",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
 export function decimal(raw: string, places: number, zero = false): Decimal {
   const normalized = raw.replace(",", ".");

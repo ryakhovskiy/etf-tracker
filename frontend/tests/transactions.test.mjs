@@ -11,6 +11,7 @@ const {render,screen,fireEvent,waitFor,cleanup}=await import('@testing-library/r
 const {Transactions}=await import('../components/transactions.tsx');
 const {TransactionDraftProvider}=await import('../components/transaction-draft.tsx');
 const {Dashboard,HoldingsChart}=await import('../components/dashboard.tsx');
+const {TransactionPerformance,TransactionPerformanceTotal}=await import('../components/transaction-performance.tsx');
 const {AppRouterContext}=await import('next/dist/shared/lib/app-router-context.shared-runtime.js');
 const {editRow,planRow,total,euro,chartData}=await import('../lib/transactions.ts');
 afterEach(()=>{cleanup();sessionStorage.clear();});
@@ -248,7 +249,7 @@ test('dashboard sends selected page size, resets to page one and aligns configur
  assert.equal(screen.getByRole('button',{name:'Next'}).disabled,true);
  fireEvent.click(screen.getByText('Columns',{exact:true}));
  fireEvent.click(screen.getByRole('checkbox',{name:'Name',exact:true}));assert.ok(screen.queryByRole('columnheader',{name:'Name',exact:true})===null);
- assert.equal(document.querySelector('.transaction-group td').colSpan,6);
+ assert.equal(document.querySelector('.transaction-group td').colSpan,7);
  fireEvent.click(screen.getByRole('button',{name:'Move Ticker left'}));
  assert.equal(screen.getAllByRole('columnheader')[0].textContent,'Ticker');
  assert.equal(document.querySelector('tbody tr:not(.transaction-group) td').textContent,'AAPL');
@@ -287,6 +288,7 @@ test('fetching quotes in Transactions refreshes current value in the mounted das
  t.mock.method(globalThis,'fetch',async(url,init)=>{
   if(url.includes('/saving-plan'))return json([{...item,avSymbol:'AAPL',...(fetched?{defaultPrice:'25.0000',quoteId:7,priceSource:'Fetched 04.11.2026'}:{})}]);
   if(url.includes('/performance'))return json({...performance,current:fetched?{value:'50.00',performance:'30.00',performancePct:'150.00',asOfFrom:'2026-11-04',asOfTo:'2026-11-04',lastFetchedAt:'2026-11-04T13:32:00Z',partial:false,chartPoint:true,items:[{instrumentId:1,units:'2',priceEur:'25.0000',value:'50.00',source:'QUOTE',quoteDate:'2026-11-04',fxRate:null,fxRateDate:null}]}:null});
+  if(url.includes('/transactions?'))return json({lines:[{...txLine,performance:fetched?{currentPrice:'25.0000',quoteDate:'2026-11-04',priceChange:'15.0000',priceChangePct:'150.00',change:'30.00',changePct:'150.00'}:null}],total:1,page:1,groups:{1:{...(fetched?{change:'30.00',changePct:'150.00'}:{}),pricedLines:fetched?1:0,totalLines:1}}});
   if(url.includes('/market-data/budget'))return json(budget);
   if(url.includes('/estimate'))return json({requestsNeeded:fetched?0:1,fresh:fetched?[1]:[],noSymbol:[],budget});
   if(url.endsWith('/price-fetch-jobs'))return json({jobId:'transaction-job'},202);
@@ -299,5 +301,55 @@ test('fetching quotes in Transactions refreshes current value in the mounted das
  fireEvent.click(await within(transactions).findByRole('button',{name:'Fetch prices (uses 1 requests)'}));
  await within(transactions).findByText('1/1 · Done');
  await within(dashboard).findByText('Current performance',{exact:true});
+ await within(dashboard).findByText('Current: 25 €');
+ assert.match(dashboard.querySelector('.transaction-performance-total').textContent,/Performance: ▲ \+30,00\s€ \(\+150,00 %\)/);
  assert.equal(within(transactions).getByLabelText('AAPL price').value,'25,0000');
+});
+
+test('transaction performance shows current price, date, per-unit change and quantity-weighted change with gain/loss/zero colors',()=>{
+ for(const [delta,pct,change,tone] of [['2.0000','20.00','4.00','positive'],['-2.0000','-20.00','-4.00','negative'],['0.0000','0.00','0.00','neutral'],['0.0001','0.00','0.00','positive']]){
+  const performance={currentPrice:'12.3456',quoteDate:'2026-11-04',priceChange:delta,priceChangePct:pct,change,changePct:pct};
+  const view=render(React.createElement(TransactionPerformance,{performance}));
+  assert.ok(view.container.firstChild.classList.contains(`performance-${tone}`));
+  assert.match(view.container.textContent,/Current: 12,3456 €/);
+  assert.match(view.container.textContent,/as of 04.11.2026/);
+  const sign=delta.startsWith('-')||tone==='neutral'?'':'+';
+  assert.ok(view.container.textContent.includes(`Per unit: ${sign}${delta==='0.0000'?'0':delta==='0.0001'?'0,0001':delta.startsWith('-')?'-2':'2'} €`));
+  assert.ok(view.container.textContent.includes(`(${pct.startsWith('-')||pct==='0.00'?'':'+'}${pct.replace('.',',')} %)`));
+  assert.match(view.container.textContent,/Position:/);
+  view.unmount();
+ }
+ render(React.createElement(TransactionPerformance,{performance:null}));
+ assert.ok(screen.getByText('No current quote'));
+ assert.equal(document.querySelectorAll('.performance-positive,.performance-negative').length,0);
+});
+
+test('transaction totals distinguish partial prices from zero and unavailable performance',()=>{
+ for(const [change,tone] of [['4.00','positive'],['-4.00','negative'],['0.00','neutral']]){
+  const view=render(React.createElement(TransactionPerformanceTotal,{summary:{change,changePct:'0.00',pricedLines:2,totalLines:3}}));
+  assert.ok(view.container.querySelector('strong').classList.contains(`performance-${tone}`));
+  assert.match(view.container.textContent,/partial \(2\/3 positions priced\)/);
+  view.unmount();
+ }
+ render(React.createElement(TransactionPerformanceTotal,{summary:{pricedLines:0,totalLines:3}}));
+ assert.ok(screen.getByText('Performance: no current quotes'));
+ assert.equal(document.querySelectorAll('.performance-neutral').length,0);
+});
+
+test('dashboard displays the complete transaction total even with only one of its lines on a page',async t=>{
+ t.mock.method(globalThis,'fetch',async url=>{
+  if(url.includes('/transactions?'))return json({lines:[{...txLine,performance:{currentPrice:'12.0000',quoteDate:'2026-11-04',priceChange:'2.0000',priceChangePct:'20.00',change:'4.00',changePct:'20.00'}}],total:51,page:1,groups:{1:{change:'1.00',changePct:'1.82',pricedLines:3,totalLines:5}}});
+  return workspaceFetch(url);
+ });
+ render(React.createElement(Dashboard,{id:'1'}));
+ await screen.findByRole('columnheader',{name:'Performance',exact:true});
+ assert.match(document.querySelector('.transaction-performance-total').textContent,/Performance: ▲ \+1,00\s€ \(\+1,82 %\)/);
+ assert.match(document.querySelector('.transaction-performance').textContent,/Position: ▲ \+4,00\s€ \(\+20,00 %\)/);
+ assert.equal(document.querySelector('.transaction-group td').colSpan,8);
+ fireEvent.click(screen.getByText('Columns',{exact:true}));
+ fireEvent.click(screen.getByRole('checkbox',{name:'Performance',exact:true}));
+ assert.ok(screen.queryByRole('columnheader',{name:'Performance',exact:true})===null);
+ assert.equal(document.querySelector('.transaction-group td').colSpan,7);
+ assert.equal(document.querySelectorAll('.transaction-performance').length,0);
+ assert.ok(document.querySelector('.transaction-performance-total')!==null);
 });

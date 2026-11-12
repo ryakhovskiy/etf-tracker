@@ -2,12 +2,12 @@ name: holdings
 
 services:
   backend:
-    image: holdings-backend:latest
+    image: kryakhovskiy/etracker-backend:latest
     build:
       context: ./backend
     env_file: .env
     environment:
-      APP_ENV: production
+      APP_ENV: development
       SECURE_SESSION_COOKIE: "true"
       PORT: "9000"
       DATABASE_PATH: /app/data/holdings.db
@@ -21,7 +21,7 @@ services:
     init: true
 
   frontend:
-    image: holdings-frontend:latest
+    image: kryakhovskiy/etracker-frontend:latest
     build:
       context: ./frontend
     ports:

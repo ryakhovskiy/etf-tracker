@@ -37,25 +37,32 @@ test('import enablement blocks errors, unresolved duplicates, item limits and pe
  assert.equal(canImport({...preview,rows:[{...row,status:'ERROR',include:false}]},false),true);
 });
 test('configuration saves without a file, resets without saving, discards, and survives remount',async t=>{
- const calls=mockAPI(t);const view=mount();await screen.findByLabelText('Delimiter');const save=screen.getByRole('button',{name:'Save configuration'});assert.equal(save.disabled,true);
+ const calls=mockAPI(t);const view=mount();await screen.findByRole('button',{name:'Choose file'});
+ const toggle=screen.getByText('Configuration',{selector:'summary'});const configuration=toggle.closest('details');const fileInput=screen.getByLabelText('CSV file');
+ assert.equal(configuration.open,false);assert.ok(fileInput.closest('details')===null);assert.ok(fileInput.compareDocumentPosition(configuration)&Node.DOCUMENT_POSITION_FOLLOWING);assert.ok(screen.queryByRole('button',{name:'Import',exact:true})===null);
+ fireEvent.click(toggle);assert.equal(configuration.open,true);const save=screen.getByRole('button',{name:'Save configuration'});assert.equal(save.disabled,true);
  fireEvent.change(screen.getByLabelText('Delimiter'),{target:{value:'|'}});await screen.findByText('Unsaved changes');fireEvent.click(save);
  await screen.findByText(/Saved/);assert.ok(screen.queryByText('Unsaved changes')===null);assert.equal(save.disabled,true);
  fireEvent.click(screen.getByRole('button',{name:'Reset to defaults'}));assert.equal(screen.getByLabelText('Delimiter').value,';');assert.equal(calls.filter(c=>c.init.method==='PUT').length,1);
  fireEvent.click(screen.getByRole('button',{name:'Discard changes'}));assert.equal(screen.getByLabelText('Delimiter').value,'|');
+ fireEvent.click(toggle);assert.equal(configuration.open,false);fireEvent.click(toggle);assert.equal(screen.getByLabelText('Delimiter').value,'|');
  view.unmount();mount();await waitFor(()=>assert.equal(screen.getByLabelText('Delimiter').value,'|'));
 });
 test('file upload uses multipart defaults, editing validates and highlights, revert restores file, import confirms and clears',async t=>{
  const calls=mockAPI(t);mount();await screen.findByLabelText('CSV file');chooseFile();await ready();
+ const importBar=screen.getByRole('button',{name:'Import',exact:true}).closest('.csv-import-cta');const filters=screen.getByLabelText('Filter').closest('.csv-actions');const toolbar=screen.getByLabelText('Rows per page').closest('.table-toolbar');const table=screen.getByRole('table');
+ assert.ok(importBar.textContent.includes('1 rows'));assert.ok(importBar.compareDocumentPosition(filters)&Node.DOCUMENT_POSITION_FOLLOWING);assert.ok(filters.compareDocumentPosition(toolbar)&Node.DOCUMENT_POSITION_FOLLOWING);assert.ok(toolbar.compareDocumentPosition(table)&Node.DOCUMENT_POSITION_FOLLOWING);assert.ok(importBar.closest('.table-toolbar')===null);
  const parse=calls.find(c=>c.url.endsWith('/parse'));assert.equal(parse.init.body instanceof FormData,true);assert.equal(parse.init.headers['Content-Type'],undefined);assert.deepEqual(JSON.parse(parse.init.body.get('settings')),defaultSettings());
  fireEvent.change(screen.getByLabelText('Row 2 Amount'),{target:{value:'2,5'}});assert.equal(screen.getByLabelText('Row 2 Total €').value,'80,20');assert.equal(screen.getByRole('button',{name:'Import',exact:true}).disabled,true);assert.ok(screen.getByLabelText('Row 2 Amount').closest('td').classList.contains('csv-edited'));await ready();
  const validation=JSON.parse(calls.filter(c=>c.url.endsWith('/validate')).at(-1).init.body);assert.equal(validation.rows[0].fields.quantity,'2.5');assert.equal(validation.rows[0].fields.total,'80.20');
  fireEvent.click(screen.getByRole('button',{name:'Revert to file value'}));await ready();assert.equal(screen.getByLabelText('Row 2 Amount').value,'7,79277');
  fireEvent.click(screen.getByRole('button',{name:'Import',exact:true}));await screen.findByText('Import 1 rows into 1 transactions, create 1 instruments, add 1 portfolio items');fireEvent.click(screen.getByRole('button',{name:'Confirm import',exact:true}));
- await screen.findByText(/Imported 1 rows into 1 transactions/);assert.ok(screen.queryByLabelText('Row 2 Amount')===null);assert.equal(screen.getByRole('button',{name:'Import',exact:true}).disabled,true);
+ await screen.findByText(/Imported 1 rows into 1 transactions/);assert.ok(screen.queryByLabelText('Row 2 Amount')===null);assert.ok(screen.queryByRole('button',{name:'Import',exact:true})===null);
  const commit=JSON.parse(calls.find(c=>c.url.endsWith('/imports')).init.body);assert.equal(commit.revision,'r1');assert.equal(commit.rows[0].fields.quantity,fields.quantity);
 });
 test('reparse prompts before discarding edits and leaving blocks navigation',async t=>{
  const calls=mockAPI(t);let answer=false,questions=[];t.mock.method(window,'confirm',q=>{questions.push(q);return answer;});mount();await screen.findByLabelText('CSV file');chooseFile();await ready();
+ fireEvent.click(screen.getByText('Configuration',{selector:'summary'}));
  fireEvent.change(screen.getByLabelText('Row 2 Price €'),{target:{value:'10'}});await ready();fireEvent.change(screen.getByLabelText('Delimiter'),{target:{value:'|'}});assert.equal(screen.getByLabelText('Delimiter').value,';');assert.ok(questions.includes('Re-parsing discards your edits. Continue?'));
  const anchor=document.createElement('a');anchor.href='/portfolios/1/dashboard';document.body.append(anchor);const event=new window.MouseEvent('click',{bubbles:true,cancelable:true});anchor.dispatchEvent(event);assert.equal(event.defaultPrevented,true);anchor.remove();
  answer=true;fireEvent.change(screen.getByLabelText('Delimiter'),{target:{value:'|'}});await ready();assert.equal(calls.filter(c=>c.url.endsWith('/parse')).length,2);

@@ -2,17 +2,19 @@ name: holdings
 
 services:
   backend:
-    image: holdings-backend:latest
+    image: kryakhovskiy/etracker-backend:latest
     build:
       context: ./backend
     env_file: .env
     environment:
+      SSL_CERT_DIR: /etc/ssl/certs:/etc/ssl/certs
       APP_ENV: development
       SECURE_SESSION_COOKIE: "true"
       PORT: "9000"
       DATABASE_PATH: /app/data/holdings.db
     volumes:
       - holdings-data:/app/data
+      - /etc/ssl/certs/zscaler-root-ca.crt:/etc/ssl/certs/zscaler-root-ca.crt:ro
     expose:
       - "9000"
     networks:
@@ -21,7 +23,7 @@ services:
     init: true
 
   frontend:
-    image: holdings-frontend:latest
+    image: kryakhovskiy/etracker-frontend:latest
     build:
       context: ./frontend
     ports:

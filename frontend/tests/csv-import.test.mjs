@@ -99,7 +99,7 @@ test('import page size resets pagination and column controls keep headers and ed
  fireEvent.click(screen.getByRole('button',{name:'Next',exact:true}));await screen.findByLabelText('Row 102 Amount');
  fireEvent.change(screen.getByLabelText('Rows per page'),{target:{value:'25'}});
  assert.ok(screen.getByText('Page 1 / 5'));assert.ok(screen.getByLabelText('Row 26 Amount'));assert.ok(screen.queryByLabelText('Row 27 Amount')===null);
- fireEvent.click(screen.getByText('Columns',{exact:true}));
+ fireEvent.click(screen.getByText('Fields shown',{exact:true}));
  fireEvent.click(screen.getByRole('checkbox',{name:'Name',exact:true}));
  assert.ok(screen.queryByRole('columnheader',{name:'Name',exact:true})===null);assert.ok(screen.queryByLabelText('Row 2 Name')===null);
  fireEvent.click(screen.getByRole('button',{name:'Move Amount left'}));
@@ -107,7 +107,7 @@ test('import page size resets pagination and column controls keep headers and ed
  const quantityIndex=headers.indexOf('Amount');
  assert.equal(headers[quantityIndex+1],'Type');
  assert.equal(screen.getByLabelText('Row 2 Amount').closest('td').cellIndex,quantityIndex);
- fireEvent.click(screen.getByRole('button',{name:'Reset columns'}));
+ fireEvent.click(screen.getByRole('button',{name:'Reset fields'}));
  assert.ok(screen.getByLabelText('Row 2 Name'));
  fireEvent.change(screen.getByLabelText('Rows per page'),{target:{value:'250'}});assert.ok(screen.getByLabelText('Row 102 Amount'));assert.equal(screen.getByRole('button',{name:'Next',exact:true}).disabled,true);
 });

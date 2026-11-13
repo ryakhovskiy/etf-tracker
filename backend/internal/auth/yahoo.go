@@ -410,12 +410,7 @@ func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem
 		if err == nil {
 			err = marketdata.ApplyFX(q, fx)
 		}
-		if err == nil && fx != nil && fx.Source == marketdata.FXSourceYahoo && fx.PrevRate > 0 && fx.Date == q.QuoteDate {
-			// The pair's previous close matches the instrument's previous close only
-			// when both quotes belong to the same calendar day; otherwise it stays
-			// unknown and the summary flags FX_PREVIOUS_UNAVAILABLE.
-			q.PrevFXRate = marketdata.Fixed(fx.PrevRate, 8)
-		}
+
 		if err != nil {
 			h.logger.Error("real-time Yahoo price obtained but not converted to EUR", item(i, append(attrs, "status", quoteFailure(err), "error", err.Error())...)...)
 			set(i, quoteFailure(err), nil)

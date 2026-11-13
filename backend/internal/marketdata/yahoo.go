@@ -575,11 +575,7 @@ func (g *YahooGateway) LiveFX(ctx context.Context, user, currency string) (*FXRa
 	if err != nil || q.Currency != "EUR" {
 		return nil, ErrFXUnavailable
 	}
-	fx := &FXRate{Date: BerlinDay(q.At), Base: ccy, Quote: "EUR", Rate: rate, Source: FXSourceYahoo}
-	if q.PrevClose != "" {
-		fx.PrevRate, _ = Scaled(q.PrevClose, 8)
-	}
-	return fx, nil
+	return &FXRate{Date: BerlinDay(q.At), Base: ccy, Quote: "EUR", Rate: rate, Source: FXSourceYahoo}, nil
 }
 
 // History fetches daily closes for the inclusive day range [from, to].

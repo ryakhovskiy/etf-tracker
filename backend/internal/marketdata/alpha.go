@@ -72,8 +72,10 @@ type Quote struct {
 	QuoteTime time.Time `json:"quoteTime,omitzero"`
 	FetchedAt time.Time `json:"-"`
 	Provider  string    `json:"provider,omitempty"`
-	// PrevClose is the previous session's close in the listing currency (4 dp) and
-	// PrevFXRate the previous close of the live FX pair (8 dp); both empty when unknown.
+	// PrevClose is the previous session's close in the listing currency (4 dp).
+	// PrevFXRate is the FX rate at that same previous session (8 dp). Yahoo's chart
+	// meta gives no date for either previous close, so nothing sets PrevFXRate yet:
+	// it may only be filled from a source whose date matches the instrument's.
 	PrevClose  string `json:"-"`
 	PrevFXRate string `json:"-"`
 }

@@ -181,6 +181,14 @@ func (h *Handler) registerSummaryRoutes(mux *http.ServeMux) {
 			httpapi.JSON(w, 200, refreshResult{Reused: true, JobID: &existing})
 			return
 		}
+		// Re-check the throttle under the same lock that inserts the job: a request
+		// that passed refreshDecision before another job started and finished must
+		// not start a second one inside the window.
+		if last := h.jobs.lastRefresh[user]; !in.Force && !last.IsZero() && now.Sub(last) <= summaryMaxAge {
+			h.jobs.mu.Unlock()
+			httpapi.JSON(w, 200, refreshResult{Reason: refreshThrottled})
+			return
+		}
 		job := &priceJob{Status: "QUEUED", Kind: jobKindUserRealtime, user: user, created: time.Now(), Items: make([]priceItem, 0, len(rows))}
 		for _, row := range rows {
 			job.Items = append(job.Items, priceItem{InstrumentID: row.InstrumentID, Status: "PENDING"})

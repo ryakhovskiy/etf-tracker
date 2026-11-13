@@ -79,7 +79,7 @@ or live-provider availability. Code and tests take precedence over historical sp
 
 | Route | Purpose |
 |---|---|
-| `/` | Login or portfolio list; create, rename, confirm deletion; counts/limit hints |
+| `/` | Login or portfolio list; create, rename, confirm deletion; counts/limit hints; per-portfolio value, performance and change vs yesterday plus a total strip (see "Portfolio list summaries") |
 | `/portfolios/:id` | Redirect to dashboard |
 | `/portfolios/:id/dashboard` | Figures, stacked chart, paginated transaction history and deletion |
 | `/portfolios/:id/transactions` | Buy-entry form, quote fetching and symbol linking |
@@ -207,6 +207,110 @@ Item removal is API-only and rejects items with transactions (`ITEM_HAS_TRANSACT
   persists through tab switches and data refreshes; market-price fetches still
   cover the full portfolio.
 
+### Portfolio list summaries
+
+Backend contract (frontend UI facts below). Everything is session-scoped (`401`)
+and covers only the caller's portfolios; `GET /api/portfolios` is unchanged.
+
+- `GET /api/portfolios/summaries` returns `summaries[]` (one per portfolio, by
+  `portfolioId`), `total` (all portfolios, with `portfolioCount`) and `refresh`.
+  Figures: `positionCount` (instruments with units held), `invested` (EUR sum of
+  transaction totals), `currentValue`, `performance` and `change`
+  (`{amount, percent}`), `partial`, `changePartial`, `reasons[]` and `asOf`.
+  Decimals are strings, rounded half-up once at the end; the total sums the exact
+  amounts of all portfolios before rounding, so tiles may differ from it by a cent.
+- **Current value** = units held × the instrument's latest stored quote in EUR (the
+  same quote as the dashboard). A position with no quote (`NO_QUOTE`) or a quote
+  older than its latest purchase (`PURCHASE_NEWER`) is valued at its latest
+  purchase price and `partial` is set. `currentValue`, `performance` and `asOf`
+  are `null` when no position has a usable quote; `percent` is `null` when
+  invested is 0. Zeros are never invented.
+- **Change vs yesterday**, per instrument with a usable quote. The session is the
+  quote's own date (Berlin day of its market time), so on a weekend it is
+  Friday against Thursday. Units held before the session (trade date < session)
+  contribute units × (price − previous close in EUR); units bought on the session
+  date contribute units × (price − purchase price). `percent` = change ÷ the value
+  of the units held before the session at the previous close (`null` when that is
+  0, e.g. everything was bought in the session). Previous close in EUR = stored
+  previous close × the FX rate of that previous session when one is stored
+  (÷100 for `GBp`/`GBX`/`ZAc`), rounded to 4 dp like a quote; EUR listings need no
+  rate. Today no previous-session rate is stored, so EVERY automatically
+  fetched non-EUR position's change uses the quote's own rate and carries
+  `FX_PREVIOUS_UNAVAILABLE` (and `changePartial`); only EUR listings are exact. Missing pieces make the change
+  partial (`changePartial`) without hiding it: `NO_PREVIOUS_CLOSE` (units held
+  before but no stored previous close: that position's before-session part is
+  omitted), `FX_PREVIOUS_UNAVAILABLE` (no dated previous-session FX rate: the
+  previous close is converted at the quote's own rate, an approximation), and
+  the `NO_QUOTE`/`PURCHASE_NEWER` positions contribute 0. `change` is `null` only
+  when no position produced a computable change.
+- `asOf` describes the OLDEST quote used: `quoteDate`, `quoteTime` (market time,
+  `null` unless every used quote has one), `fetchedAt`, sorted `providers`, and
+  `realtime` (all used quotes are Yahoo real-time).
+- **Automatic Yahoo refresh (amended rule).** `POST /api/price-refresh-jobs` with
+  body `{}` (the frontend sends it on first load when `refresh.autoFetch` is true)
+  or `{"force":true}` (manual "Refresh prices": skips only the freshness and
+  throttle checks) starts ONE job of kind `USER_REALTIME` over the de-duplicated
+  union of the user's held instruments across all portfolios (instruments without
+  units are excluded). It runs the existing real-time Yahoo runner: Yahoo only,
+  never Alpha Vantage, never Eulerpool, no fallback. Poll it with
+  `GET /api/price-fetch-jobs/{jobId}`; when `DONE`, reload the summaries.
+  - `202 {started:true, reused:false, jobId, requests}` when started.
+  - `200 {started:false, reused:true, jobId}` when the user already has a running
+    price job (one running job per user, any kind): poll that id.
+  - `200 {started:false, reason}` with `FRESH` (not stale), `THROTTLED` (unforced
+    attempt less than or exactly 15 minutes after the last one; re-checked under the
+    lock that registers the job, so concurrent requests cannot start two), `YAHOO_UNAVAILABLE`
+    (cooling down or budget used up; `blockedUntil` may be set; wins over `force`)
+    or `NOTHING_TO_PRICE`. These are not errors: show the stored figures.
+  - `refresh` in the summaries response: `stale` (no quote for any held
+    instrument, or the NEWEST fetch time among them is strictly older than
+    `maxAgeSeconds` = 900; other instruments being old or unpriced does not make it
+    stale), `newestFetchedAt`, `autoFetch` (a POST would start a job now),
+    `runningJobId`, `lastAttemptAt`, `yahoo {available, blockedUntil}` and
+    `estimate {requests, remaining, noSymbol}` for the cost label.
+  - Time source: `Handler.clock` (default `time.Now`) drives the decisions, so
+    tests can fix it.
+
+- **UI (frontend):**
+  - Portfolio tile (`li[data-testid=portfolio-card]`): name link, item count, then a
+    `dl` with Current value (hero figure), Performance and Change vs yesterday, then
+    "as of HH:MM · Yahoo real-time" (the oldest used quote; date only, e.g.
+    "as of 12.11.2026 · Yahoo", when the quote has no time or is not today).
+    Rename/Delete are kept. No positions shows "No positions yet"; no usable quote
+    shows "Unavailable".
+  - Total strip above the grid (`section[data-testid=portfolio-summary-strip]`,
+    `aria-label` "All portfolios total"): Total value, Performance and Change vs
+    yesterday of all portfolios, "{n} portfolios · {m} positions", the as-of line and
+    the refresh status.
+  - Gain/loss text always carries its sign and ▲/▼ ("▲ +204,00 € (+18,28 %)",
+    "▼ -30,00 € (-6,00 %)"; zero is neutral, no arrow); colour only reinforces it via
+    the theme's positive/negative tokens (amber loss in Tech Red). Amounts are
+    de-DE formatted from the API's decimal strings; "–" when the API sends `null`.
+  - Partial: a "partial" badge (tooltip, focusable, `aria-label` "Partial figures: …")
+    next to the value when `partial` and next to the change when `changePartial`;
+    `NO_QUOTE`, `PURCHASE_NEWER`, `NO_PREVIOUS_CLOSE` and `FX_PREVIOUS_UNAVAILABLE`
+    map to plain sentences. Zeros are never faked.
+  - Loading: while the summaries request is pending the strip and tiles show skeleton
+    lines (grid `aria-busy`). If it fails, the strip says "Portfolio figures are
+    unavailable right now." with "Try again" and the tiles stay usable. During a
+    refresh job the stored figures stay visible with "Updating prices… done/total"
+    (`role=status`) and the button disabled; values update in place when the job is
+    `DONE` (summaries are fetched again).
+  - First load: after the list and summaries arrive, if `refresh.runningJobId` is set
+    the UI only polls that job; else if `refresh.autoFetch` it POSTs
+    `/api/price-refresh-jobs` with `{}` exactly once per visit. The job is polled via
+    `GET /api/price-fetch-jobs/{id}` every 2 s (it stops after 5 consecutive poll
+    failures and shows the stored figures). `FRESH`, `THROTTLED` and
+    `NOTHING_TO_PRICE` are silent; `YAHOO_UNAVAILABLE` (or `refresh.yahoo` blocked)
+    shows "Yahoo is cooling down until HH:MM. Showing stored prices." and disables
+    the button.
+  - Manual control: the button "Refresh prices (N Yahoo requests)"
+    (`refresh.estimate.requests`; just "Refresh prices" at 0) POSTs `{force:true}`;
+    hidden when there are no positions. Deleting a portfolio fetches the summaries again.
+  - Layout/a11y: all colours from tokens, 44px targets, no overflow at 360px, the strip
+    becomes a 2-column grid at ≤900px. Stable test ids: `portfolio-summary-strip`,
+    `portfolio-card`, `portfolio-metrics`, `portfolio-metrics-skeleton`.
+
 ## Appearance: themes and responsive layout
 
 Frontend only: no backend, API, database or Docker involvement.
@@ -280,7 +384,10 @@ date and fetches a daily close on or before it. Default primary is **YAHOO**;
 | Alpha Vantage | Explicit cost-labeled search/quote backup through one gateway; persisted atomic reservations, rolling global/user limits, worker queue and provider backoff. Failed reserved calls count. Historical daily series is compact (~100 trading days). |
 | Frankfurter / ECB | Persistent FX outside AV budget; latest publication ≤ requested date, ≤7 calendar days old. Currency-range requests store all returned days; shared currencies reuse rates. |
 
-- Price fetch starts only on user action after estimate. Primary quote failures
+- Price fetch starts on user action after estimate, with ONE exception: the
+  portfolio list (`/`) refreshes Yahoo real-time prices automatically on first
+  load (see "Portfolio list summaries"; Yahoo only, throttled to 15 minutes).
+  Primary quote failures
   become `NEEDS_BACKUP`; alternative providers require separate clicks. Default
   UI offers Eulerpool then AV after Yahoo; Eulerpool-primary UI can offer Yahoo
   before AV. No automatic AV spend.
@@ -298,6 +405,12 @@ date and fetches a daily close on or before it. Default primary is **YAHOO**;
   The estimate's `realtime` field (null for past dates) counts searches +
   instruments + currencies of earlier quotes. A regular fetch that reuses a
   real-time quote as fresh converts it at the ECB rate again.
+  The same chart meta also yields the previous session's close
+  (`chartPreviousClose`, else `previousClose`), stored with the quote as
+  `price_quotes.prev_close_e4` (listing currency, ×10⁴). `prev_fx_rate_e8` (the FX
+  rate at that same previous session) exists but is NOT filled today: Yahoo's chart
+  meta dates neither previous close, so a live pair's previous close cannot be
+  proven to belong to the same session (exchange-only holidays), and is not used.
 - Shared fresh quotes avoid provider calls. Eulerpool stock TTL is 15m; Eulerpool
   ETF/AV quotes use calendar-day freshness; Yahoo also checks trading-date recency.
   Historical closes are cached separately and are not fresh current quotes.
@@ -335,11 +448,11 @@ duplicate lines or stale preview where applicable.
 
 | Area | Routes |
 |---|---|
-| Portfolios/items | `GET/POST /api/portfolios`; `GET/PATCH/DELETE /api/portfolios/{p}`; `GET/POST .../{p}/items`; `DELETE .../{p}/items/{i}`; `PUT /api/users/me/instruments/{i}/pay-delay` |
+| Portfolios/items | `GET/POST /api/portfolios`; `GET /api/portfolios/summaries`; `GET/PATCH/DELETE /api/portfolios/{p}`; `GET/POST .../{p}/items`; `DELETE .../{p}/items/{i}`; `PUT /api/users/me/instruments/{i}/pay-delay` |
 | Instruments | `GET /api/instruments/search`; `GET .../search/online` (`provider=av` explicit fallback); `POST /api/instruments` |
 | Transactions | `GET /api/portfolios/{p}/saving-plan`; `GET/POST .../{p}/transactions`; `DELETE .../{p}/transactions/{txId}`; `GET .../{p}/performance` |
 | CSV | `GET/PUT /api/users/me/csv-settings`; `POST /api/portfolios/{p}/imports/parse`, `/imports/validate`, `/imports` |
-| Prices | `GET /api/market-data/budget`; `GET /api/portfolios/{p}/price-fetch/estimate`; `POST .../{p}/price-fetch-jobs`; `GET /api/price-fetch-jobs/{jobId}` |
+| Prices | `GET /api/market-data/budget`; `GET /api/portfolios/{p}/price-fetch/estimate`; `POST .../{p}/price-fetch-jobs`; `GET /api/price-fetch-jobs/{jobId}`; `POST /api/price-refresh-jobs` (user-level Yahoo real-time refresh, see below) |
 | Linking/history | `GET /api/instruments/{i}/av-symbol/search`, `/yahoo-symbol/search`, `/isin/search`; `PUT .../{i}/av-symbol`, `/yahoo-symbol`, `/isin`; `DELETE .../{i}/av-symbol`; `GET .../{i}/price-history` |
 | ETF profiles | `GET /api/instruments/{i}/etf-profile`; `POST .../{i}/etf-profile/refresh` |
 | Dividends | `GET /api/portfolios/{p}/dividends?year=`; `POST .../{p}/dividend-sync`; `GET /api/dividend-sync-jobs/{jobId}` |
@@ -368,7 +481,7 @@ per-item errors and ECB historical FX. This does **not** create dividend transac
   Themes/CSS: [`frontend/app/styles`](../frontend/app/styles), theme engine
   [`frontend/lib/theme.ts`](../frontend/lib/theme.ts), contrast check
   [`frontend/scripts/check-theme-contrast.mjs`](../frontend/scripts/check-theme-contrast.mjs).
-  Migrations currently run through **00013**; add migrations rather than editing applied ones.
+  Migrations currently run through **00016** (`00016_previous_close.sql`); add migrations rather than editing applied ones.
 - Deployment: [`compose.yaml`](../compose.yaml),
   [`backend/Dockerfile`](../backend/Dockerfile),
   [`frontend/Dockerfile`](../frontend/Dockerfile), per-service `.dockerignore`

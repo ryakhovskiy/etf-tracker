@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test, afterEach } from 'node:test';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import React from 'react';
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
@@ -155,11 +154,6 @@ test('performance signs, rounded color thresholds, arrows and zero-investment pe
   assert.equal(view.container.textContent, text);
   view.unmount();
  }
- const css = readFileSync(new URL('../app/globals.css',import.meta.url),'utf8');
- assert.match(css, /@media\(prefers-color-scheme:dark\)[\s\S]*--positive:[^;]+;--negative:[^;]+;--text:/);
- assert.match(css, /\.figures\{[^}]*display:grid/);
- assert.doesNotMatch(css, /\.current-fetch\{[^}]*position:absolute/);
- assert.match(css, /performance-neutral\{color:var\(--text\)\}/);
 });
 
 test('figures show date range, Berlin fetch time and partial reasons; null hides current labels', async t => {
@@ -173,8 +167,8 @@ test('figures show date range, Berlin fetch time and partial reasons; null hides
  fireEvent.click(await screen.findByText("1 holding needs a price symbol"));
  assert.ok(screen.getByRole('link',{name:'Link symbol in Transactions tab'}));
  view.rerender(React.createElement(PerformanceFigures, { id: '1', performance:p, reload:async()=>{} }));
- assert.equal(screen.queryByText('Current value',{exact:true}),null);
- assert.equal(screen.queryByText('Current performance',{exact:true}),null);
+ assert.ok(screen.queryByText('Current value',{exact:true})===null);
+ assert.ok(screen.queryByText('Current performance',{exact:true})===null);
  assert.ok(screen.getByText('Performance at purchase prices'));
  assert.equal(quoteDates('2026-11-04','2026-11-04'),'04.11.2026');
 });
@@ -253,7 +247,7 @@ test('stale quote hint replaces chart extension when chartPoint is false', () =>
  assert.equal(chartData(performance).length,2);
  render(React.createElement(HoldingsChart,{performance}));
  assert.ok(screen.getByText('Quotes are older than your last transaction. Fetch again to update the chart.'));
- assert.equal(document.querySelector('path[stroke-dasharray="6 4"]'),null);
+ assert.ok(document.querySelector('path[stroke-dasharray="6 4"]')===null);
  assert.ok(screen.getByText('Current value (quotes)'));
 });
 
@@ -281,8 +275,8 @@ test('unlinked holdings show one collapsed notice and never claim to be up to da
  const button=await screen.findByRole('button',{name:'Fetch current value',exact:true});
  assert.equal(button.disabled,true);
  assert.ok(screen.getByText('No price symbols are linked. Link your holdings to fetch current value.'));
- assert.equal(screen.queryByRole('button',{name:/Up to date/}),null);
- assert.equal(container.querySelector('.current-fetch').parentElement,container.querySelector('.figures').parentElement);
+ assert.ok(screen.queryByRole('button',{name:/Up to date/})===null);
+ assert.ok(container.querySelector('.current-fetch').parentElement===container.querySelector('.figures').parentElement);
  const details=container.querySelector('.fetch-details');assert.equal(details.open,false);
  assert.equal(container.querySelectorAll('.fetch-details').length,1);
  fireEvent.click(screen.getByText('5 holdings need a price symbol'));

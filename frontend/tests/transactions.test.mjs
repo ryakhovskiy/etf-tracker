@@ -174,7 +174,7 @@ test('switching panels preserves DOM, pagination, form edits, item selection and
  fireEvent.change(within(transactions).getByLabelText('AAPL amount'), { target: { value: '75' } });
  const requestCount = requests.length;
  view.rerender(panelView('dashboard'));
- assert.equal(dashboard.querySelector('.chart-card'), chart);
+ assert.ok(dashboard.querySelector('.chart-card') === chart);
  assert.ok(within(dashboard).getByText('Page 2 of 2'));
  assert.equal(dashboard.hidden, false); assert.equal(transactions.hidden, true);
  view.rerender(panelView('transactions'));

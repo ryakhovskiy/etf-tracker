@@ -1,0 +1,21 @@
+import { test, expect } from '@playwright/test';
+import { mockAPI, themes } from './fixtures.mjs';
+import { ready } from './helpers.mjs';
+import { renderedContrast } from './rendered-contrast.mjs';
+
+for (const theme of themes) {
+  test(`${theme} rendered dividend chart and ex-marker text meet AA after opacity`, async ({ page }) => {
+    await page.clock.setFixedTime(new Date('2026-11-13T12:00:00Z'));
+    await page.addInitScript(value => localStorage.setItem('holdings.theme', value), theme);
+    const unexpected = await mockAPI(page);
+    await page.goto('/portfolios/1/dividends');
+    await ready(page, 'dividends');
+    const chartSegment = page.getByRole('img', { name: /^HMWO\.L goes ex:/ }).locator('path, rect').last();
+    const mark = await renderedContrast(chartSegment, 'fill');
+    expect.soft(mark.ratio, `${theme}: faded chart mark ${JSON.stringify(mark)}`).toBeGreaterThanOrEqual(3);
+    const markerText = page.getByRole('button', { name: /^HMWO\.L goes ex / }).getByText('HMWO.L', { exact: true });
+    const text = await renderedContrast(markerText);
+    expect.soft(text.ratio, `${theme}: ex-marker text ${JSON.stringify(text)}`).toBeGreaterThanOrEqual(4.5);
+    expect(unexpected).toEqual([]);
+  });
+}

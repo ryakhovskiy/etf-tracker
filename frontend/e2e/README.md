@@ -19,18 +19,28 @@ Use `PLAYWRIGHT_PORT=3200 npm run test:e2e` to choose another port, or
 Next dev/start server. A production server must already have been built.
 
 The suite covers login, the populated portfolios list, and all five portfolio
-tabs in every explicit theme, at 375×812 and 1280×800. It includes a populated
-CSV review rather than just its upload screen. API and auth calls are fulfilled
+tabs in every explicit theme, at 375×812 and 1280×800. The dashboard, transactions,
+and populated CSV review also run at the 360px acceptance boundary. Focused flows
+exercise keyboard selection, reload persistence without re-seeding, live System
+changes, and denied localStorage. API and auth calls are fulfilled
 in-browser, including logged-out refresh attempts: neither a backend nor Google
 login is needed. Unhandled API/auth calls fail instead of reaching a backend.
 
 Each test sets `holdings.theme` before page scripts run, verifies the resolved
-HTML theme and visible switcher, checks for horizontal page overflow and browser
-exceptions, and saves a full-page screenshot. Find screenshots/traces under
+HTML theme and visible switcher, checks for horizontal page overflow, browser
+exceptions and console errors (including hydration errors), and saves a full-page
+screenshot. Only expected auth-resource 401 console errors are filtered. Find screenshots/traces under
 `test-results/` and the HTML report under `playwright-report/`; both are ignored
 by Git. Use `npm run test:e2e -- --project=mobile --grep='tech-green'` to narrow
 a run. `npm run test:e2e -- --list` checks discovery without launching a server
 or browser. Theme assertions intentionally require the phase-1 theme engine.
+
+Additional checks measure populated picker geometry and reduced motion,
+responsive month-card layout, and actual rendered dividend contrast (including
+fill opacity and ancestor opacity). Token contrast alone does not establish AA
+for translucent rendered content. Overflow guards compare against the configured
+device width, then scan visible bounds; content inside a fitting horizontal
+scroll container is allowed. Oversized or clipped content reports selectors.
 
 Baseline before redesign, commit `0fbbbb715885653e90490d25848e1db85d62d067`:
 `npm test` passed (2 library files + 9 component files, zero failures),

@@ -28,8 +28,9 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   projects: [
-    { name: 'mobile', use: { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true } },
-    { name: 'desktop', use: { viewport: { width: 1280, height: 800 } } },
+    { name: 'mobile', testIgnore: '**/boundary.spec.mjs', use: { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true } },
+    { name: 'desktop', testIgnore: '**/boundary.spec.mjs', use: { viewport: { width: 1280, height: 800 } } },
+    { name: 'mobile-narrow', testMatch: '**/boundary.spec.mjs', use: { viewport: { width: 360, height: 812 }, isMobile: true, hasTouch: true } },
   ],
   webServer: externalURL ? undefined : {
     command: `npm run dev -- --hostname 127.0.0.1 --port ${port}`,

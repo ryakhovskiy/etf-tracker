@@ -14,8 +14,6 @@ const {AppRouterContext}=await import('next/dist/shared/lib/app-router-context.s
 const {today,fetchDateAllowed,fetchDateInRange}=await import('../lib/transactions.ts');
 afterEach(()=>{cleanup();sessionStorage.clear();});
 const item={instrumentId:1,ticker:'SAP',name:'SAP SE',defaultPrice:'10.0000',defaultAmount:'20.00',priceSource:'Last purchase 01.01.2025',avSymbol:'SAP.DEX',avCurrency:'EUR',avLinkedByYou:true};
-import {readFileSync} from 'node:fs';
-const require_css=()=>readFileSync(new URL('../app/globals.css',import.meta.url),'utf8');
 const json=(body,status=200)=>new Response(JSON.stringify(body),{status});
 const budget=(user=10)=>({globalRemaining:25,userRemaining:user,userLimit:10,nextSlotAt:new Date().toISOString()});
 const mount=()=>render(React.createElement(AppRouterContext.Provider,{value:{push(){}}},React.createElement(TransactionDraftProvider,null,React.createElement(Transactions,{id:'1'}))));
@@ -75,13 +73,13 @@ test('linking a Yahoo symbol searches Yahoo only on request and blocks symbols a
  await waitFor(()=>assert.ok(screen.queryByText('SAP.DE')!==null));
  assert.deepEqual(puts,[{symbol:'SAP.DE'}]);assert.ok(screen.queryByRole('button',{name:'Link symbol'})===null);assert.ok(screen.getByRole('button',{name:'Change'})!==null);
 });
-test('transactions table: narrow fetch column, wrapping source text and fitting link column',()=>{
- const css=require_css();
- assert.ok(/\.saving-table \.col-fetch\{width:1%/.test(css));
- assert.ok(/\.saving-table \.col-fetch input[^{]*\{width:18px;min-width:0/.test(css));
- assert.ok(/\.saving-table \.col-source\{min-width:170px[^}]*overflow-wrap:break-word/.test(css));
- assert.ok(!/\.saving-table input\{min-width:120px/.test(css),'global 120px input rule would stretch the checkbox column');
- assert.ok(/\.saving-table td\{[^}]*overflow-wrap:anywhere/.test(css));
+test('transaction fields expose their labels, price provenance and symbol action',async t=>{
+ t.mock.method(globalThis,'fetch',responder());
+ mount();
+ assert.equal((await screen.findByRole('checkbox',{name:'Fetch SAP'})).checked,true);
+ for(const field of ['price','amount','quantity']) assert.ok(screen.getByLabelText(`SAP ${field}`));
+ assert.ok(screen.getByText(item.priceSource));
+ assert.ok(screen.getByRole('button',{name:'Link symbol'}));
 });
 test('keyword fallback is explicit and follows an unsuccessful OpenFIGI search',async t=>{
  const calls=[];t.mock.method(globalThis,'fetch',async(url)=>{calls.push(url);if(url.includes('/online'))return json({results:[]});if(url.includes('/search'))return json([]);throw new Error(`Unexpected ${url}`);});

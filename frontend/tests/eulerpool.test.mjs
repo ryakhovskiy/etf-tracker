@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test, afterEach } from 'node:test';
-import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import React from 'react';
 
@@ -20,7 +19,6 @@ const { today } = await import('../lib/transactions.ts');
 const axe = (await import('axe-core')).default;
 afterEach(() => { cleanup(); sessionStorage.clear(); });
 
-const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8');
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status });
 const initial = { id: 1, name: 'Test', itemCount: 0, instrumentIds: [], itemLimit: 30, createdAt: '' };
 const hsbcLocal = { id: 17, ticker: 'IE00B4X9L533', name: 'HSBC MSCI World UCITS ETF USD', type: 'ETF', isin: 'IE00B4X9L533', wkn: 'A1C9KK', inPortfolio: false };
@@ -251,19 +249,6 @@ test('ETF info panel loads or refreshes the profile and credits Eulerpool', asyn
   assert.equal(screen.getByRole('link', { name: 'assetmanagement.hsbc.co.uk' }).getAttribute('rel'), 'noopener noreferrer');
   assert.ok(screen.queryByRole('option', { name: /IE00B4X9L533/ }) !== null, 'opening the panel does not close the dropdown');
   assert.ok(screen.getByRole('dialog', { hidden: true }) !== null);
-});
-
-test('stylesheet: dark-mode tokens, reduced motion, mobile icon-only button and 44px controls', () => {
-  assert.ok(/@media\(prefers-color-scheme:dark\)\{\.search-picker[^}]*--surface:/.test(css), 'dark tokens for the picker');
-  assert.ok(/@media\(prefers-reduced-motion:reduce\)\{[^}]*\.search-dropdown[^}]*animation:none/.test(css));
-  assert.ok(/@media\(max-width:480px\)\{.*?\.search-button \.label\{display:none\}/.test(css));
-  assert.ok(/\.search-field\{[^}]*height:44px;[^}]*border-radius:12px/.test(css));
-  assert.ok(/\.search-button\{[^}]*height:44px[^}]*border-radius:12px/.test(css));
-  assert.ok(/\.search-field:focus-within\{[^}]*0 0 0 3px var\(--focus-ring\)/.test(css));
-  assert.ok(/\.search-dropdown\{[^}]*min-width:360px[^}]*max-height:420px[^}]*border-radius:12px[^}]*animation:dropdown-in 150ms/.test(css));
-  assert.ok(/\.option\{[^}]*height:56px/.test(css));
-  assert.ok(/\.search-button:active:not\(:disabled\)\{transform:scale\(\.98\)\}/.test(css));
-  assert.ok(/\.search-button:hover:not\(:disabled\)\{filter:brightness\(\.94\)\}/.test(css));
 });
 
 // --- price fetching ---

@@ -9,6 +9,10 @@ test('overflow guard rejects zoomed or clipped overflow and allows a contained h
   // Even if overflow:hidden keeps scrollWidth small, the bounds scan must fail.
   await page.setContent(fixture(`body{overflow-x:hidden}.container{width:${width}px;overflow:hidden}`));
   await expect(assertNoOverflow(page, 'clipped overflow fixture')).rejects.toThrow(/div\.wide/);
+  await page.setContent(fixture('.container{position:relative;left:-40px;width:100px;overflow:hidden}.wide{width:100px}'));
+  await expect(assertNoOverflow(page, 'left-clipped overflow fixture')).rejects.toThrow(/div\.wide/);
+  await page.setContent(fixture(`.container{width:${width}px;margin-left:-40px;overflow-x:auto}`));
+  await expect(assertNoOverflow(page, 'left-shifted scroller fixture')).rejects.toThrow(/div\.container/);
   // A user can scroll content inside this fitting container without page scroll.
   await page.setContent(fixture(`.container{width:${width}px;overflow-x:auto}`));
   await assertNoOverflow(page, 'contained scroller fixture');

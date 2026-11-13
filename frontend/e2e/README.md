@@ -38,8 +38,10 @@ or browser. Theme assertions intentionally require the phase-1 theme engine.
 Additional checks measure populated picker geometry and reduced motion,
 responsive month-card layout, and actual rendered dividend contrast (including
 fill opacity and ancestor opacity). Token contrast alone does not establish AA
-for translucent rendered content. Overflow guards compare against the configured
-device width, then scan visible bounds; content inside a fitting horizontal
+for translucent rendered content. The rendered-contrast helper measures solid
+surfaces; gradients, images, pseudo-elements and overlapping siblings are outside
+its measurement model. Overflow guards compare against the configured
+device width, then scan both left and right bounds; content inside a fitting horizontal
 scroll container is allowed. Oversized or clipped content reports selectors.
 
 Baseline before redesign, commit `0fbbbb715885653e90490d25848e1db85d62d067`:

@@ -181,9 +181,10 @@ func (a *summaryAcc) result() Summary {
 // the quote's own date: units held before the session x (price - previous close
 // in EUR) plus the units bought on or after the session date x (price - line
 // price). The base for the percentage is the value of the units held before the
-// session at the previous close. The previous close is converted with the
-// previous close of the live FX pair (stored with the quote); without it the
-// quote's own rate is used and FX_PREVIOUS_UNAVAILABLE is flagged.
+// session at the previous close. The previous close is converted with the FX
+// close of the same date (PrevFXRate, stored with the quote only when a daily bar
+// dated like the previous close exists); without it the quote's own rate is used
+// and FX_PREVIOUS_UNAVAILABLE is flagged.
 func summarizeLines(lines []TransactionRow, quotes map[int64]*marketdata.Quote) *summaryAcc {
 	acc := newSummaryAcc()
 	p := purchasePerformance(lines)

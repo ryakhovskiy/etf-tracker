@@ -19,10 +19,11 @@ export function Gain({ money, label }: { money: Money | null; label: string }) {
 
 export function PartialHint({ reasons }: { reasons: PortfolioSummary["reasons"] }) {
   const text = reasons.map(reason => reasonText[reason] ?? reason);
-  return <span className="partial-hint partial-detail" tabIndex={0} title={text.join("\n")} aria-label={`Partial figures: ${text.join("; ")}`}>
+  // A real button: focus or tap opens the reasons, and it keeps a 44px hit area on phones.
+  return <button type="button" className="partial-hint ghost" title={text.join("\n")} aria-label={`Partial figures: ${text.join("; ")}`}>
     <span className="badge">partial</span>
     <span className="partial-tooltip" role="tooltip">{text.map(line => <span key={line}>{line}</span>)}</span>
-  </span>;
+  </button>;
 }
 
 /** "as of 14:32 · Yahoo real-time" (oldest used quote); the quote's date when it has no time. */

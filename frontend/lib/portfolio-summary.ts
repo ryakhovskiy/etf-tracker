@@ -23,7 +23,7 @@ export type RefreshState = {
   runningJobId: string | null;
   lastAttemptAt: string | null;
   yahoo: { available: boolean; blockedUntil: string | null };
-  estimate: { requests: number; remaining: number; noSymbol: number[] };
+  estimate: { requests: number; remaining: number; noSymbol: number[] } | null;
 };
 export type Summaries = { summaries: PortfolioSummaryRow[]; total: TotalSummary; refresh: RefreshState };
 export type RefreshResult =

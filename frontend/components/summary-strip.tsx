@@ -43,7 +43,7 @@ export function SummaryStrip({ data, loading, failed, updating, progress, notice
         {updating && <span className="summary-updating" role="status"><span className="spinner" aria-hidden="true" />Updating prices…{progress && progress.total > 0 ? ` ${progress.done}/${progress.total}` : ""}</span>}
         {!updating && hasPositions && <p className="summary-asof"><AsOf summary={total} /></p>}
         {message && !updating && <p className="summary-note" role="status">{message}</p>}
-        {hasPositions && <button type="button" className="summary-refresh" disabled={updating || yahooDown} onClick={onRefresh}>{updating ? "Updating…" : refreshLabel(refresh?.estimate.requests ?? 0)}</button>}
+        {hasPositions && <button type="button" className="summary-refresh" disabled={updating || yahooDown} onClick={onRefresh}>{updating ? "Updating…" : refreshLabel(refresh?.estimate?.requests ?? 0)}</button>}
       </div>
     </>}
   </section>;

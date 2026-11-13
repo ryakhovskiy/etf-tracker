@@ -50,23 +50,32 @@ export function usePortfolioSummaries(enabled: boolean) {
       const result = await api<RefreshResult>("/api/price-refresh-jobs", { method: "POST", body: JSON.stringify(force ? { force: true } : {}) });
       if (!mounted.current) return;
       if (result.started || ("reused" in result && result.reused)) setJobId(result.jobId);
-      else if (result.reason === "YAHOO_UNAVAILABLE") setNotice("Yahoo is cooling down. Showing stored prices.");
+      else {
+        if (result.reason === "YAHOO_UNAVAILABLE") setNotice("Yahoo is cooling down. Showing stored prices.");
+        // Another tab may have refreshed in the meantime: show whatever is stored now.
+        await load();
+      }
     } catch {
       // A failed refresh never raises an error: the stored figures stay on screen.
     } finally {
       if (mounted.current) setStarting(false);
     }
-  }, []);
+  }, [load]);
+
+  /** The first successful load decides, once per visit, whether to join or start the refresh job. */
+  const bootstrap = useCallback(async () => {
+    const next = await load();
+    if (!next || autoTried.current) return next;
+    autoTried.current = true;
+    if (next.refresh.runningJobId) setJobId(next.refresh.runningJobId);
+    else if (next.refresh.autoFetch) void request(false);
+    return next;
+  }, [load, request]);
 
   useEffect(() => {
     if (!enabled) return;
-    void load().then(next => {
-      if (!next || autoTried.current) return;
-      autoTried.current = true;
-      if (next.refresh.runningJobId) setJobId(next.refresh.runningJobId);
-      else if (next.refresh.autoFetch) void request(false);
-    });
-  }, [enabled, load, request]);
+    void bootstrap();
+  }, [enabled, bootstrap]);
 
   useEffect(() => {
     if (!jobId) { setProgress(null); return; }
@@ -92,5 +101,5 @@ export function usePortfolioSummaries(enabled: boolean) {
   }, [jobId, load]);
 
   const refresh = useCallback(() => request(true), [request]);
-  return { data, loading, failed, updating: !!jobId || starting, progress, notice, refresh, retry: load };
+  return { data, loading, failed, updating: !!jobId || starting, progress, notice, refresh, retry: bootstrap };
 }

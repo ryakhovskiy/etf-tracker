@@ -1,11 +1,10 @@
 // Deliberately realistic populated responses: long instrument names, an ETF,
 // positive and negative performance, foreign currency dividends, CSV edits.
 // Unhandled API/auth requests fail the test instead of reaching a real backend.
+import { portfolioSummary, summaryPortfolios } from '../tests/fixtures/portfolio-summary.mjs';
+
 export const themes = ['light', 'dark', 'tech-green', 'tech-cappuccino', 'tech-red'];
-export const portfolio = {
-  id: 1, name: 'Long-term growth & income', itemCount: 2,
-  createdAt: '2026-01-01T12:00:00Z', instrumentIds: [1, 2], itemLimit: 30,
-};
+export const portfolio = summaryPortfolios[0];
 
 const instruments = [
   { id: 1, ticker: 'HMWO.L', name: 'HSBC MSCI World UCITS ETF USD (Distributing)', type: 'ETF', isin: 'IE00B4X9L533', wkn: 'A1C9KK', inPortfolio: true },
@@ -112,7 +111,8 @@ export async function mockAPI(page, { loggedIn = true } = {}) {
     if (path === '/auth/refresh') return json({ error: { code: 'UNAUTHORIZED', message: 'Please sign in.' } }, 401);
     if (path === '/auth/logout') return json({ ok: true });
     if (method === 'GET') {
-      if (path === '/api/portfolios') return json({ portfolios: [portfolio], limit: 10 });
+      if (path === '/api/portfolios') return json({ portfolios: summaryPortfolios, limit: 10 });
+      if (path === '/api/portfolios/summaries') return json(portfolioSummary());
       if (path === '/api/portfolios/1') return json(portfolio);
       if (path === '/api/portfolios/1/performance') return json(selectedPerformance(url));
       if (path === '/api/portfolios/1/transactions') return json(transactions);
@@ -125,6 +125,7 @@ export async function mockAPI(page, { loggedIn = true } = {}) {
       if (path === '/api/instruments/1/etf-profile') return json({ instrumentId: 1, isin: instruments[0].isin, etfCompany: 'HSBC Asset Management', trackingIndex: 'MSCI World', assetClass: 'Equity', domicile: 'Ireland', expenseRatio: '0.15', aumEur: '12500000000', dividendYield: '1.75', inceptionDate: '2010-12-08', currency: 'USD', website: 'https://example.invalid/etf', fetchedAt: '2026-11-12T12:00:00Z', stale: false });
       if (path === '/api/instruments/search') return json([{ id: 3, ticker: 'SAP.DE', name: 'SAP SE', type: 'STOCK', isin: 'DE0007164600', wkn: '716460', inPortfolio: false }]);
     }
+    if (method === 'POST' && path === '/api/price-refresh-jobs') return json({ started: false, reason: 'FRESH' });
     if (method === 'POST' && path === '/api/portfolios/1/imports/parse') return json(preview());
     if (method === 'POST' && path === '/api/portfolios/1/imports/validate') return json(preview(request.postDataJSON().rows.map(row => ({ ...importRow, ...row }))));
     unexpected.push(`${method} ${path}${url.search}`);

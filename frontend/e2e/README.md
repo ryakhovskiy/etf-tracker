@@ -44,6 +44,14 @@ its measurement model. Overflow guards compare against the configured
 device width, then scan both left and right bounds; content inside a fitting horizontal
 scroll container is allowed. Oversized or clipped content reports selectors.
 
+Portfolio-list summaries additionally cover fresh, partial, loading, existing-job,
+automatic-refresh and cooldown states in all five themes at 360px, 375px and
+1280px. Deferred route fixtures control summary/job completion; browser clocks
+exercise cooldown expiry without real waits. These cases retain stored values
+while updating, check partial-reason touch targets and explanation bounds, and
+verify safe manual recovery without repeated automatic job starts. Run only this
+matrix with `npm run test:e2e -- e2e/portfolio-summaries.spec.mjs`.
+
 Baseline before redesign, commit `0fbbbb715885653e90490d25848e1db85d62d067`:
 `npm test` passed (2 library files + 9 component files, zero failures),
 `npm run typecheck` passed, and `npm run build` passed (verified by the lead

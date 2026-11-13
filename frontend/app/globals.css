@@ -5,10 +5,14 @@
  *   layout      app shell, top bar, page frame, tab navigation, grids
  *   components  primitives (buttons, forms, dialog, tiles, badges) and one file per feature
  *   legacy      rules of screens that have not been redesigned yet (shrinks every phase)
+ *   touch       44px touch-target floor, last so nothing overrides it
  */
 @import "./styles/tokens.css";
 @import "./styles/base.css";
 @import "./styles/layout.css";
 @import "./styles/components/primitives.css";
 @import "./styles/components/theme-switcher.css";
+@import "./styles/components/portfolios.css";
+@import "./styles/components/dashboard.css";
 @import "./styles/legacy.css";
+@import "./styles/touch.css";

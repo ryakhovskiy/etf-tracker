@@ -1,0 +1,61 @@
+/* Portfolios list: a grid of tiles, one per portfolio. */
+.portfolios { display: block; }
+
+.portfolio-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: 16px;
+}
+.portfolio-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+}
+.portfolio-card-link {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  color: var(--text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+/* The whole tile is the click target; the action buttons sit above it. */
+.portfolio-card-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.portfolio-card-link:focus-visible { outline: none; }
+.portfolio-card-link:focus-visible::after { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.portfolio-card-link strong { font-family: var(--font-heading); font-size: 18px; font-weight: 650; letter-spacing: -0.01em; }
+.portfolio-card-mark {
+  display: grid; place-items: center;
+  width: 44px; height: 44px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 700;
+}
+.row-actions { position: relative; z-index: 1; display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
+.row-actions button { font-size: 13px; }
+
+.portfolio-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 16px;
+  min-height: 50vh;
+  text-align: center;
+  padding: 40px 24px;
+}
+.empty-mark {
+  display: grid; place-items: center;
+  width: 64px; height: 64px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.portfolios .hint { margin-bottom: 20px; }

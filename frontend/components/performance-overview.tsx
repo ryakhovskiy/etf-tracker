@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import type { Performance } from "../lib/transactions";
 import { HoldingsChart } from "./holdings-chart";
+import { HoldingTiles } from "./holding-tiles";
 import { PerformanceFigures } from "./performance-figures";
 
 const MemoizedHoldingsChart = memo(HoldingsChart);
@@ -48,5 +49,6 @@ export function PerformanceOverview({ id, performance, reload }: { id: string; p
   {error && <p className="error" role="alert">{error}</p>}
   <PerformanceFigures id={id} performance={displayed} fetchPerformance={performance} reload={reload}/>
   <MemoizedHoldingsChart performance={displayed} instruments={performance.series} historyStart={performance.dates[0]} hiddenIds={hiddenIds} onToggleInstrument={toggle}/>
+  <HoldingTiles performance={performance} hiddenIds={hiddenIds}/>
  </div>;
 }

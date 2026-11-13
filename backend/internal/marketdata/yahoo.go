@@ -304,6 +304,9 @@ func ParseYahooSearch(b []byte) ([]YahooHit, error) {
 type YahooQuote struct {
 	Symbol, Currency, Price string
 	At                      time.Time
+	// PrevClose is the previous session's close (chart meta chartPreviousClose,
+	// else previousClose) at the same scale as Price; empty when Yahoo gave none.
+	PrevClose string
 }
 
 // ParseYahooQuotes reads v7/finance/quote. Unknown symbols are simply absent.
@@ -353,10 +356,12 @@ func parseLatest(b []byte, scale int) (YahooQuote, error) {
 		Chart struct {
 			Result []struct {
 				Meta struct {
-					Symbol   string      `json:"symbol"`
-					Currency string      `json:"currency"`
-					Price    json.Number `json:"regularMarketPrice"`
-					Time     json.Number `json:"regularMarketTime"`
+					Symbol        string      `json:"symbol"`
+					Currency      string      `json:"currency"`
+					Price         json.Number `json:"regularMarketPrice"`
+					Time          json.Number `json:"regularMarketTime"`
+					ChartPrevious json.Number `json:"chartPreviousClose"`
+					Previous      json.Number `json:"previousClose"`
 				} `json:"meta"`
 			} `json:"result"`
 			Error *struct {
@@ -382,7 +387,17 @@ func parseLatest(b []byte, scale int) (YahooQuote, error) {
 	if e1 != nil || e2 != nil || ts <= 0 || len(m.Currency) < 3 || len(m.Currency) > 4 || m.Symbol == "" {
 		return YahooQuote{}, ErrYahooNotFound
 	}
-	return YahooQuote{Symbol: m.Symbol, Currency: m.Currency, Price: Fixed(price, scale), At: time.Unix(ts, 0)}, nil
+	out := YahooQuote{Symbol: m.Symbol, Currency: m.Currency, Price: Fixed(price, scale), At: time.Unix(ts, 0)}
+	for _, raw := range []json.Number{m.ChartPrevious, m.Previous} {
+		if raw == "" {
+			continue
+		}
+		if prev, err := Scaled(raw.String(), scale); err == nil {
+			out.PrevClose = Fixed(prev, scale)
+			break
+		}
+	}
+	return out, nil
 }
 
 // YahooPoint is one daily close, dated in the exchange's time zone.
@@ -560,7 +575,11 @@ func (g *YahooGateway) LiveFX(ctx context.Context, user, currency string) (*FXRa
 	if err != nil || q.Currency != "EUR" {
 		return nil, ErrFXUnavailable
 	}
-	return &FXRate{Date: BerlinDay(q.At), Base: ccy, Quote: "EUR", Rate: rate, Source: FXSourceYahoo}, nil
+	fx := &FXRate{Date: BerlinDay(q.At), Base: ccy, Quote: "EUR", Rate: rate, Source: FXSourceYahoo}
+	if q.PrevClose != "" {
+		fx.PrevRate, _ = Scaled(q.PrevClose, 8)
+	}
+	return fx, nil
 }
 
 // History fetches daily closes for the inclusive day range [from, to].

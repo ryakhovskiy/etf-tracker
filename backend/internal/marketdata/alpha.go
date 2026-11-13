@@ -58,13 +58,13 @@ type Budget struct {
 	BlockedUntil    *time.Time `json:"blockedUntil,omitempty"`
 }
 type Quote struct {
-	ID           int64     `json:"quoteId"`
-	InstrumentID int64     `json:"instrumentId"`
-	Price        string    `json:"priceEur"`
-	OrigPrice    string    `json:"origPrice"`
-	Currency     string    `json:"currency"`
-	FXRate       string    `json:"fxRate,omitempty"`
-	FXRateDate   string    `json:"fxRateDate,omitempty"`
+	ID           int64  `json:"quoteId"`
+	InstrumentID int64  `json:"instrumentId"`
+	Price        string `json:"priceEur"`
+	OrigPrice    string `json:"origPrice"`
+	Currency     string `json:"currency"`
+	FXRate       string `json:"fxRate,omitempty"`
+	FXRateDate   string `json:"fxRateDate,omitempty"`
 	// FXSource is empty for an ECB reference rate and FXSourceYahoo for a live rate.
 	FXSource  string `json:"fxSource,omitempty"`
 	QuoteDate string `json:"quoteDate"`
@@ -72,6 +72,10 @@ type Quote struct {
 	QuoteTime time.Time `json:"quoteTime,omitzero"`
 	FetchedAt time.Time `json:"-"`
 	Provider  string    `json:"provider,omitempty"`
+	// PrevClose is the previous session's close in the listing currency (4 dp) and
+	// PrevFXRate the previous close of the live FX pair (8 dp); both empty when unknown.
+	PrevClose  string `json:"-"`
+	PrevFXRate string `json:"-"`
 }
 type AVStore interface {
 	AVBudget(context.Context, string, time.Time, AVLimits) (Budget, error)

@@ -22,6 +22,8 @@ type FXRate struct {
 	Rate  int64  `json:"-"`
 	// Source is empty for ECB reference rates and FXSourceYahoo for a live rate.
 	Source string `json:"-"`
+	// PrevRate is the previous close of a live Yahoo pair (scale 10^8); 0 when unknown.
+	PrevRate int64 `json:"-"`
 }
 type FXProvider interface {
 	Currencies(context.Context) (map[string]bool, error)

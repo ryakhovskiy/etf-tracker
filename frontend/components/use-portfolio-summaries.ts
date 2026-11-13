@@ -35,6 +35,8 @@ export function usePortfolioSummaries(enabled: boolean) {
       if (!Array.isArray(next?.summaries) || !next.total || !next.refresh) throw new Error("Unexpected summaries response");
       if (!mounted.current) return null;
       setData(next); setFailed(false);
+      // A cooldown note is stale once the server reports Yahoo usable again.
+      if (next.refresh.yahoo.available && !next.refresh.yahoo.blockedUntil) setNotice("");
       return next;
     } catch {
       if (mounted.current) setFailed(true);
@@ -99,6 +101,16 @@ export function usePortfolioSummaries(enabled: boolean) {
     void poll();
     return () => { active = false; clearTimeout(timer); };
   }, [jobId, load]);
+
+  // When a known Yahoo cooldown ends, ask again: the server's answer replaces the stale "unavailable" flag.
+  const blockedUntil = data?.refresh.yahoo.blockedUntil ?? null;
+  useEffect(() => {
+    if (!blockedUntil) return;
+    const wait = Date.parse(blockedUntil) - Date.now();
+    if (!Number.isFinite(wait) || wait <= 0) return;
+    const timer = setTimeout(() => { void load(); }, Math.min(2147483647, Math.max(1000, wait + 250)));
+    return () => clearTimeout(timer);
+  }, [blockedUntil, load]);
 
   const refresh = useCallback(() => request(true), [request]);
   return { data, loading, failed, updating: !!jobId || starting, progress, notice, refresh, retry: bootstrap };

@@ -19,9 +19,12 @@ export function SummaryStrip({ data, loading, failed, updating, progress, notice
   const total = data?.total;
   const refresh = data?.refresh;
   const blockedUntil = refresh?.yahoo.blockedUntil && Date.parse(refresh.yahoo.blockedUntil) > Date.now() ? refresh.yahoo.blockedUntil : null;
-  const yahooDown = !!refresh && (!refresh.yahoo.available || !!blockedUntil);
+  // Only a known, running cooldown disables the button. "Unavailable" without a deadline (budget used up)
+  // still allows a manual try: the server's gate answers YAHOO_UNAVAILABLE and no Yahoo call is made.
+  const yahooDown = !!blockedUntil;
+  const yahooUnavailable = !!refresh && !refresh.yahoo.available && !blockedUntil;
   const hasPositions = !!total && total.positionCount > 0;
-  const message = notice || (yahooDown ? `Yahoo is cooling down${blockedUntil ? ` until ${timeLabel(blockedUntil)}` : ""}. Showing stored prices.` : "");
+  const message = notice || (yahooDown ? `Yahoo is cooling down until ${timeLabel(blockedUntil!)}. Showing stored prices.` : yahooUnavailable ? "Yahoo is not available right now. Showing stored prices." : "");
   return <section className={`summary-strip tile${updating ? " is-updating" : ""}`} data-testid="portfolio-summary-strip" aria-label="All portfolios total" aria-busy={loading || updating}>
     {loading && !data ? <>
       <div className="summary-strip-main" aria-hidden="true"><span className="skeleton-line is-hero" /></div>

@@ -28,6 +28,29 @@ export async function ready(page, name) {
           const paintedLabel = await control.evaluate(element => getComputedStyle(element.closest('td'), '::before').content.replace(/^["']|["']$/g, ''));
           expect(paintedLabel, `Mobile CSV field ${label} keeps its visible label`).toBe(label);
         }
+        const include = page.getByRole('checkbox', { name: 'Include row 2', exact: true });
+        await expect(include).toBeChecked();
+        // Prove the full touch target activates the control. Native inputs and
+        // their associated labels are valid hit regions; arbitrary surrounding
+        // layout boxes do not establish an interactive target.
+        const tapEdge = async () => {
+          await include.evaluate(input => input.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }));
+          const targets = await include.evaluate(input => [input, ...input.labels].map(element => {
+            const rect = element.getBoundingClientRect();
+            return { tag: element.tagName, x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+          }));
+          const target = targets.find(rect => rect.width >= 44 && rect.height >= 44);
+          expect(target, `CSV include needs a 44×44 native/associated hit region: ${JSON.stringify(targets)}`).toBeTruthy();
+          const input = await include.boundingBox();
+          const corners = [[target.x + 2, target.y + 2], [target.x + target.width - 2, target.y + 2], [target.x + 2, target.y + target.height - 2], [target.x + target.width - 2, target.y + target.height - 2]];
+          const outsideInput = corners.find(([x, y]) => x < input.x || x > input.x + input.width || y < input.y || y > input.y + input.height);
+          const [x, y] = outsideInput ?? corners[0];
+          await page.touchscreen.tap(x, y);
+        };
+        await tapEdge();
+        await expect(include).not.toBeChecked();
+        await tapEdge();
+        await expect(include).toBeChecked();
       }
     }
     if (name === 'items') await expect(page.getByLabel('Pay-date delay for HMWO.L in days')).toHaveValue('30');

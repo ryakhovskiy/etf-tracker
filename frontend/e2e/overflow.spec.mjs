@@ -16,4 +16,9 @@ test('overflow guard rejects zoomed or clipped overflow and allows a contained h
   // A user can scroll content inside this fitting container without page scroll.
   await page.setContent(fixture(`.container{width:${width}px;overflow-x:auto}`));
   await assertNoOverflow(page, 'contained scroller fixture');
+  // Screen-reader-only headers have no painted area, including descendants.
+  await page.setContent(fixture('.container{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}'));
+  await assertNoOverflow(page, 'zero-area accessibility clip fixture');
+  await page.setContent(fixture('.container{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}'));
+  await assertNoOverflow(page, 'zero-area clip-path fixture');
 });

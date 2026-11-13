@@ -19,6 +19,16 @@ export async function ready(page, name) {
     if (name === 'import') {
       await page.getByLabel('CSV file').setInputFiles({ name: 'holdings-smoke.csv', mimeType: 'text/csv', buffer: Buffer.from(csvFile) });
       await expect(page.getByRole('checkbox', { name: /Include row 2/ })).toBeVisible();
+      if (page.viewportSize().width <= 640) {
+        // In stacked row cards the labels must be painted beside the editable
+        // controls, even though the original table header is visually clipped.
+        for (const label of ['Amount', 'Price €', 'Total €']) {
+          const control = page.getByLabel(`Row 2 ${label}`, { exact: true });
+          await expect(control).toBeVisible();
+          const paintedLabel = await control.evaluate(element => getComputedStyle(element.closest('td'), '::before').content.replace(/^["']|["']$/g, ''));
+          expect(paintedLabel, `Mobile CSV field ${label} keeps its visible label`).toBe(label);
+        }
+      }
     }
     if (name === 'items') await expect(page.getByLabel('Pay-date delay for HMWO.L in days')).toHaveValue('30');
   }
@@ -64,6 +74,17 @@ export async function assertNoOverflow(page, label) {
       for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
         const style = getComputedStyle(ancestor);
         if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) hidden = true;
+        // A native table header may stay accessible while an absolute zero-area
+        // CSS clip hides it and its descendants visually. This differs from
+        // ordinary overflow:hidden, which must still expose clipped-content bugs.
+        if (style.position === 'absolute' || style.position === 'fixed') {
+          const clip = /^rect\((.*)\)$/.exec(style.clip);
+          if (clip) {
+            const edges = clip[1].trim().split(/[,\s]+/).map(parseFloat);
+            if (edges.length === 4 && edges.every(Number.isFinite) && (edges[1] <= edges[3] || edges[2] <= edges[0])) hidden = true;
+          }
+        }
+        if (/^inset\(50%(?:\s+50%){0,3}\)$/.test(style.clipPath)) hidden = true;
         // The scroll container itself must fit. An oversized scroll container
         // is page overflow and is reported in its own iteration.
         const ancestorBounds = ancestor.getBoundingClientRect();

@@ -78,9 +78,22 @@ function dividends(year) {
     perUnitEur: '0.4185', fxRate: '0.93000000', fxRateDate: `${year}-10-15`,
     yieldPct: '0.75', close: '60.00', closeDate: `${year}-10-14`, units: '2.000000', total: '0.84', held: true, warning: null,
   };
+  const entries = [entry, {
+    ...entry, instrumentId: 2, ticker: 'AAPL', isin: instruments[1].isin, shortName: instruments[1].name,
+    kind: 'FORECAST', exDate: `${year}-12-01`, basisExDate: `${year - 1}-12-01`, payDate: `${year}-12-31`, payDateShifted: false,
+    perUnitOrig: '0.2500', perUnitEur: '0.2325', units: '1.000000', total: '0.23',
+  }, {
+    ...entry, instrumentId: 2, ticker: 'AAPL', isin: instruments[1].isin, shortName: instruments[1].name,
+    exDate: `${year}-02-12`, payDate: `${year}-03-16`, paid: true, held: false, units: '0.000000', total: '0.00',
+  }];
   return {
-    year, bounds: { minYear: 2025, maxYear: 2027 }, totals: { received: '0.00', expected: '0.84', total: '0.84' },
-    months: Array.from({ length: 12 }, (_, i) => ({ month: i + 1, total: i === 10 ? '0.84' : '0.00', entries: i === 10 ? [entry] : [], exTotal: i === 9 ? '0.84' : '0.00', exEntries: i === 9 ? [entry] : [] })),
+    year, bounds: { minYear: 2025, maxYear: 2027 }, totals: { received: '0.00', expected: '1.07', total: '1.07' },
+    months: Array.from({ length: 12 }, (_, i) => ({
+      month: i + 1, total: i === 10 ? '0.84' : i === 11 ? '0.23' : '0.00',
+      entries: entries.filter(item => Number(item.payDate.slice(5, 7)) === i + 1),
+      exTotal: i === 9 ? '0.84' : i === 11 ? '0.23' : '0.00',
+      exEntries: entries.filter(item => Number(item.exDate.slice(5, 7)) === i + 1),
+    })),
     sync: { provider: 'YAHOO', lastSyncedAt: '2026-11-13T12:00:00Z', stale: [], errors: [], jobId: null },
   };
 }

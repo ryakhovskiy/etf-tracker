@@ -17,7 +17,10 @@ Each worker's role is in .roles/<name>.md, and shared rules are in .roles/_commo
 ## Startup
 
 1. Check that you're in a Herdr pane: `test "$HERDR_ENV" = 1`.
-2. List the agents and panes. For each worker not yet running, start it with `herdr agent start`.
+2. List the agents and panes. For each worker not yet running, start the workers with these exact commands (one per available worker pane):
+   - frontend, backend: `--kind claude -- --model claude-sonnet-5-5 --effort high`
+   - qa, reviewer, deployment: `--kind codex -- -m gpt-6.1-sol -c model_reasoning_effort=xhigh`
+
 3. Prompt each worker: "Read .roles/_common.md and .roles/<name>.md and follow them. Reply 'ready' when done."
 
 ## Briefing for all workers

@@ -39,6 +39,9 @@ function apiFixture(t, { summary = portfolioSummary(), refresh = { started: fals
 }
 const mount = () => render(React.createElement(AppRouterContext.Provider, { value: { push() {} } }, React.createElement(Portfolios)));
 const posts = calls => calls.filter(call => call.method === 'POST');
+// Rendering "Updating prices" precedes the effect that issues the first poll.
+// Keep the response gated until that request has actually started.
+const waitForSummaryPoll = calls => waitFor(() => assert.equal(calls.filter(call => call.path === '/api/price-fetch-jobs/summary-job').length, 1));
 const strip = () => screen.getByRole('region', { name: 'All portfolios total' });
 const card = name => screen.getAllByTestId('portfolio-card').find(node => within(node).queryByRole('link', { name: new RegExp(name) }));
 async function valueLoaded(value = '1.750,00 €') { await waitFor(() => assert.match(text(strip()), new RegExp(value.replace('.', '\\.')))); }
@@ -76,6 +79,7 @@ test('one automatic user-level job keeps stored values visible and updates them 
   const gate = deferred(); let reads = 0;
   const calls = apiFixture(t, { summary: () => portfolioSummary(++reads === 1 ? 'auto' : 'updated'), refresh: { started: true, reused: false, jobId: 'summary-job', requests: 3 }, job: () => gate.promise });
   mount(); await screen.findByText(/Updating prices/);
+  await waitForSummaryPoll(calls);
   assert.match(text(strip()), /1\.750,00 €/);
   assert.equal(screen.getByRole('button', { name: 'Updating…' }).disabled, true);
   assert.deepEqual(posts(calls), [{ path: '/api/price-refresh-jobs', method: 'POST', body: {} }]);
@@ -92,8 +96,8 @@ test('a running job is joined without starting a second one', async t => {
   const gate = deferred(); let reads = 0;
   const calls = apiFixture(t, { summary: () => portfolioSummary(++reads === 1 ? 'updating' : 'updated'), job: () => gate.promise });
   mount(); await screen.findByText(/Updating prices/);
+  await waitForSummaryPoll(calls);
   assert.equal(posts(calls).length, 0);
-  assert.equal(calls.filter(call => call.path === '/api/price-fetch-jobs/summary-job').length, 1);
   await act(async () => gate.resolve(doneJob)); await valueLoaded('1.780,00 €');
   assert.equal(posts(calls).length, 0);
 });
@@ -178,6 +182,7 @@ for (const state of ['auto', 'updating']) test(`retry after initial GET failure 
   });
   mount(); fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
   await screen.findByText(/Updating prices/);
+  await waitForSummaryPoll(calls);
   assert.equal(posts(calls).length, state === 'auto' ? 1 : 0);
   await act(async () => gate.resolve(doneJob)); await valueLoaded('1.780,00 €');
   assert.equal(reads, 3);

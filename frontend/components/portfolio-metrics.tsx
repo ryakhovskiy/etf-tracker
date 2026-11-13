@@ -1,3 +1,5 @@
+"use client";
+import { useEffect, useId, useRef, useState } from "react";
 import { dateLabel, performanceDisplay } from "../lib/performance";
 import { reasonText, sourceLabel, type Money, type PortfolioSummary } from "../lib/portfolio-summary";
 import { euro } from "../lib/transactions";
@@ -17,12 +19,35 @@ export function Gain({ money, label }: { money: Money | null; label: string }) {
   return <span className={`metric-value performance-${display.tone}`}>{display.text}</span>;
 }
 
+/**
+ * "partial" badge with the reasons. A button: click/tap toggles the explanation, Escape and a
+ * tap elsewhere dismiss it (focus stays on the button), hover shows it for pointer users.
+ */
 export function PartialHint({ reasons }: { reasons: PortfolioSummary["reasons"] }) {
   const text = reasons.map(reason => reasonText[reason] ?? reason);
-  // A real button: focus or tap opens the reasons, and it keeps a 44px hit area on phones.
-  return <button type="button" className="partial-hint ghost" title={text.join("\n")} aria-label={`Partial figures: ${text.join("; ")}`}>
+  // `pinned` is the explicit toggle (tap, click, Enter/Space); `hover` is a mouse passing over.
+  const [pinned, setPinned] = useState(false);
+  const [hover, setHover] = useState(false);
+  const open = pinned || hover;
+  const close = () => { setPinned(false); setHover(false); };
+  const root = useRef<HTMLButtonElement>(null);
+  const tooltipId = useId();
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) close(); };
+    // Escape dismisses the explanation wherever focus or the pointer is (WCAG 1.4.13).
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
+  }, [open]);
+  return <button ref={root} type="button" className="partial-hint ghost" aria-expanded={open} aria-describedby={open ? tooltipId : undefined}
+    aria-label={`Partial figures: ${text.join("; ")}`}
+    onClick={() => { if (open) close(); else setPinned(true); }}
+    onPointerEnter={event => { if (event.pointerType === "mouse") setHover(true); }}
+    onPointerLeave={() => setHover(false)}>
     <span className="badge">partial</span>
-    <span className="partial-tooltip" role="tooltip">{text.map(line => <span key={line}>{line}</span>)}</span>
+    <span className="partial-tooltip" role="tooltip" id={tooltipId} hidden={!open}>{text.map(line => <span key={line}>{line}</span>)}</span>
   </button>;
 }
 

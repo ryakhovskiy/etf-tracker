@@ -119,7 +119,8 @@
 .partial-hint { position: relative; display: inline-flex; align-items: center; vertical-align: middle; min-height: 28px; margin-left: 4px; padding: 0 2px; border: 0; background: none; font-weight: inherit; }
 .partial-hint:hover:not(:disabled) { background: none; box-shadow: none; }
 .partial-hint .partial-tooltip { text-align: left; font-weight: 400; font-family: var(--font-sans); letter-spacing: 0; text-transform: none; white-space: normal; max-width: min(320px, calc(100vw - 32px)); }
-.partial-hint:hover .partial-tooltip, .partial-hint:focus .partial-tooltip, .partial-hint:focus-within .partial-tooltip { display: block; }
+.partial-hint .partial-tooltip { display: block; }
+.partial-hint .partial-tooltip[hidden] { display: none; }
 /* Right-aligned values open their tooltip leftwards so it never leaves the card. */
 .metric-row .partial-hint .partial-tooltip { left: auto; right: 0; }
 @media (max-width: 640px) {

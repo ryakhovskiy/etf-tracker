@@ -13,7 +13,7 @@ export { HoldingsChart, instrumentColor } from "./holdings-chart";
 export function Dashboard({id}:{id:string}){
  const [pageSize,setPageSize]=useState(50);
  const fieldLabels=["Date","Ticker","Name","Quantity","Price €","Amount €","Performance","Source"];
- const columns=useTableColumns(fieldLabels,{summary:"Fields shown",reset:"Reset fields"});
+ const columns=useTableColumns(fieldLabels);
  const {revision,changed,activeTab}=usePortfolioUpdates();
  const requestVersion=useRef(0);
  const [data,setData]=useState<{performance:Performance;transactions:TransactionPage;items:number}|null>(null);const [page,setPage]=useState(1);const [error,setError]=useState("");const [toast,setToast]=useState("");const [deleting,setDeleting]=useState<TransactionRow|null>(null);const [busy,setBusy]=useState(false);const [loading,setLoading]=useState(false);

@@ -1,7 +1,7 @@
 "use client";
 import { Children, cloneElement, isValidElement, useState, type ReactElement, type ReactNode } from "react";
 
-export function useTableColumns(labels: string[], text = { summary: "Columns", reset: "Reset columns" }) {
+export function useTableColumns(labels: string[], text = { summary: "Fields shown", reset: "Reset fields" }) {
  const [order, setOrder] = useState(() => labels.map((_, index) => index));
  const [hidden, setHidden] = useState<number[]>([]);
  const visible = order.filter(index => !hidden.includes(index));

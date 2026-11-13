@@ -1,0 +1,317 @@
+/*
+ * Design tokens: the ONLY place in the app where colours are written down.
+ *
+ * Every theme defines the same set of semantic custom properties on
+ * html[data-theme="<name>"]. Component CSS and TSX reference these tokens
+ * (var(--surface), var(--series-3), ...) and never a literal colour, so
+ * switching html[data-theme] restyles the whole app, charts included.
+ *
+ * Themes: light, dark, tech-green, tech-cappuccino (Catppuccin Mocha), tech-red.
+ * "System" is not a theme of its own: the theme script resolves it to light or
+ * dark from prefers-color-scheme and keeps html[data-theme-pref="system"].
+ *
+ * Contrast is verified by scripts/check-theme-contrast.mjs (WCAG AA).
+ *
+ * Token groups
+ *   page      --bg  --bg-texture
+ *   surfaces  --surface  --surface-raised  --surface-sunken
+ *   lines     --border (decorative hairlines)  --border-strong (control edges, 3:1)
+ *   text      --text  --text-muted  --link
+ *   accent    --accent  --accent-hover  --accent-soft  --on-accent
+ *   status    --positive  --negative  --warning  --info  (+ -soft tints)
+ *   effects   --shadow  --shadow-raised  --glow  --overlay  --focus-ring
+ *   shape     --radius-sm  --radius  --radius-lg
+ *   type      --font-sans  --font-mono  --font-heading  --font-figure  --label-case  --label-tracking
+ *   charts    --chart-grid  --chart-axis  --series-1..7  --div-ex-a..e  --div-ex-opacity
+ */
+
+/* ---------- Shared, theme-independent tokens ---------- */
+:root {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --font-heading: var(--font-sans);
+  --font-figure: var(--font-sans);
+  --label-case: none;
+  --label-tracking: 0;
+  --bg-texture: none;
+  --glow: none;
+  --ease: cubic-bezier(.2, .7, .2, 1);
+  --header-height: 60px;
+  --tabbar-height: 64px;
+  --content-width: 1360px;
+  /* Third-party brand colours (Google logo); identical in every theme. */
+  --google-blue: #4285f4;
+  --google-green: #34a853;
+  --google-yellow: #fbbc05;
+  --google-red: #ea4335;
+}
+
+/* ---------- Light ---------- */
+html[data-theme="light"],
+html:not([data-theme]),
+[data-theme-preview="light"] {
+  color-scheme: light;
+  --bg: #f3f5f4;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #eef1ef;
+  --border: #e3e8e5;
+  --border-strong: #7d8781;
+  --text: #121715;
+  --text-muted: #56615b;
+  --link: #0a6c4c;
+  --accent: #0b7a55;
+  --accent-hover: #086445;
+  --accent-soft: #dff3ea;
+  --on-accent: #ffffff;
+  --positive: #0b7447;
+  --positive-soft: #dcf3e7;
+  --negative: #b4281f;
+  --negative-soft: #fbe4e1;
+  --warning: #7a4f00;
+  --warning-soft: #fdf0cf;
+  --info: #2b4f9e;
+  --info-soft: #e4ebf9;
+  --focus-ring: #0b7a55;
+  --overlay: rgb(18 23 21 / 0.45);
+  --shadow: 0 1px 2px rgb(18 23 21 / 0.06), 0 6px 20px rgb(18 23 21 / 0.06);
+  --shadow-raised: 0 2px 4px rgb(18 23 21 / 0.08), 0 14px 36px rgb(18 23 21 / 0.14);
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 18px;
+  --chart-grid: #e3e8e5;
+  --chart-axis: #56615b;
+  --series-1: #0b7a55;
+  --series-2: #3366b8;
+  --series-3: #b07a0c;
+  --series-4: #8a4fa0;
+  --series-5: #c4482f;
+  --series-6: #5f8a1e;
+  --series-7: #14899b;
+  --div-ex-a: #6b7280;
+  --div-ex-b: #7d848e;
+  --div-ex-c: #4b5058;
+  --div-ex-d: #8d939b;
+  --div-ex-e: #80868f;
+  --div-ex-opacity: 0.55;
+}
+
+/* ---------- Dark ---------- */
+html[data-theme="dark"],
+[data-theme-preview="dark"] {
+  color-scheme: dark;
+  --bg: #0d1110;
+  --surface: #151a18;
+  --surface-raised: #1c2320;
+  --surface-sunken: #0f1412;
+  --border: #27302c;
+  --border-strong: #77837c;
+  --text: #e9eeeb;
+  --text-muted: #9ba8a1;
+  --link: #4fd8a0;
+  --accent: #34d399;
+  --accent-hover: #5fe0b0;
+  --accent-soft: #14392c;
+  --on-accent: #04150e;
+  --positive: #4ade9a;
+  --positive-soft: #123a29;
+  --negative: #ff8379;
+  --negative-soft: #43201d;
+  --warning: #f2c14e;
+  --warning-soft: #3c2f10;
+  --info: #8fb0ff;
+  --info-soft: #1f2d4f;
+  --focus-ring: #6ee7b7;
+  --overlay: rgb(0 0 0 / 0.62);
+  --shadow: 0 0 0 1px rgb(255 255 255 / 0.02), 0 8px 24px rgb(0 0 0 / 0.35);
+  --shadow-raised: 0 0 0 1px rgb(255 255 255 / 0.04), 0 18px 44px rgb(0 0 0 / 0.55);
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 18px;
+  --chart-grid: #27302c;
+  --chart-axis: #9ba8a1;
+  --series-1: #34d399;
+  --series-2: #7aa2f7;
+  --series-3: #f2c14e;
+  --series-4: #c58ae0;
+  --series-5: #ff8f7a;
+  --series-6: #a3d65c;
+  --series-7: #4fd0e0;
+  --div-ex-a: #a3abb5;
+  --div-ex-b: #7c848e;
+  --div-ex-c: #c9cfd6;
+  --div-ex-d: #5f6670;
+  --div-ex-e: #8e96a0;
+  --div-ex-opacity: 0.55;
+}
+
+/* ---------- Tech Green: terminal / trading desk, phosphor accent ---------- */
+html[data-theme="tech-green"],
+[data-theme-preview="tech-green"] {
+  color-scheme: dark;
+  --font-heading: var(--font-mono);
+  --font-figure: var(--font-mono);
+  --label-case: uppercase;
+  --label-tracking: 0.08em;
+  --bg: #050907;
+  --bg-texture:
+    linear-gradient(rgb(46 255 122 / 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(46 255 122 / 0.035) 1px, transparent 1px);
+  --surface: #09110d;
+  --surface-raised: #0e1912;
+  --surface-sunken: #060c09;
+  --border: #1b3a27;
+  --border-strong: #3f8a5c;
+  --text: #d3f5de;
+  --text-muted: #7fb494;
+  --link: #3dff8a;
+  --accent: #2dff7a;
+  --accent-hover: #6bffa3;
+  --accent-soft: #0c3320;
+  --on-accent: #02130a;
+  --positive: #3dff8a;
+  --positive-soft: #0c3320;
+  --negative: #ff6b72;
+  --negative-soft: #3d1519;
+  --warning: #ffcf4d;
+  --warning-soft: #33290a;
+  --info: #5fd7ff;
+  --info-soft: #0c2e3a;
+  --focus-ring: #2dff7a;
+  --overlay: rgb(0 4 2 / 0.72);
+  --shadow: 0 0 0 1px rgb(45 255 122 / 0.05);
+  --shadow-raised: 0 0 0 1px rgb(45 255 122 / 0.18), 0 0 28px rgb(45 255 122 / 0.12);
+  --glow: 0 0 0 1px rgb(45 255 122 / 0.35), 0 0 18px rgb(45 255 122 / 0.18);
+  --radius-sm: 3px;
+  --radius: 5px;
+  --radius-lg: 6px;
+  --chart-grid: #15301f;
+  --chart-axis: #7fb494;
+  --series-1: #2dff7a;
+  --series-2: #35d4ff;
+  --series-3: #ffcf4d;
+  --series-4: #d78bff;
+  --series-5: #ff8a5c;
+  --series-6: #b5ff4d;
+  --series-7: #3fe0c5;
+  --div-ex-a: #8aa194;
+  --div-ex-b: #6b8576;
+  --div-ex-c: #b6cbbf;
+  --div-ex-d: #4e6559;
+  --div-ex-e: #9db3a7;
+  --div-ex-opacity: 0.6;
+}
+
+/* ---------- Tech Cappuccino: Catppuccin Mocha ---------- */
+html[data-theme="tech-cappuccino"],
+[data-theme-preview="tech-cappuccino"] {
+  color-scheme: dark;
+  --font-heading: var(--font-mono);
+  --font-figure: var(--font-mono);
+  --label-case: uppercase;
+  --label-tracking: 0.07em;
+  --bg: #11111b;                 /* crust */
+  --bg-texture: none;
+  --surface: #1e1e2e;            /* base */
+  --surface-raised: #313244;     /* surface0 */
+  --surface-sunken: #181825;     /* mantle */
+  --border: #313244;             /* surface0 */
+  --border-strong: #7f849c;      /* overlay1 */
+  --text: #cdd6f4;
+  --text-muted: #a6adc8;         /* subtext0 */
+  --link: #b4befe;               /* lavender */
+  --accent: #cba6f7;             /* mauve */
+  --accent-hover: #dcc3fa;
+  --accent-soft: #3a2f52;
+  --on-accent: #11111b;
+  --positive: #a6e3a1;           /* green */
+  --positive-soft: #26382a;
+  --negative: #f38ba8;           /* red */
+  --negative-soft: #43232f;
+  --warning: #f9e2af;            /* yellow */
+  --warning-soft: #3d3524;
+  --info: #89b4fa;               /* blue */
+  --info-soft: #25324f;
+  --focus-ring: #cba6f7;
+  --overlay: rgb(17 17 27 / 0.7);
+  --shadow: 0 0 0 1px rgb(205 214 244 / 0.04);
+  --shadow-raised: 0 0 0 1px rgb(205 214 244 / 0.08), 0 14px 34px rgb(0 0 0 / 0.5);
+  --glow: 0 0 0 1px rgb(203 166 247 / 0.35), 0 0 16px rgb(203 166 247 / 0.14);
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --chart-grid: #313244;
+  --chart-axis: #a6adc8;
+  --series-1: #cba6f7;           /* mauve */
+  --series-2: #89b4fa;           /* blue */
+  --series-3: #a6e3a1;           /* green */
+  --series-4: #fab387;           /* peach */
+  --series-5: #94e2d5;           /* teal */
+  --series-6: #f5c2e7;           /* pink */
+  --series-7: #f9e2af;           /* yellow */
+  --div-ex-a: #9399b2;           /* overlay2 */
+  --div-ex-b: #7f849c;           /* overlay1 */
+  --div-ex-c: #bac2de;           /* subtext1 */
+  --div-ex-d: #6c7086;           /* overlay0 */
+  --div-ex-e: #a6adc8;           /* subtext0 */
+  --div-ex-opacity: 0.6;
+}
+
+/* ---------- Tech Red: charcoal base, crimson chrome ----------
+ * Gains are teal-green and losses amber-orange, so a loss never reads as the
+ * crimson accent. The accent is reserved for chrome (buttons, links, focus). */
+html[data-theme="tech-red"],
+[data-theme-preview="tech-red"] {
+  color-scheme: dark;
+  --font-heading: var(--font-mono);
+  --font-figure: var(--font-mono);
+  --label-case: uppercase;
+  --label-tracking: 0.08em;
+  --bg: #0a0708;
+  --bg-texture:
+    linear-gradient(rgb(255 70 90 / 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 70 90 / 0.03) 1px, transparent 1px);
+  --surface: #130d0f;
+  --surface-raised: #1d1316;
+  --surface-sunken: #0d0809;
+  --border: #3a1a21;
+  --border-strong: #9a4a58;
+  --text: #f3e6e8;
+  --text-muted: #b8979d;
+  --link: #ff7d8f;
+  --accent: #ff4d63;
+  --accent-hover: #ff7d8f;
+  --accent-soft: #4a1520;
+  --on-accent: #1a0509;
+  --positive: #3fd9a3;
+  --positive-soft: #0f3a2c;
+  --negative: #ffa24d;
+  --negative-soft: #432810;
+  --warning: #f4dc6b;
+  --warning-soft: #3a3210;
+  --info: #84b7ff;
+  --info-soft: #1c2d4d;
+  --focus-ring: #ff7d8f;
+  --overlay: rgb(8 2 3 / 0.74);
+  --shadow: 0 0 0 1px rgb(255 77 99 / 0.05);
+  --shadow-raised: 0 0 0 1px rgb(255 77 99 / 0.2), 0 0 28px rgb(255 77 99 / 0.12);
+  --glow: 0 0 0 1px rgb(255 77 99 / 0.4), 0 0 18px rgb(255 77 99 / 0.2);
+  --radius-sm: 3px;
+  --radius: 5px;
+  --radius-lg: 6px;
+  --chart-grid: #2c1419;
+  --chart-axis: #b8979d;
+  --series-1: #ff4d63;
+  --series-2: #5ab4ff;
+  --series-3: #f4dc6b;
+  --series-4: #3fd9a3;
+  --series-5: #c58aff;
+  --series-6: #ffa24d;
+  --series-7: #7ee0e8;
+  --div-ex-a: #a89a9d;
+  --div-ex-b: #80737a;
+  --div-ex-c: #cfc3c6;
+  --div-ex-d: #7b6e73;
+  --div-ex-e: #92868a;
+  --div-ex-opacity: 0.6;
+}

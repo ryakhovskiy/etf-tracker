@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Suspense, useEffect, useState, type ReactNode } from "react";
 import type { PortfolioDetail } from "../lib/api";
+import { IconDashboard, IconDividends, IconImport, IconItems, IconTransactions } from "./icons";
 import { Dashboard } from "./dashboard";
 import { PortfolioItems } from "./portfolio-items";
 import { PortfolioUpdatesProvider, type PortfolioTab } from "./portfolio-updates";
@@ -12,12 +13,12 @@ import { Transactions } from "./transactions";
 import { CSVImport } from "./csv-import";
 import { Dividends } from "./dividends";
 
-const tabs: { path: PortfolioTab; label: string }[] = [
-  { path: "dashboard", label: "Dashboard" },
-  { path: "transactions", label: "Transactions" },
-  { path: "dividends", label: "Dividends" },
-  { path: "import", label: "Import" },
-  { path: "items", label: "Manage items" },
+const tabs: { path: PortfolioTab; label: string; short?: string; Icon: (props: { size?: number }) => ReactNode }[] = [
+  { path: "dashboard", label: "Dashboard", Icon: IconDashboard },
+  { path: "transactions", label: "Transactions", Icon: IconTransactions },
+  { path: "dividends", label: "Dividends", Icon: IconDividends },
+  { path: "import", label: "Import", Icon: IconImport },
+  { path: "items", label: "Manage items", short: "Items", Icon: IconItems },
 ];
 
 export function PortfolioPanels({ portfolio, activeTab }: { portfolio: PortfolioDetail; activeTab: PortfolioTab }) {
@@ -46,7 +47,8 @@ export function PortfolioWorkspace({ portfolio, children }: { portfolio: Portfol
       scroll={false}
       aria-current={activeTab === tab.path ? "page" : undefined}
       onNavigate={() => setActiveTab(tab.path)}
-    >{tab.label}</Link>)}</nav>
+      aria-label={tab.label}
+    ><tab.Icon size={20} /><span className="tab-label" data-short={tab.short}>{tab.label}</span></Link>)}</nav>
     <PortfolioPanels key={portfolio.id} portfolio={portfolio} activeTab={activeTab} />
     {children}
   </>;

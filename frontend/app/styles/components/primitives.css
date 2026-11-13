@@ -76,6 +76,16 @@ input[type="number"], input[inputmode="decimal"], input[inputmode="numeric"] { f
   input[type="checkbox"], input[type="radio"] { min-height: 20px; }
 }
 
+/* A label that wraps a checkbox is the hit area: keep it a comfortable target. */
+label:has(> input[type="checkbox"], > input[type="radio"]) { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; margin-bottom: 0; }
+
+/* Touch baseline: every control is at least 44px tall on phones and touch devices. */
+@media (max-width: 640px), (pointer: coarse) {
+  button, .button, .table-columns summary, .page-size select, .column-option button, .back-link { min-height: 44px; }
+  .icon-button { width: 44px; }
+  .column-option { min-height: 44px; }
+}
+
 /* ---------- Dialog (centered card; bottom sheet on phones) ---------- */
 dialog {
   width: min(480px, calc(100% - 32px));

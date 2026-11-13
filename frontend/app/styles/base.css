@@ -19,7 +19,6 @@ body {
   background-size: 36px 36px;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  overflow-x: hidden;
 }
 
 [hidden] { display: none !important; }

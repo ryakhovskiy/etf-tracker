@@ -10,8 +10,8 @@ import { THEME_STORAGE_KEY, applyTheme, currentPreference, readStoredPreference 
 export function ThemeSync() {
   useEffect(() => {
     // Covers a head script that could not run (or storage that changed before hydration).
-    const stored = readStoredPreference();
-    if (stored !== currentPreference()) applyTheme(stored);
+    // Always re-resolve: an OS change between the head script and this effect would otherwise be missed.
+    applyTheme(readStoredPreference());
     let query: MediaQueryList | null = null;
     try { query = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null; } catch { query = null; }
     const onSystemChange = () => { if (currentPreference() === "system") applyTheme("system"); };

@@ -34,7 +34,7 @@
   --label-case: none;
   --label-tracking: 0;
   --bg-texture: none;
-  --glow: none;
+  --glow: 0 0 0 0 transparent; /* "no glow" that stays valid inside a comma-separated box-shadow */
   --ease: cubic-bezier(.2, .7, .2, 1);
   --header-height: 60px;
   --tabbar-height: 64px;

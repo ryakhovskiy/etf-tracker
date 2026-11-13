@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
-import { PriceFetch, SymbolLink } from "./price-fetch";
+import { PriceFetch } from "./price-fetch";
+import { PlanTile } from "./plan-tile";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type SetStateAction } from "react";
 import { api, APIError } from "../lib/api";
@@ -26,11 +27,73 @@ export function Transactions({id}:{id:string}){
  const enabled=rows?.some(r=>{try{return decimal(r.amount,2,true).gt(0);}catch{return false;}})??false;
  const problems=rows?.some(r=>!!rowProblem(r));
  const dateError=date<"1990-01-01"||date>today()||!date;
- return <section className="transactions"><h2>Transactions</h2>{error&&<p className="error" role="alert">{error}</p>}{!rows?<p role="status">Loading transactions…</p>:!rows.length?<p>No items yet. <Link href={`/portfolios/${id}/items`}>Manage items</Link></p>:<><div className="plan-controls tile"><div className="date-field"><label htmlFor="trade-date">Transaction date</label><input id="trade-date" type="date" min="1990-01-01" max={today()} value={date} onChange={e=>setDate(e.target.value)} disabled={busy||fetching}/>{dateError&&<p className="error">Choose a date from 1990-01-01 through today.</p>}</div><PriceFetch id={id} date={date} rows={rows} selected={selected??rows.filter(fetchable).map(r=>r.instrumentId)} setRows={setRows} reload={(recover)=>load(true,()=>true,recover)} busy={busy} onFetching={setFetching}/></div><ul className="plan-grid" aria-label="Instruments">{rows.map((row,index)=>{const fetchIds=selected??rows.filter(fetchable).map(r=>r.instrumentId);return <li key={row.instrumentId} className="plan-tile tile" data-testid={`plan-row-${row.instrumentId}`} aria-label={`${row.ticker} ${row.name}`}>
-  <div className="plan-head"><label className="plan-fetch"><input type="checkbox" aria-label={`Fetch ${row.ticker}`} disabled={!fetchable(row)||busy||fetching} checked={fetchable(row)&&fetchIds.includes(row.instrumentId)} onChange={e=>{const checked=e.target.checked;setSelected(current=>{const ids=current??rows.filter(fetchable).map(r=>r.instrumentId);return checked?[...ids,row.instrumentId]:ids.filter(id=>id!==row.instrumentId);});}}/><span aria-hidden="true">Fetch</span></label><div className="plan-title"><span className="plan-ticker">{row.ticker}</span><span className="plan-name">{row.name}</span></div>{row.type&&<span className={`pill ${row.type==="ETF"?"pill-etf":"pill-stock"}`}>{row.type==="ETF"?"ETF":"Stock"}</span>}</div>
-  <div className="plan-inputs">{([["price","Price €"],["amount","Amount €"],["quantity","Quantity"]] as const).map(([field,caption])=>{const noPrice=!hasPrice(row.price);return <div key={field} className="plan-field"><span className="field-caption" aria-hidden="true">{caption}</span><label className="sr-only" htmlFor={`${field}-${row.instrumentId}`}>{row.ticker} {field}</label><input id={`${field}-${row.instrumentId}`} inputMode="decimal" value={field==="quantity"&&noPrice?"":row[field].replace(".",",")} placeholder={field==="quantity"&&noPrice?"–":undefined} disabled={busy||fetching||(field==="quantity"&&noPrice)} aria-invalid={!!row.errors[field]} onChange={e=>setRows(current=>current!.map((r,i)=>i===index?editRow(r,field,e.target.value):r))}/>{row.errors[field]&&<p className="error">{row.errors[field]}</p>}{field==="price"&&rowProblem(row)&&!row.errors.price&&<p className="error">{rowProblem(row)}</p>}</div>;})}</div>
-  <div className="plan-foot"><p className="plan-source muted">{row.priceSource}</p><SymbolLink row={row} reload={()=>load(true)}/></div>
- </li>;})}</ul><div className="saving-total plan-summary tile"><strong>Grand total: {euro(total(rows))}</strong><button className="primary" disabled={busy||fetching||!enabled||problems||dateError} onClick={()=>{const lines=rows.filter(r=>decimal(r.amount,2,true).gt(0)).map(r=>({instrumentId:r.instrumentId,...(r.quoteId?{quoteId:r.quoteId}:{}),amount:decimal(r.amount,2).toFixed(2),price:decimal(r.price,4).toFixed(4),quantity:decimal(r.quantity,6).toFixed(6)}));void commit(lines);}}>{busy?"Committing…":"Commit transaction"}</button></div></>}
- {duplicate&&<Modal title="A matching transaction exists" close={()=>{if(!busy)setDuplicate(null);}}><p>A matching transaction exists. Skip matching lines or commit anyway.</p><ul>{duplicate.matches.map((l,i)=><li key={i}>{rows?.find(r=>r.instrumentId===l.instrumentId)?.ticker}: {l.quantity} × {euro(l.price)}</li>)}</ul><div className="dialog-actions"><button disabled={busy} onClick={()=>setDuplicate(null)}>Cancel</button><button disabled={busy} onClick={()=>{const rest=duplicate.lines.filter(l=>!duplicate.matches.some(m=>m.instrumentId===l.instrumentId&&m.quantity===l.quantity&&m.price===l.price));if(rest.length)void commit(rest);else{setDuplicate(null);setError("All matching lines were skipped. No transaction was created.");}}}>Skip</button><button className="primary" disabled={busy} onClick={()=>void commit(duplicate.lines,true)}>Commit anyway</button></div></Modal>}
- </section>;
+  const fetchIds = selected ?? rows?.filter(fetchable).map(r => r.instrumentId) ?? [];
+  const toggleFetch = (instrumentId: number, checked: boolean) => setSelected(current => {
+    const ids = current ?? rows?.filter(fetchable).map(r => r.instrumentId) ?? [];
+    return checked ? [...ids, instrumentId] : ids.filter(value => value !== instrumentId);
+  });
+  const commitPlan = () => {
+    const lines = rows!.filter(r => decimal(r.amount, 2, true).gt(0)).map(r => ({
+      instrumentId: r.instrumentId,
+      ...(r.quoteId ? { quoteId: r.quoteId } : {}),
+      amount: decimal(r.amount, 2).toFixed(2),
+      price: decimal(r.price, 4).toFixed(4),
+      quantity: decimal(r.quantity, 6).toFixed(6),
+    }));
+    void commit(lines);
+  };
+  const skipMatching = () => {
+    if (!duplicate) return;
+    const rest = duplicate.lines.filter(l => !duplicate.matches.some(m => m.instrumentId === l.instrumentId && m.quantity === l.quantity && m.price === l.price));
+    if (rest.length) void commit(rest);
+    else { setDuplicate(null); setError("All matching lines were skipped. No transaction was created."); }
+  };
+  return (
+    <section className="transactions">
+      <h2>Transactions</h2>
+      {error && <p className="error" role="alert">{error}</p>}
+      {!rows ? <p role="status">Loading transactions…</p>
+        : !rows.length ? <p>No items yet. <Link href={`/portfolios/${id}/items`}>Manage items</Link></p>
+        : <>
+          <div className="plan-controls tile">
+            <div className="date-field">
+              <label htmlFor="trade-date">Transaction date</label>
+              <input id="trade-date" type="date" min="1990-01-01" max={today()} value={date} onChange={e => setDate(e.target.value)} disabled={busy || fetching} />
+              {dateError && <p className="error">Choose a date from 1990-01-01 through today.</p>}
+            </div>
+            <PriceFetch id={id} date={date} rows={rows} selected={fetchIds} setRows={setRows} reload={recover => load(true, () => true, recover)} busy={busy} onFetching={setFetching} />
+          </div>
+          <ul className="plan-grid" aria-label="Instruments">
+            {rows.map((row, index) => (
+              <PlanTile
+                key={row.instrumentId}
+                row={row}
+                canFetch={fetchable(row)}
+                fetchChecked={fetchIds.includes(row.instrumentId)}
+                fetchDisabled={busy || fetching}
+                inputsDisabled={busy || fetching}
+                onToggleFetch={checked => toggleFetch(row.instrumentId, checked)}
+                onEdit={(field, value) => setRows(current => current!.map((r, i) => i === index ? editRow(r, field, value) : r))}
+                reload={() => load(true)}
+              />
+            ))}
+          </ul>
+          <div className="saving-total plan-summary tile">
+            <strong>Grand total: {euro(total(rows))}</strong>
+            <button className="primary" disabled={busy || fetching || !enabled || problems || dateError} onClick={commitPlan}>{busy ? "Committing…" : "Commit transaction"}</button>
+          </div>
+        </>}
+      {duplicate && (
+        <Modal title="A matching transaction exists" close={() => { if (!busy) setDuplicate(null); }}>
+          <p>A matching transaction exists. Skip matching lines or commit anyway.</p>
+          <ul>{duplicate.matches.map((l, i) => <li key={i}>{rows?.find(r => r.instrumentId === l.instrumentId)?.ticker}: {l.quantity} × {euro(l.price)}</li>)}</ul>
+          <div className="dialog-actions">
+            <button disabled={busy} onClick={() => setDuplicate(null)}>Cancel</button>
+            <button disabled={busy} onClick={skipMatching}>Skip</button>
+            <button className="primary" disabled={busy} onClick={() => void commit(duplicate.lines, true)}>Commit anyway</button>
+          </div>
+        </Modal>
+      )}
+    </section>
+  );
 }

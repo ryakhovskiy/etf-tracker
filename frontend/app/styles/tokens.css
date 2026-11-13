@@ -91,9 +91,9 @@ html:not([data-theme]),
   --div-ex-a: #6b7280;
   --div-ex-b: #7d848e;
   --div-ex-c: #4b5058;
-  --div-ex-d: #8d939b;
+  --div-ex-d: #7f8590;
   --div-ex-e: #80868f;
-  --div-ex-opacity: 0.55;
+  --div-ex-opacity: 0.9;
 }
 
 /* ---------- Dark ---------- */
@@ -140,9 +140,9 @@ html[data-theme="dark"],
   --div-ex-a: #a3abb5;
   --div-ex-b: #7c848e;
   --div-ex-c: #c9cfd6;
-  --div-ex-d: #5f6670;
+  --div-ex-d: #6e7681;
   --div-ex-e: #8e96a0;
-  --div-ex-opacity: 0.55;
+  --div-ex-opacity: 0.9;
 }
 
 /* ---------- Tech Green: terminal / trading desk, phosphor accent ---------- */
@@ -197,9 +197,9 @@ html[data-theme="tech-green"],
   --div-ex-a: #8aa194;
   --div-ex-b: #6b8576;
   --div-ex-c: #b6cbbf;
-  --div-ex-d: #4e6559;
+  --div-ex-d: #5f7a6c;
   --div-ex-e: #9db3a7;
-  --div-ex-opacity: 0.6;
+  --div-ex-opacity: 0.9;
 }
 
 /* ---------- Tech Cappuccino: Catppuccin Mocha ---------- */
@@ -252,9 +252,9 @@ html[data-theme="tech-cappuccino"],
   --div-ex-a: #9399b2;           /* overlay2 */
   --div-ex-b: #7f849c;           /* overlay1 */
   --div-ex-c: #bac2de;           /* subtext1 */
-  --div-ex-d: #6c7086;           /* overlay0 */
+  --div-ex-d: #777b94;
   --div-ex-e: #a6adc8;           /* subtext0 */
-  --div-ex-opacity: 0.6;
+  --div-ex-opacity: 0.9;
 }
 
 /* ---------- Tech Red: charcoal base, crimson chrome ----------
@@ -313,5 +313,5 @@ html[data-theme="tech-red"],
   --div-ex-c: #cfc3c6;
   --div-ex-d: #7b6e73;
   --div-ex-e: #92868a;
-  --div-ex-opacity: 0.6;
+  --div-ex-opacity: 0.9;
 }

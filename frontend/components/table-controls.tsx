@@ -1,5 +1,5 @@
 "use client";
-import { Children, useState, type ReactNode } from "react";
+import { Children, cloneElement, isValidElement, useState, type ReactElement, type ReactNode } from "react";
 
 export function useTableColumns(labels: string[], text = { summary: "Columns", reset: "Reset columns" }) {
  const [order, setOrder] = useState(() => labels.map((_, index) => index));
@@ -19,12 +19,17 @@ export function useTableColumns(labels: string[], text = { summary: "Columns", r
   </div>)}
   <button type="button" onClick={() => {setOrder(labels.map((_, index) => index));setHidden([]);}}>{text.reset}</button>
  </div></details>;
- return {visible, controls, headers: visible.map(index => <th scope="col" key={index}>{labels[index]}</th>)};
+ return {visible, labels, controls, headers: visible.map(index => <th scope="col" key={index}>{labels[index]}</th>)};
 }
 
-export function TableCells({visible, children}: {visible: number[]; children: ReactNode}) {
+/** Renders the visible cells in order. With `labels`, each cell carries data-label so a narrow
+ * screen can show the grid as stacked, labelled row cards (see styles/components/csv-import.css). */
+export function TableCells({visible, labels, children}: {visible: number[]; labels?: string[]; children: ReactNode}) {
  const cells = Children.toArray(children);
- return <>{visible.map(index => cells[index])}</>;
+ return <>{visible.map(index => {
+  const cell = cells[index];
+  return labels && isValidElement(cell) ? cloneElement(cell as ReactElement<{"data-label"?: string}>, {"data-label": labels[index]}) : cell;
+ })}</>;
 }
 
 export function PageSize({value, onChange, disabled = false}: {value: number; onChange: (value: number) => void; disabled?: boolean}) {

@@ -1,0 +1,145 @@
+/* Dividends: year header tile, a month-card grid, the 24-bar chart. Gray ex-date marks keep
+   their contrast after --div-ex-opacity (verified by scripts/check-theme-contrast.mjs). */
+.dividends { min-width: 0; }
+.dividends .muted { color: var(--text-muted); }
+
+.dividends-header {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 16px 28px;
+  margin-bottom: 20px;
+  padding: 18px 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.year-nav { display: flex; align-items: center; gap: 10px; }
+.year-nav h2 { min-width: 76px; text-align: center; font-family: var(--font-figure); font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.dividends .icon-button { width: 40px; height: 40px; padding: 0; border-radius: 50%; font-size: 22px; line-height: 1; }
+.dividend-summary { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 0; }
+.dividend-summary > div { display: flex; flex-direction: column; gap: 2px; }
+.dividend-summary dt { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; letter-spacing: var(--label-tracking); text-transform: var(--label-case); }
+.dividend-summary dd { margin: 0; font-family: var(--font-figure); font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.dividend-sync { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 13px; }
+.sync-progress { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+.dividend-banner { margin: 0 0 20px; padding: 12px 16px; border: 1px solid var(--border); border-left: 3px solid var(--warning); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning); font-size: 13px; }
+.dividend-banner ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+
+/* ---------- Month cards ---------- */
+.dividend-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.month-card { min-width: 0; display: flex; flex-direction: column; gap: 10px; padding: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.month-card.current { border-color: var(--accent); box-shadow: var(--glow), var(--shadow); }
+.month-card header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.month-card h3 { font-size: 15px; }
+.month-card header strong { text-align: right; font-family: var(--font-figure); font-variant-numeric: tabular-nums; }
+.month-empty { margin: 0; color: var(--text-muted); font-size: 13px; }
+
+.dividend-entries { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.dividend-entry { position: relative; min-width: 0; }
+.entry-button {
+  width: 100%; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 4px;
+  padding: 10px 12px; text-align: left; font-size: 12px;
+  background: var(--surface-sunken); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text);
+}
+.entry-button:hover:not(:disabled) { border-color: var(--border-strong); box-shadow: none; }
+.entry-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.entry-ticker { flex: none; font-family: var(--font-mono); font-size: 12px; }
+.entry-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.entry-figures { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 9px; font-variant-numeric: tabular-nums; color: var(--text-muted); }
+.entry-figures > strong { margin-left: auto; color: var(--text); font-family: var(--font-figure); }
+.entry-dates { white-space: nowrap; }
+.entry-pay { color: var(--text); font-weight: 600; }
+.missing { cursor: help; text-decoration: underline dotted; }
+.state-pill { flex: none; padding: 1px 7px; font-size: 10.5px; }
+
+/* Expected and not-held entries differ by their pills and the dashed border, not by colour or opacity. */
+.dividend-entry.forecast .entry-button { border-style: dashed; border-color: var(--border-strong); background: transparent; }
+.dividend-entry.forecast .entry-figures > strong, .dividend-entry.forecast .entry-ticker { color: var(--text-muted); }
+.dividend-entry.not-held .entry-button { background: var(--surface); border-color: var(--border); }
+.dividend-entry.not-held .entry-figures > strong, .dividend-entry.not-held .entry-ticker { color: var(--text-muted); font-weight: 500; }
+
+/* Going ex this month, paid later: full-contrast text; a dashed outline marks it as not a payment. */
+.ex-markers { display: grid; gap: 6px; padding-top: 10px; border-top: 1px dashed var(--border-strong); }
+.ex-markers ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ex-markers-label { margin: 0; color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; letter-spacing: var(--label-tracking); text-transform: var(--label-case); }
+.ex-marker { position: relative; min-width: 0; }
+.ex-marker-button {
+  width: 100%; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-start; gap: 2px 8px;
+  padding: 6px 10px; text-align: left; font-size: 11.5px; font-variant-numeric: tabular-nums;
+  background: transparent; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); color: var(--text-muted);
+}
+.ex-marker:hover .ex-marker-button, .ex-marker:focus-within .ex-marker-button, .ex-marker.open .ex-marker-button { color: var(--text); border-color: var(--accent); }
+.ex-total { margin-left: auto; }
+
+.dividend-popover {
+  position: absolute; z-index: 25; top: calc(100% + 6px); left: 0;
+  width: min(320px, calc(100vw - 48px));
+  padding: 14px 16px;
+  background: var(--surface-raised); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-raised);
+  font-size: 13px;
+}
+.popover-head { display: flex; justify-content: space-between; align-items: center; }
+.popover-close { padding: 0 8px; border: 0; background: transparent; font-size: 20px; }
+.popover-name { margin: 2px 0 10px; color: var(--text-muted); }
+.dividend-popover dl { margin: 0; display: grid; gap: 6px; }
+.dividend-popover dl > div { display: flex; justify-content: space-between; gap: 12px; }
+.dividend-popover dt { color: var(--text-muted); }
+.dividend-popover dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+.skeleton-card { min-height: 120px; }
+.skeleton-card span { display: block; height: 12px; margin-bottom: 8px; border-radius: 6px; background: linear-gradient(90deg, var(--surface-sunken) 25%, var(--border) 50%, var(--surface-sunken) 75%); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
+.skeleton-card span:first-child { width: 45%; height: 14px; }
+.skeleton-card span:last-child { width: 70%; }
+
+/* ---------- Chart: 24 stacked bars ---------- */
+.dividend-chart { margin: 24px 0 0; padding: 20px 22px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.dividend-chart h2 { margin: 0 0 12px; font-size: 16px; }
+.dividend-chart-plot { position: relative; width: 100%; overflow: visible; }
+.dividend-chart-plot svg { display: block; overflow: visible; }
+.chart-grid line { stroke: var(--chart-grid); stroke-width: 1; }
+.chart-grid text { fill: var(--chart-axis); font-family: var(--font-figure); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart-grid .month-label { fill: var(--text); font-size: 12px; }
+.chart-baseline { stroke: var(--chart-axis); stroke-width: 1; }
+.seg { cursor: pointer; outline: none; transition: opacity 0.12s; }
+.seg-ex .seg-mark { fill-opacity: var(--div-ex-opacity); }
+.has-active .seg:not(.active) { opacity: 0.35; }
+.seg.active .seg-mark { stroke: var(--text); stroke-width: 1.5; fill-opacity: 1; }
+.seg:focus-visible .seg-mark { stroke: var(--focus-ring); stroke-width: 2.5; }
+
+.dividend-chart-tooltip {
+  position: absolute; z-index: 30;
+  transform: translate(-50%, calc(-100% - 10px));
+  width: max-content; max-width: 280px;
+  padding: 10px 12px;
+  background: var(--surface-raised); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-raised);
+  font-size: 12.5px; pointer-events: none;
+}
+.dividend-chart-tooltip .tooltip-name { margin: 2px 0 6px; color: var(--text-muted); }
+.dividend-chart-tooltip dl { margin: 0; display: grid; gap: 3px; }
+.dividend-chart-tooltip dl > div { display: flex; justify-content: space-between; gap: 14px; }
+.dividend-chart-tooltip dt { color: var(--text-muted); }
+.dividend-chart-tooltip dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.tooltip-month { margin-top: 3px; padding-top: 4px; border-top: 1px solid var(--border); }
+
+.dividend-chart-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 14px; font-size: 12.5px; color: var(--text); }
+.dividend-chart-legend span { display: flex; align-items: center; gap: 6px; }
+.dividend-chart-legend i { width: 12px; height: 12px; border-radius: 3px; }
+.legend-ex { background: var(--div-ex-a); opacity: var(--div-ex-opacity); }
+.legend-paid { background: var(--accent); }
+.legend-expected { background: repeating-linear-gradient(45deg, var(--accent) 0 2px, transparent 2px 5px); border: 1px solid var(--accent); }
+
+@media (max-width: 1000px) { .dividend-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .dividend-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .dividends-header { align-items: flex-start; flex-direction: column; padding: 16px; }
+  .month-card { padding: 14px; }
+  .dividend-chart { padding: 16px 12px; }
+  /* The details popover is a sheet above the tab bar on phones. */
+  .dividend-popover { position: fixed; left: 12px; right: 12px; top: auto; bottom: calc(var(--tabbar-height) + 12px + env(safe-area-inset-bottom, 0px)); width: auto; max-height: 60dvh; overflow: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .skeleton-card span { animation: none; } }

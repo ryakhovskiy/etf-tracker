@@ -29,7 +29,7 @@ export function HoldingTiles({ performance, hiddenIds = [] }: { performance: Per
       return <li key={series.instrumentId} className={`holding-tile tile${shown ? "" : " is-hidden"}`} data-testid="holding-tile" style={{ "--stripe": instrumentColor(series.instrumentId) } as CSSProperties}>
         <div className="holding-head"><h3>{series.name}</h3>{!shown && <span className="badge">hidden in chart</span>}</div>
         <p className="holding-value num">{euro(value.toFixed(2))}</p>
-        <p className={`holding-change num performance-${display.tone}`}>{display.text}<span className="sr-only"> versus purchase prices</span></p>
+        <p className={`holding-change num performance-${display.tone}`}>{display.text}<span className="holding-basis muted"> vs purchase prices</span></p>
         <p className="holding-meta num muted">{item ? `${units(item.units)} ${new Decimal(item.units).eq(1) ? "unit" : "units"} · ${euro(item.priceEur)} each${item.source === "PURCHASE" ? " (purchase price)" : ""}` : "Value at purchase prices"}</p>
         <div className="holding-share"><span className="share-bar" aria-hidden="true"><span style={{ width: `${Math.min(100, share.toNumber()).toFixed(1)}%` }} /></span><span className="num muted">{share.toFixed(1).replace(".", ",")} %</span></div>
       </li>;

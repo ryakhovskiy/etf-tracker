@@ -794,7 +794,7 @@ export function CSVImport({ id }: { id: string }) {
                       )
                       .map((row) => (
                         <tr key={row.rowNumber}>
-                          <TableCells visible={columns.visible}>
+                          <TableCells visible={columns.visible} labels={columns.labels}>
                             <td>
                               <input
                                 aria-label={`Include row ${row.rowNumber}`}

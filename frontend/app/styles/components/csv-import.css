@@ -1,0 +1,65 @@
+/* CSV import: settings tiles, a review grid on wide screens, stacked labelled row cards on phones. */
+.csv-import { min-width: 0; }
+.csv-import fieldset { min-width: 0; margin: 20px 0; padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.csv-import legend { padding: 0 8px; font-family: var(--font-heading); font-weight: 650; }
+.csv-import h3 { margin: 20px 0 12px; font-size: 15px; }
+
+.csv-file-picker { margin: 20px 0; }
+.csv-file-control { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 16px; }
+.csv-file-button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 44px; padding: 0 20px; }
+.csv-file-name { min-width: 0; color: var(--text-muted); font-size: 13px; overflow-wrap: anywhere; }
+
+.csv-configuration { margin: 20px 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.csv-configuration > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; border-radius: var(--radius); font-size: 14px; font-weight: 600; list-style: none; cursor: pointer; }
+.csv-configuration > summary::-webkit-details-marker { display: none; }
+.csv-configuration > summary::after { content: ""; width: 8px; height: 8px; flex-shrink: 0; margin-right: 3px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); }
+.csv-configuration[open] > summary::after { transform: rotate(225deg); }
+.csv-configuration > summary:hover { background: var(--surface-sunken); }
+.csv-import .csv-configuration > fieldset { margin: 0; border: 0; border-top: 1px dashed var(--border-strong); border-radius: 0; box-shadow: none; background: transparent; }
+
+.csv-config { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; }
+.csv-config label { margin: 0; }
+.csv-config input, .csv-config select { display: block; width: 100%; margin-top: 8px; }
+.csv-config span { display: block; margin-top: 6px; font-size: 12px; font-weight: 400; color: var(--text-muted); }
+
+.csv-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 20px 0; }
+.csv-actions label { margin: 0; display: flex; align-items: center; gap: 8px; }
+.csv-summary { display: flex; flex-direction: column; gap: 8px; padding: 18px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.csv-import-cta { align-items: stretch; }
+.csv-import-cta .csv-summary { flex: 1; margin: 0; min-width: min(100%, 320px); }
+
+/* ---------- Review grid (wide screens) ---------- */
+.csv-import .table-scroll { position: relative; overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.csv-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.csv-table th { padding: 12px 14px; text-align: left; white-space: nowrap; background: var(--surface-sunken); color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: var(--label-tracking); text-transform: var(--label-case); }
+.csv-table td { padding: 10px 14px; vertical-align: top; white-space: normal; }
+.csv-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--surface-sunken) 55%, transparent); }
+.csv-table input, .csv-table select { min-width: 125px; min-height: 40px; padding: 0 10px; }
+.csv-table input[type="checkbox"] { min-width: 20px; width: 20px; }
+.csv-table td button { padding: 0 12px; font-size: 12px; }
+.csv-table td:last-child button { margin-bottom: 8px; }
+.csv-table .error { min-width: 160px; margin-top: 4px; font-size: 12px; }
+.csv-table .hint { min-width: 180px; font-size: 12px; }
+.csv-table tbody tr:nth-child(n) td.csv-edited { background: var(--warning-soft); }
+
+/* ---------- Review grid on phones: each row is a card, each cell a labelled line ---------- */
+@media (max-width: 800px) {
+  .csv-import .table-scroll { overflow: visible; background: transparent; border: 0; box-shadow: none; }
+  .csv-table, .csv-table tbody, .csv-table tr, .csv-table td { display: block; }
+  /* Headers stay in the accessibility tree; each cell repeats its own label visually. */
+  .csv-table thead { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .csv-table tbody { display: grid; gap: 12px; }
+  .csv-table tr { padding: 8px 4px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .csv-table tbody tr:nth-child(even) td { background: transparent; }
+  .csv-table td { display: grid; grid-template-columns: minmax(96px, 36%) minmax(0, 1fr); align-items: center; gap: 4px 12px; padding: 8px 12px; }
+  .csv-table td::before { content: attr(data-label); color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: var(--label-tracking); text-transform: var(--label-case); }
+  .csv-table td > * { grid-column: 2; min-width: 0; }
+  .csv-table input:not([type="checkbox"]), .csv-table select { width: 100%; min-width: 0; }
+  .csv-table .error, .csv-table .hint { min-width: 0; }
+  .csv-table td:last-child button { margin-bottom: 0; width: 100%; }
+  .csv-table tbody tr:nth-child(n) td.csv-edited { background: var(--warning-soft); border-radius: var(--radius-sm); }
+}
+@media (max-width: 640px) {
+  .csv-import fieldset { padding: 16px; }
+  .csv-actions > button, .csv-import-cta > button { flex: 1 1 100%; }
+}

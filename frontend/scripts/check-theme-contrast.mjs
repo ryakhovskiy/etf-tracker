@@ -13,6 +13,8 @@ export function parseThemes(css) {
   for (const m of css.matchAll(/html\[data-theme="([a-z-]+)"\]\s*(?:,[^{]*)?\{([^}]*)\}/g)) {
     const vars = {};
     for (const v of m[2].matchAll(/(--[a-z0-9-]+):\s*(#[0-9a-fA-F]{6})\b/g)) vars[v[1]] = v[2];
+    const alpha = /--div-ex-opacity:\s*([\d.]+)/.exec(m[2]);
+    if (alpha) vars["--div-ex-opacity"] = alpha[1];
     themes[m[1]] = vars;
   }
   return themes;
@@ -49,6 +51,8 @@ export const rules = [
   ...["a", "b", "c", "d", "e"].map((s) => [`--div-ex-${s}`, ["--surface"], 3, "ex-date shade (full opacity)"]),
 ];
 
+const blend = (fg, bg, alpha) => "#" + [1, 3, 5].map((i) => Math.round(parseInt(fg.slice(i, i + 2), 16) * alpha + parseInt(bg.slice(i, i + 2), 16) * (1 - alpha)).toString(16).padStart(2, "0")).join("");
+
 /** Checks every theme in tokens.css (or the given CSS text). Pure: returns the result, prints nothing. */
 export function checkThemeContrast(css = readFileSync(TOKENS, "utf8")) {
   const themes = parseThemes(css);
@@ -60,6 +64,17 @@ export function checkThemeContrast(css = readFileSync(TOKENS, "utf8")) {
         const r = ratio(vars[fg], vars[bg]);
         if (r < min) failures.push(`FAIL ${name}: ${fg} on ${bg} = ${r.toFixed(2)} (< ${min}) [${why}]`);
       }
+    }
+  }
+  // Ex-date chart marks are drawn at --div-ex-opacity: check the composited colour too.
+  for (const [name, vars] of Object.entries(themes)) {
+    const alpha = Number(vars["--div-ex-opacity"]);
+    if (!Number.isFinite(alpha)) { failures.push(`MISSING ${name}: --div-ex-opacity`); continue; }
+    for (const shade of ["a", "b", "c", "d", "e"]) {
+      const fg = vars[`--div-ex-${shade}`], bg = vars["--surface"];
+      if (!fg || !bg) continue;
+      const r = ratio(blend(fg, bg, alpha), bg);
+      if (r < 3) failures.push(`FAIL ${name}: --div-ex-${shade} at opacity ${alpha} = ${r.toFixed(2)} (< 3) [ex-date mark after opacity]`);
     }
   }
   return { themeCount: Object.keys(themes).length, themes: Object.keys(themes), failures };

@@ -1,0 +1,17 @@
+/* Sign-in page. */
+.login-shell { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px 16px 48px; }
+.login-card { position: relative; width: min(100%, 420px); padding: 44px 36px 36px; text-align: center; box-shadow: var(--shadow-raised), var(--glow); }
+.logo { display: grid; place-items: center; width: 56px; height: 56px; margin: 0 auto 24px; border-radius: var(--radius); background: var(--accent); color: var(--on-accent); font-family: var(--font-mono); font-size: 28px; font-weight: 800; box-shadow: var(--glow); }
+.login-card h1 { font-size: 28px; }
+.login-card .eyebrow { margin-bottom: 10px; }
+.subcopy { margin: 12px auto 28px; max-width: 290px; color: var(--text-muted); font-size: 14px; line-height: 1.6; }
+.google-button { width: 100%; min-height: 52px; gap: 12px; font-weight: 600; background: var(--surface); }
+.google-button svg { width: 19px; height: 19px; }
+.g-blue { fill: var(--google-blue); }
+.g-green { fill: var(--google-green); }
+.g-yellow { fill: var(--google-yellow); }
+.g-red { fill: var(--google-red); }
+.login-card .error { margin: -12px 0 18px; }
+.terms { margin: 22px 0 0; color: var(--text-muted); font-size: 12px; line-height: 1.7; }
+.login-footer { margin: 22px 0 0; color: var(--text-muted); font-size: 12px; }
+@media (max-width: 640px) { .login-card { padding: 36px 22px 28px; } }

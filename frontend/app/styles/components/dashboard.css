@@ -147,7 +147,8 @@ html[data-theme^="tech-"] .chart-legend i { border-radius: 2px; }
 .holding-tile::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: var(--stripe); }
 html[data-theme^="tech-"] .holding-tile::before { width: 3px; }
 .holding-tile:hover { transform: translateY(-2px); box-shadow: var(--shadow-raised); }
-.holding-tile.is-hidden { opacity: 0.6; }
+.holding-tile.is-hidden { border-style: dashed; border-color: var(--border-strong); box-shadow: none; }
+.holding-tile.is-hidden::before { background: repeating-linear-gradient(180deg, var(--stripe) 0 6px, transparent 6px 10px); }
 .holding-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .holding-head h3 { font-size: 15px; line-height: 1.35; overflow-wrap: anywhere; }
 .holding-value { margin: 4px 0 0; font-family: var(--font-figure); font-size: 26px; font-weight: 650; letter-spacing: -0.02em; }

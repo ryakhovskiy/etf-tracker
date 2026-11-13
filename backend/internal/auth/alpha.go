@@ -27,12 +27,17 @@ type priceJob struct {
 	Status        string      `json:"status"`
 	NextRequestAt time.Time   `json:"nextRequestAt"`
 	Items         []priceItem `json:"items"`
-	user          string
-	created       time.Time
+	// Kind is PORTFOLIO for a job started on one portfolio and USER_REALTIME for the
+	// user-level Yahoo real-time refresh over all portfolios.
+	Kind    string `json:"kind,omitempty"`
+	user    string
+	created time.Time
 }
 type priceJobs struct {
 	mu      sync.Mutex
 	entries map[string]*priceJob
+	// lastRefresh is when each user's summary refresh job last started.
+	lastRefresh map[string]time.Time
 }
 type fetchInput struct {
 	Date     string  `json:"date"`
@@ -259,7 +264,7 @@ func (h *Handler) registerAlphaRoutes(mux *http.ServeMux) {
 			storeError(w, err)
 			return
 		}
-		job := &priceJob{Status: "QUEUED", user: user, created: now, Items: []priceItem{}}
+		job := &priceJob{Status: "QUEUED", Kind: "PORTFOLIO", user: user, created: now, Items: []priceItem{}}
 		for _, row := range rows {
 			job.Items = append(job.Items, priceItem{InstrumentID: row.InstrumentID, Status: "PENDING"})
 		}

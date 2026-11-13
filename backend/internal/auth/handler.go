@@ -32,6 +32,8 @@ type Handler struct {
 	store       *database.Store
 	tokens      *tokenManager
 	logger      *slog.Logger
+	// clock drives the summary refresh decisions (freshness and throttle); nil means time.Now.
+	clock func() time.Time
 }
 
 func NewHandler(cfg config.Config, store *database.Store, logger *slog.Logger) *Handler {
@@ -102,6 +104,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerAlphaRoutes(mux)
 	h.registerEulerpoolRoutes(mux)
 	h.registerYahooRoutes(mux)
+	h.registerSummaryRoutes(mux)
 	h.registerDividendRoutes(mux)
 	mux.HandleFunc("GET /auth/google", h.googleLogin)
 	mux.HandleFunc("GET /auth/google/callback", h.googleCallback)

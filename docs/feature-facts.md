@@ -232,15 +232,19 @@ and covers only the caller's portfolios; `GET /api/portfolios` is unchanged.
   date contribute units × (price − purchase price). `percent` = change ÷ the value
   of the units held before the session at the previous close (`null` when that is
   0, e.g. everything was bought in the session). Previous close in EUR = stored
-  previous close × the FX rate of that previous session when one is stored
-  (÷100 for `GBp`/`GBX`/`ZAc`), rounded to 4 dp like a quote; EUR listings need no
-  rate. Today no previous-session rate is stored, so EVERY automatically
-  fetched non-EUR position's change uses the quote's own rate and carries
-  `FX_PREVIOUS_UNAVAILABLE` (and `changePartial`); only EUR listings are exact. Missing pieces make the change
+  previous close × the daily close of the `{CCY}EUR=X` pair dated exactly like that
+  previous close (÷100 for `GBp`/`GBX`/`ZAc`, through the major currency), rounded
+  to 4 dp like a quote; EUR listings need no rate. The stored
+  `prev_close_date` and `prev_fx_rate_e8` come from the dated daily bars of the
+  same real-time chart requests (see Market data), so the daily FX move is part of
+  the change and an exchange-only holiday gap (stock previous session Wednesday,
+  FX Thursday) still pairs the right dates. Missing pieces make the change
   partial (`changePartial`) without hiding it: `NO_PREVIOUS_CLOSE` (units held
   before but no stored previous close: that position's before-session part is
-  omitted), `FX_PREVIOUS_UNAVAILABLE` (no dated previous-session FX rate: the
-  previous close is converted at the quote's own rate, an approximation), and
+  omitted), `FX_PREVIOUS_UNAVAILABLE` (the FX bars hold no close dated like the
+  instrument's previous close, or the quote was converted at an ECB fallback rate,
+  or it is an older quote without a stored date: the previous close is converted
+  at the quote's own rate, an approximation), and
   the `NO_QUOTE`/`PURCHASE_NEWER` positions contribute 0. `change` is `null` only
   when no position produced a computable change.
 - `asOf` describes the OLDEST quote used: `quoteDate`, `quoteTime` (market time,
@@ -394,8 +398,9 @@ date and fetches a daily close on or before it. Default primary is **YAHOO**;
 - **Real-time prices** (Transactions "Fetch real-time prices", Dashboard "Fetch
   real-time value"; today only, always Yahoo whatever the primary): a price job
   with `"realtime": true`. It ignores today's cached quote and calls
-  `v8/finance/chart/{symbol}?interval=1d&range=1d` once per instrument, reading
-  `meta.regularMarketPrice`/`regularMarketTime`. The chart endpoint needs only
+  `v8/finance/chart/{symbol}?interval=1d&range=5d` once per instrument (the same
+  one request as before; five daily bars cover a long weekend or holiday), reading
+  `meta.regularMarketPrice`/`regularMarketTime` for the current price. The chart endpoint needs only
   the browser User-Agent, so no cookie or crumb is spent (a crumb already held is
   attached). Foreign currencies use a live Yahoo rate `{CCY}EUR=X` (1 request per
   currency, same EUR-per-unit orientation as ECB). If none can be had, the ECB
@@ -405,12 +410,15 @@ date and fetches a daily close on or before it. Default primary is **YAHOO**;
   The estimate's `realtime` field (null for past dates) counts searches +
   instruments + currencies of earlier quotes. A regular fetch that reuses a
   real-time quote as fresh converts it at the ECB rate again.
-  The same chart meta also yields the previous session's close
-  (`chartPreviousClose`, else `previousClose`), stored with the quote as
-  `price_quotes.prev_close_e4` (listing currency, ×10⁴). `prev_fx_rate_e8` (the FX
-  rate at that same previous session) exists but is NOT filled today: Yahoo's chart
-  meta dates neither previous close, so a live pair's previous close cannot be
-  proven to belong to the same session (exchange-only holidays), and is not used.
+  The same response's dated daily bars (`timestamp[]`, `indicators.quote[0].close[]`,
+  dated in `meta.exchangeTimezoneName`; null closes skipped) give the previous
+  session: the last bar dated before the session of `regularMarketTime`. Its close
+  and date are stored with the quote as `price_quotes.prev_close_e4` (listing
+  currency, ×10⁴) and `prev_close_date`. `meta.chartPreviousClose` is NOT used: with
+  `range=5d` it is the close before the first bar. Each `{CCY}EUR=X` request returns
+  the pair's bars the same way; the FX close dated exactly like the instrument's
+  previous close is stored as `prev_fx_rate_e8` (no neighbouring day is substituted;
+  none for EUR, ECB fallback rates, or when the bars lack that date).
 - Shared fresh quotes avoid provider calls. Eulerpool stock TTL is 15m; Eulerpool
   ETF/AV quotes use calendar-day freshness; Yahoo also checks trading-date recency.
   Historical closes are cached separately and are not fresh current quotes.
@@ -481,7 +489,7 @@ per-item errors and ECB historical FX. This does **not** create dividend transac
   Themes/CSS: [`frontend/app/styles`](../frontend/app/styles), theme engine
   [`frontend/lib/theme.ts`](../frontend/lib/theme.ts), contrast check
   [`frontend/scripts/check-theme-contrast.mjs`](../frontend/scripts/check-theme-contrast.mjs).
-  Migrations currently run through **00016** (`00016_previous_close.sql`); add migrations rather than editing applied ones.
+  Migrations currently run through **00017** (`00016_previous_close.sql`, `00017_previous_close_date.sql`); add migrations rather than editing applied ones.
 - Deployment: [`compose.yaml`](../compose.yaml),
   [`backend/Dockerfile`](../backend/Dockerfile),
   [`frontend/Dockerfile`](../frontend/Dockerfile), per-service `.dockerignore`

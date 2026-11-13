@@ -11,6 +11,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -304,9 +305,13 @@ func ParseYahooSearch(b []byte) ([]YahooHit, error) {
 type YahooQuote struct {
 	Symbol, Currency, Price string
 	At                      time.Time
-	// PrevClose is the previous session's close (chart meta chartPreviousClose,
-	// else previousClose) at the same scale as Price; empty when Yahoo gave none.
-	PrevClose string
+	// PrevClose and PrevDay are the close and the exchange-local date of the last
+	// completed daily bar before the session of At (same scale as Price); empty when
+	// the bars hold no earlier session. Closes lists every such earlier bar,
+	// ascending. They come from the daily bars of the chart response, never from
+	// meta.chartPreviousClose, which refers to the start of the requested range.
+	PrevClose, PrevDay string
+	Closes             []YahooPoint
 }
 
 // ParseYahooQuotes reads v7/finance/quote. Unknown symbols are simply absent.
@@ -343,7 +348,7 @@ func ParseYahooQuotes(b []byte) (map[string]YahooQuote, error) {
 }
 
 // ParseYahooLatest reads the latest regular-market price from the meta block of
-// v8/finance/chart (range=1d). It is the same value v7/finance/quote reports,
+// v8/finance/chart (range=5d, 1d bars). It is the same value v7/finance/quote reports,
 // with the same exchange delay (real time for US listings, ~15 min for XETRA/LSE).
 func ParseYahooLatest(b []byte) (YahooQuote, error) {
 	q, err := parseLatest(b, 4)
@@ -356,13 +361,18 @@ func parseLatest(b []byte, scale int) (YahooQuote, error) {
 		Chart struct {
 			Result []struct {
 				Meta struct {
-					Symbol        string      `json:"symbol"`
-					Currency      string      `json:"currency"`
-					Price         json.Number `json:"regularMarketPrice"`
-					Time          json.Number `json:"regularMarketTime"`
-					ChartPrevious json.Number `json:"chartPreviousClose"`
-					Previous      json.Number `json:"previousClose"`
+					Symbol   string      `json:"symbol"`
+					Currency string      `json:"currency"`
+					Price    json.Number `json:"regularMarketPrice"`
+					Time     json.Number `json:"regularMarketTime"`
+					Timezone string      `json:"exchangeTimezoneName"`
 				} `json:"meta"`
+				Timestamp  []int64 `json:"timestamp"`
+				Indicators struct {
+					Quote []struct {
+						Close []*json.Number `json:"close"`
+					} `json:"quote"`
+				} `json:"indicators"`
 			} `json:"result"`
 			Error *struct {
 				Code string `json:"code"`
@@ -381,20 +391,35 @@ func parseLatest(b []byte, scale int) (YahooQuote, error) {
 	if len(raw.Chart.Result) != 1 {
 		return YahooQuote{}, ErrYahooNotFound
 	}
-	m := raw.Chart.Result[0].Meta
+	res := raw.Chart.Result[0]
+	m := res.Meta
 	ts, e1 := m.Time.Int64()
 	price, e2 := Scaled(m.Price.String(), scale)
 	if e1 != nil || e2 != nil || ts <= 0 || len(m.Currency) < 3 || len(m.Currency) > 4 || m.Symbol == "" {
 		return YahooQuote{}, ErrYahooNotFound
 	}
 	out := YahooQuote{Symbol: m.Symbol, Currency: m.Currency, Price: Fixed(price, scale), At: time.Unix(ts, 0)}
-	for _, raw := range []json.Number{m.ChartPrevious, m.Previous} {
-		if raw == "" {
-			continue
+	// Daily bars: keep the completed sessions before the session of regularMarketTime.
+	// A bar is dated in the exchange's time zone; null closes (holidays) are skipped.
+	if len(res.Indicators.Quote) > 0 && len(res.Indicators.Quote[0].Close) == len(res.Timestamp) {
+		loc := time.UTC
+		if l, err := time.LoadLocation(m.Timezone); err == nil {
+			loc = l
 		}
-		if prev, err := Scaled(raw.String(), scale); err == nil {
-			out.PrevClose = Fixed(prev, scale)
-			break
+		sessionDay := out.At.In(loc).Format("2006-01-02")
+		for i, t := range res.Timestamp {
+			c := res.Indicators.Quote[0].Close[i]
+			day := time.Unix(t, 0).In(loc).Format("2006-01-02")
+			if c == nil || day >= sessionDay {
+				continue
+			}
+			if v, err := Scaled(c.String(), scale); err == nil {
+				out.Closes = append(out.Closes, YahooPoint{Day: day, Close: Fixed(v, scale)})
+			}
+		}
+		sort.Slice(out.Closes, func(a, b int) bool { return out.Closes[a].Day < out.Closes[b].Day })
+		if n := len(out.Closes); n > 0 {
+			out.PrevClose, out.PrevDay = out.Closes[n-1].Close, out.Closes[n-1].Day
 		}
 	}
 	return out, nil
@@ -539,7 +564,7 @@ func (g *YahooGateway) Latest(ctx context.Context, user, symbol string) (YahooQu
 }
 
 func (g *YahooGateway) latest(ctx context.Context, user, symbol string, scale int) (YahooQuote, error) {
-	b, err := g.callPublic(ctx, user, "latest", g.QueryURL, "/v8/finance/chart/"+url.PathEscape(symbol), url.Values{"interval": {"1d"}, "range": {"1d"}})
+	b, err := g.callPublic(ctx, user, "latest", g.QueryURL, "/v8/finance/chart/"+url.PathEscape(symbol), url.Values{"interval": {"1d"}, "range": {"5d"}})
 	if err != nil {
 		logUpstream(g.Log, slog.LevelError, ProviderYahoo, "latest price request failed", "symbol", symbol, "error", err.Error(), "body", snippet(b))
 		return YahooQuote{}, err
@@ -575,7 +600,16 @@ func (g *YahooGateway) LiveFX(ctx context.Context, user, currency string) (*FXRa
 	if err != nil || q.Currency != "EUR" {
 		return nil, ErrFXUnavailable
 	}
-	return &FXRate{Date: BerlinDay(q.At), Base: ccy, Quote: "EUR", Rate: rate, Source: FXSourceYahoo}, nil
+	fx := &FXRate{Date: BerlinDay(q.At), Base: ccy, Quote: "EUR", Rate: rate, Source: FXSourceYahoo}
+	for _, p := range q.Closes {
+		if v, err := Scaled(p.Close, 8); err == nil {
+			if fx.Closes == nil {
+				fx.Closes = map[string]int64{}
+			}
+			fx.Closes[p.Day] = v
+		}
+	}
+	return fx, nil
 }
 
 // History fetches daily closes for the inclusive day range [from, to].
@@ -684,9 +718,10 @@ func (MockYahoo) Get(ctx context.Context, rawURL string) (int, http.Header, []by
 		b, _ := json.Marshal(map[string]any{"quoteResponse": map[string]any{"result": keep, "error": nil}})
 		return 200, h, b, nil
 	case strings.HasPrefix(u.Path, "/v8/finance/chart/") && q.Get("range") != "":
-		// Latest prices (range=1d) need no crumb; only the meta block is read,
+		// Latest prices (range=5d) need no crumb; only the meta block is read,
 		// so the recorded series fixtures serve as well. FX pairs were recorded
-		// live on 2026-11-10 with interval=1d&range=1d.
+		// live on 2026-11-10 with interval=1d&range=1d, then given daily bars of the
+		// preceding days so the dated previous-close path is exercised.
 		switch strings.TrimPrefix(u.Path, "/v8/finance/chart/") {
 		case "SAP.DE":
 			return 200, h, read("chart-sap"), nil

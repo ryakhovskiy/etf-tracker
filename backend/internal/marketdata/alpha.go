@@ -72,12 +72,11 @@ type Quote struct {
 	QuoteTime time.Time `json:"quoteTime,omitzero"`
 	FetchedAt time.Time `json:"-"`
 	Provider  string    `json:"provider,omitempty"`
-	// PrevClose is the previous session's close in the listing currency (4 dp).
-	// PrevFXRate is the FX rate at that same previous session (8 dp). Yahoo's chart
-	// meta gives no date for either previous close, so nothing sets PrevFXRate yet:
-	// it may only be filled from a source whose date matches the instrument's.
-	PrevClose  string `json:"-"`
-	PrevFXRate string `json:"-"`
+	// PrevClose (listing currency, 4 dp) and PrevCloseDate are the close and the
+	// exchange-local date of the session before the quote's. PrevFXRate (8 dp) is the
+	// FX rate of that same date: only a daily close dated exactly PrevCloseDate may
+	// fill it; empty means unknown and the previous close is converted approximately.
+	PrevClose, PrevCloseDate, PrevFXRate string `json:"-"`
 }
 type AVStore interface {
 	AVBudget(context.Context, string, time.Time, AVLimits) (Budget, error)

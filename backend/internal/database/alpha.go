@@ -147,7 +147,7 @@ func scanQuote(row interface{ Scan(...any) error }) (*marketdata.Quote, error) {
 	var rate sql.NullInt64
 	var prev, prevRate int64
 	var fetched, quoteTime string
-	err := row.Scan(&q.ID, &q.InstrumentID, &p, &orig, &q.Currency, &rate, &q.FXRateDate, &q.QuoteDate, &fetched, &q.Provider, &quoteTime, &q.FXSource, &prev, &prevRate)
+	err := row.Scan(&q.ID, &q.InstrumentID, &p, &orig, &q.Currency, &rate, &q.FXRateDate, &q.QuoteDate, &fetched, &q.Provider, &quoteTime, &q.FXSource, &prev, &prevRate, &q.PrevCloseDate)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -174,7 +174,7 @@ func scanQuote(row interface{ Scan(...any) error }) (*marketdata.Quote, error) {
 	return q, err
 }
 
-const quoteColumns = `id,instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,COALESCE(fx_rate_date,''),quote_date,fetched_at,provider,COALESCE(quote_time,''),COALESCE(fx_source,''),COALESCE(prev_close_e4,0),COALESCE(prev_fx_rate_e8,0)`
+const quoteColumns = `id,instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,COALESCE(fx_rate_date,''),quote_date,fetched_at,provider,COALESCE(quote_time,''),COALESCE(fx_source,''),COALESCE(prev_close_e4,0),COALESCE(prev_fx_rate_e8,0),COALESCE(prev_close_date,'')`
 
 // LatestQuoteCurrency returns the listing currency of the newest stored quote
 // of an instrument, or "" when it has none. Used to estimate FX requests.
@@ -254,7 +254,10 @@ func (s *Store) SaveQuote(ctx context.Context, q *marketdata.Quote, symbol strin
 		if q.FXSource != "" {
 			fxSource = q.FXSource
 		}
-		var prevClose, prevRate any
+		var prevClose, prevRate, prevDate any
+		if q.PrevCloseDate != "" {
+			prevDate = q.PrevCloseDate
+		}
 		if q.PrevClose != "" {
 			v, e := marketdata.Scaled(q.PrevClose, 4)
 			if e != nil {
@@ -269,7 +272,7 @@ func (s *Store) SaveQuote(ctx context.Context, q *marketdata.Quote, symbol strin
 			}
 			prevRate = v
 		}
-		res, err := c.ExecContext(ctx, `INSERT INTO price_quotes(instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,fx_rate_date,quote_date,fetched_at,provider,quote_time,fx_source,prev_close_e4,prev_fx_rate_e8) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, q.InstrumentID, p, orig, q.Currency, rate, q.FXRateDate, q.QuoteDate, q.FetchedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"), provider, quoteTime, fxSource, prevClose, prevRate)
+		res, err := c.ExecContext(ctx, `INSERT INTO price_quotes(instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,fx_rate_date,quote_date,fetched_at,provider,quote_time,fx_source,prev_close_e4,prev_fx_rate_e8,prev_close_date) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, q.InstrumentID, p, orig, q.Currency, rate, q.FXRateDate, q.QuoteDate, q.FetchedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"), provider, quoteTime, fxSource, prevClose, prevRate, prevDate)
 		if err != nil {
 			return err
 		}

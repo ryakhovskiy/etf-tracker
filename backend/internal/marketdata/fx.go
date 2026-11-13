@@ -22,7 +22,21 @@ type FXRate struct {
 	Rate  int64  `json:"-"`
 	// Source is empty for ECB reference rates and FXSourceYahoo for a live rate.
 	Source string `json:"-"`
+	// Closes are the dated daily closes (scale 10^8) of the sessions before Date, as
+	// returned with a live Yahoo rate; nil for ECB rates.
+	Closes map[string]int64 `json:"-"`
 }
+
+// CloseOn returns the daily close dated exactly day. A neighbouring day is never
+// substituted: only a rate of the same date counts as the rate of that date.
+func (r *FXRate) CloseOn(day string) (int64, bool) {
+	if r == nil {
+		return 0, false
+	}
+	v, ok := r.Closes[day]
+	return v, ok
+}
+
 type FXProvider interface {
 	Currencies(context.Context) (map[string]bool, error)
 	Rates(context.Context, string, string, string) ([]FXRate, error)

@@ -76,7 +76,7 @@ func TestRealtimePricesBypassTheDayCacheAndUseLiveFX(t *testing.T) {
 		t.Fatalf("%+v", gbp.Quote)
 	}
 	// Chart requests only, no v7 quote. The session was built once, for the symbol searches.
-	if y.count("range=1d") != 5 || y.count("getcrumb") != 1 || y.count("/v7/finance/quote") != 0 {
+	if y.count("range=5d") != 5 || y.count("getcrumb") != 1 || y.count("/v7/finance/quote") != 0 {
 		t.Fatalf("%v", y.calls)
 	}
 	if y.count("/v8/finance/chart/USDEUR=X") != 1 || y.count("/v8/finance/chart/GBPEUR=X") != 1 {
@@ -84,8 +84,8 @@ func TestRealtimePricesBypassTheDayCacheAndUseLiveFX(t *testing.T) {
 	}
 
 	// Pressing it again fetches again: the day cache is ignored, symbols are not.
-	before, searches := y.count("range=1d"), y.count("/v1/finance/search")
-	if job = run(); job.Items[1].Status != "OK" || y.count("range=1d") != before+5 || y.count("/v1/finance/search") != searches {
+	before, searches := y.count("range=5d"), y.count("/v1/finance/search")
+	if job = run(); job.Items[1].Status != "OK" || y.count("range=5d") != before+5 || y.count("/v1/finance/search") != searches {
 		t.Fatalf("%+v %v", job.Items, y.calls)
 	}
 	// Now currencies are known from the stored quotes.

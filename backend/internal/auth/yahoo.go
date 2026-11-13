@@ -404,11 +404,18 @@ func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem
 			fail(i, err)
 			continue
 		}
-		q := &marketdata.Quote{InstrumentID: row.InstrumentID, OrigPrice: latest.Price, Price: latest.Price, Currency: latest.Currency, QuoteDate: marketdata.BerlinDay(latest.At), QuoteTime: latest.At, FetchedAt: time.Now(), Provider: marketdata.ProviderYahoo, PrevClose: latest.PrevClose}
+		q := &marketdata.Quote{InstrumentID: row.InstrumentID, OrigPrice: latest.Price, Price: latest.Price, Currency: latest.Currency, QuoteDate: marketdata.BerlinDay(latest.At), QuoteTime: latest.At, FetchedAt: time.Now(), Provider: marketdata.ProviderYahoo, PrevClose: latest.PrevClose, PrevCloseDate: latest.PrevDay}
 		attrs := []any{"symbol", symbol, "price", latest.Price, "currency", latest.Currency, "at", latest.At.UTC().Format(time.RFC3339)}
 		fx, err := rate(latest.Currency)
 		if err == nil {
 			err = marketdata.ApplyFX(q, fx)
+		}
+		if err == nil && fx != nil && q.PrevClose != "" {
+			// The FX close dated exactly like the instrument's previous close; absent
+			// (no bars, ECB fallback, holiday gap) it stays empty and the summary flags it.
+			if r, ok := fx.CloseOn(q.PrevCloseDate); ok {
+				q.PrevFXRate = marketdata.Fixed(r, 8)
+			}
 		}
 
 		if err != nil {

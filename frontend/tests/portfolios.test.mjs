@@ -73,13 +73,14 @@ test('disabled rows cannot be picked; successful add clears selection and marks 
   search('apple');
   const row = await screen.findByRole('option', { name: /AAPL/ });
   fireEvent.click(screen.getByRole('option', { name: /MSFT/ }));
-  assert.ok(screen.queryByRole('table') === null);
+  assert.equal(screen.queryAllByTestId('selected-instrument').length, 0);
   fireEvent.click(row); fireEvent.click(row);
-  assert.equal(screen.getAllByRole('row').length, 2);
+  assert.equal(screen.getAllByTestId('selected-instrument').length, 1);
+  assert.match(screen.getByTestId('selected-instrument').getAttribute('aria-label'), /AAPL Apple Inc\./);
   assert.match(row.textContent, /Selected/);
   fireEvent.click(screen.getByRole('button', { name: 'Add to portfolio' }));
   await screen.findByText('1 added'); assert.equal(added, true);
-  assert.ok(screen.queryByRole('table') === null);
+  assert.equal(screen.queryAllByTestId('selected-instrument').length, 0);
   assert.match(screen.getByRole('option', { name: /AAPL/ }).textContent, /In portfolio/);
   assert.equal(screen.getByRole('button', { name: 'Add to portfolio' }).disabled, true);
 });
@@ -95,7 +96,7 @@ test('overflow disables Add and failed adds preserve selection', async t => {
   fireEvent.click(screen.getByRole('button', { name: 'Remove MSFT from selection' }));
   fireEvent.click(screen.getByRole('button', { name: 'Add to portfolio' }));
   assert.match((await screen.findByRole('alert')).textContent, /Item limit reached/);
-  assert.ok(screen.getByRole('table'));
+  assert.equal(screen.getAllByTestId('selected-instrument').length, 1);
   assert.ok(screen.getByRole('button', { name: 'Remove AAPL from selection' }));
 });
 
@@ -106,7 +107,7 @@ test('keyboard navigation skips disabled rows and Escape and outside clicks clos
   const input = screen.getByRole('combobox');
   fireEvent.keyDown(input, { key: 'ArrowDown' });
   assert.equal(input.getAttribute('aria-activedescendant'), 'instrument-1');
-  fireEvent.keyDown(input, { key: 'Enter' }); assert.ok(screen.getByRole('table'));
+  fireEvent.keyDown(input, { key: 'Enter' }); assert.equal(screen.getAllByTestId('selected-instrument').length, 1);
   fireEvent.keyDown(input, { key: 'Escape' }); assert.ok(screen.queryByRole('listbox') === null);
   fireEvent.focus(input); assert.ok(screen.getByRole('listbox'));
   fireEvent.pointerDown(document.body); assert.ok(screen.queryByRole('listbox') === null);

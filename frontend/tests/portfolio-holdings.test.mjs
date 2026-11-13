@@ -37,10 +37,13 @@ test('lists the portfolio items with ISIN, name, latest stored quote and delay; 
  const section = await screen.findByRole('region', { name: 'In the portfolio' });
  await within(section).findByText('HMWO.L');
  assert.deepEqual(requested, ['/api/portfolios/1/items']);
- assert.deepEqual([...section.querySelectorAll('th')].map(th => th.textContent), ['Ticker', 'ISIN', 'Name', 'Current price', 'Pay-date delay']);
- const [hsbc, sap] = section.querySelectorAll('tbody tr');
- assert.deepEqual([...hsbc.querySelectorAll('td')].slice(0, 4).map(text), ['HMWO.L', 'IE00B4X9L533', 'HSBC MSCI World UCITS ETF', '38,41 € (06.11.2026)']);
- assert.deepEqual([...sap.querySelectorAll('td')].slice(0, 4).map(text), ['SAP.DE', '—', 'SAP SE', '–']);
+ const hsbc = within(section).getByRole('listitem', { name: 'HMWO.L HSBC MSCI World UCITS ETF' });
+ const sap = within(section).getByRole('listitem', { name: 'SAP.DE SAP SE' });
+ assert.equal(within(section).getAllByTestId('portfolio-item').length, 2);
+ assert.ok(within(hsbc).getByText('HSBC MSCI World UCITS ETF'));
+ assert.deepEqual(within(hsbc).getAllByRole('term').map(text), ['ISIN', 'Current price']);
+ assert.deepEqual(within(hsbc).getAllByRole('definition').map(text), ['IE00B4X9L533', '38,41 € (06.11.2026)']);
+ assert.deepEqual(within(sap).getAllByRole('definition').map(text), ['—', '–']);
  assert.equal(within(section).getByLabelText('Pay-date delay for HMWO.L in days').value, '30');
  assert.equal(within(section).getByLabelText('Pay-date delay for SAP.DE in days').value, '0');
  // Switching away and back does not reload.

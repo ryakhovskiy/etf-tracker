@@ -28,6 +28,22 @@ const performance = {
     ],
   },
 };
+function selectedPerformance(url) {
+  if (!url.searchParams.has('instrumentIds')) return performance;
+  const ids = new Set(url.searchParams.get('instrumentIds').split(',').filter(Boolean).map(Number));
+  const series = performance.series.filter(item => ids.has(item.instrumentId));
+  if (series.length === performance.series.length) return performance;
+  if (!series.length) return { ...performance, dates: [], series: [], totals: [], invested: '0.00', atPurchase: { value: '0.00', performance: '0.00', performancePct: null }, current: null };
+  const positive = series[0].instrumentId === 1;
+  return {
+    ...performance, series, totals: series[0].values, invested: '100.00',
+    atPurchase: { value: positive ? '110.00' : '90.00', performance: positive ? '10.00' : '-10.00', performancePct: positive ? '10.00' : '-10.00' },
+    current: {
+      ...performance.current, value: positive ? '120.00' : '90.00', performance: positive ? '20.00' : '-10.00', performancePct: positive ? '20.00' : '-10.00',
+      items: performance.current.items.filter(item => ids.has(item.instrumentId)),
+    },
+  };
+}
 const transactions = {
   page: 1, total: 2,
   lines: instruments.map((item, index) => ({
@@ -85,7 +101,7 @@ export async function mockAPI(page, { loggedIn = true } = {}) {
     if (method === 'GET') {
       if (path === '/api/portfolios') return json({ portfolios: [portfolio], limit: 10 });
       if (path === '/api/portfolios/1') return json(portfolio);
-      if (path === '/api/portfolios/1/performance') return json(performance);
+      if (path === '/api/portfolios/1/performance') return json(selectedPerformance(url));
       if (path === '/api/portfolios/1/transactions') return json(transactions);
       if (path === '/api/portfolios/1/items') return json(instruments.map(item => ({ instrumentId: item.id, ticker: item.ticker, name: item.name, isin: item.isin, type: item.type, payDelayDays: 30, latestQuote: { priceEur: item.id === 1 ? '60.0000' : '90.0000', quoteDate: '2026-11-12', provider: 'YAHOO' } })));
       if (path === '/api/portfolios/1/saving-plan') return json(instruments.map(item => ({ instrumentId: item.id, ticker: item.ticker, name: item.name, isin: item.isin, type: item.type, yahooSymbol: item.ticker, defaultAmount: '100.00', defaultPrice: '50.0000', priceSource: 'Last purchase' })));

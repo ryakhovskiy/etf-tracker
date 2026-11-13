@@ -135,9 +135,9 @@ test('disabled rows cannot be clicked, keyboard navigation skips them, and multi
   fireEvent.keyDown(input, { key: 'ArrowDown' });
   assert.equal(input.getAttribute('aria-activedescendant'), 'instrument-17', 'wraps around');
   fireEvent.keyDown(input, { key: 'Enter' });
-  await waitFor(() => assert.ok(screen.getByRole('table') !== null));
+  await screen.findByTestId('selected-instrument');
   fireEvent.click(screen.getByRole('option', { name: /HMWA\.L/ }));
-  await waitFor(() => assert.equal(screen.getAllByRole('row').length, 3));
+  await waitFor(() => assert.equal(screen.getAllByTestId('selected-instrument').length, 2));
   assert.ok(screen.getByRole('listbox') !== null, 'dropdown stays open');
   const post = calls.find(c => c.init?.method === 'POST' && c.url.endsWith('/api/instruments'));
   assert.equal(JSON.parse(post.init.body).source, 'EULERPOOL');

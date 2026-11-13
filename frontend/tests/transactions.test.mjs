@@ -241,7 +241,7 @@ test('tab links switch immediately before the route resolves and follow browser 
  assert.equal(view.container.querySelector('[aria-label="Dashboard view"]').hidden, false);
 });
 
-test('dashboard sends selected page size, resets to page one and aligns configurable columns',async t=>{
+test('dashboard sends selected page size, resets to page one and preserves field visibility and order',async t=>{
  const requests=[];
  t.mock.method(globalThis,'fetch',async url=>{requests.push(url);return workspaceFetch(url);});
  render(React.createElement(Dashboard,{id:'1'}));await screen.findByRole('button',{name:'Delete transaction 1'});
@@ -250,12 +250,15 @@ test('dashboard sends selected page size, resets to page one and aligns configur
  fireEvent.change(screen.getByLabelText('Rows per page'),{target:{value:'100'}});
  await screen.findByText('Page 1 of 1');assert.ok(requests.some(url=>url.includes('pageSize=100&page=1')));
  assert.equal(screen.getByRole('button',{name:'Next'}).disabled,true);
- fireEvent.click(screen.getByText('Columns',{exact:true}));
- fireEvent.click(screen.getByRole('checkbox',{name:'Name',exact:true}));assert.ok(screen.queryByRole('columnheader',{name:'Name',exact:true})===null);
- assert.equal(document.querySelector('.transaction-group td').colSpan,7);
+ const line=screen.getByTestId('transaction-line');
+ fireEvent.click(screen.getByText('Fields shown',{exact:true}));
+ fireEvent.click(screen.getByRole('checkbox',{name:'Name',exact:true}));
+ assert.ok(within(line).queryByText('Name',{selector:'dt',exact:true})===null);
+ assert.ok(within(line).queryByText('Apple',{exact:true})===null);
+ assert.equal(within(line).getAllByRole('term').length,7);
  fireEvent.click(screen.getByRole('button',{name:'Move Ticker left'}));
- assert.equal(screen.getAllByRole('columnheader')[0].textContent,'Ticker');
- assert.equal(document.querySelector('tbody tr:not(.transaction-group) td').textContent,'AAPL');
+ assert.equal(within(line).getAllByRole('term')[0].textContent,'Ticker');
+ assert.equal(within(line).getAllByRole('definition')[0].textContent,'AAPL');
 });
 
 for(const editedPrice of [false,true])test(`dashboard fetch updates transaction defaults while preserving ${editedPrice?'edited prices':'edited amounts'}`,async t=>{
@@ -345,14 +348,15 @@ test('dashboard displays the complete transaction total even with only one of it
   return workspaceFetch(url);
  });
  render(React.createElement(Dashboard,{id:'1'}));
- await screen.findByRole('columnheader',{name:'Performance',exact:true});
- assert.match(document.querySelector('.transaction-performance-total').textContent,/Performance: ▲ \+1,00\s€ \(\+1,82 %\)/);
- assert.match(document.querySelector('.transaction-performance').textContent,/Position: ▲ \+4,00\s€ \(\+20,00 %\)/);
- assert.equal(document.querySelector('.transaction-group td').colSpan,8);
- fireEvent.click(screen.getByText('Columns',{exact:true}));
+ const line=await screen.findByTestId('transaction-line');
+ const group=screen.getByRole('region',{name:'Transaction 1',exact:true});
+ assert.match(within(group).getByText(/^Performance:/).textContent,/Performance: ▲ \+1,00\s€ \(\+1,82 %\)/);
+ assert.match(within(line).getByText(/^Position:/).textContent,/Position: ▲ \+4,00\s€ \(\+20,00 %\)/);
+ assert.equal(within(line).getAllByRole('term').length,8);
+ fireEvent.click(screen.getByText('Fields shown',{exact:true}));
  fireEvent.click(screen.getByRole('checkbox',{name:'Performance',exact:true}));
- assert.ok(screen.queryByRole('columnheader',{name:'Performance',exact:true})===null);
- assert.equal(document.querySelector('.transaction-group td').colSpan,7);
- assert.equal(document.querySelectorAll('.transaction-performance').length,0);
- assert.ok(document.querySelector('.transaction-performance-total')!==null);
+ assert.ok(within(line).queryByText('Performance',{selector:'dt',exact:true})===null);
+ assert.equal(within(line).getAllByRole('term').length,7);
+ assert.ok(within(line).queryByText(/^Position:/)===null);
+ assert.ok(within(group).getByText(/^Performance:/));
 });

@@ -36,6 +36,7 @@
 .csv-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--surface-sunken) 55%, transparent); }
 .csv-table input, .csv-table select { min-width: 125px; min-height: 40px; padding: 0 10px; }
 .csv-table input[type="checkbox"] { min-width: 20px; width: 20px; }
+.csv-include { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-width: 44px; height: 44px; margin: -8px 0; cursor: pointer; }
 .csv-table td button { padding: 0 12px; font-size: 12px; }
 .csv-table td:last-child button { margin-bottom: 8px; }
 .csv-table .error { min-width: 160px; margin-top: 4px; font-size: 12px; }

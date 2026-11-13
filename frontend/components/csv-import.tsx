@@ -796,24 +796,27 @@ export function CSVImport({ id }: { id: string }) {
                         <tr key={row.rowNumber}>
                           <TableCells visible={columns.visible} labels={columns.labels}>
                             <td>
-                              <input
-                                aria-label={`Include row ${row.rowNumber}`}
-                                type="checkbox"
-                                checked={row.include}
-                                disabled={busy}
-                                onChange={(e) => {
-                                  if (e.target.checked)
-                                    excluded.current.delete(row.rowNumber);
-                                  else excluded.current.add(row.rowNumber);
-                                  mutate((rs) =>
-                                    rs.map((r) =>
-                                      r.rowNumber === row.rowNumber
-                                        ? { ...r, include: e.target.checked }
-                                        : r,
-                                    ),
-                                  );
-                                }}
-                              />
+                              {/* The label is the 44px hit area; the input keeps its accessible name. */}
+                              <label className="csv-include">
+                                <input
+                                  aria-label={`Include row ${row.rowNumber}`}
+                                  type="checkbox"
+                                  checked={row.include}
+                                  disabled={busy}
+                                  onChange={(e) => {
+                                    if (e.target.checked)
+                                      excluded.current.delete(row.rowNumber);
+                                    else excluded.current.add(row.rowNumber);
+                                    mutate((rs) =>
+                                      rs.map((r) =>
+                                        r.rowNumber === row.rowNumber
+                                          ? { ...r, include: e.target.checked }
+                                          : r,
+                                      ),
+                                    );
+                                  }}
+                                />
+                              </label>
                             </td>
                             <td>{row.rowNumber}</td>
                             <td>

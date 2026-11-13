@@ -1,6 +1,6 @@
 # Holdings: implemented feature facts
 
-Snapshot: 2026-11-08. Agent reference for the current checkout, consolidating
+Snapshot: 2026-11-08; updated 2026-11-13 for the frontend redesign (themes, responsive tile UI). Agent reference for the current checkout, consolidating
 `f1-portfolio-core.md`, `f2.1`–`f2.5`, and `f3-eulerpool.md`.
 **Implemented** means present in code; it does not assert merge/deployment status
 or live-provider availability. Code and tests take precedence over historical specs.
@@ -18,6 +18,7 @@ or live-provider availability. Code and tests take precedence over historical sp
 | Eulerpool / f3 | Implemented; primary-provider default superseded | Search, stock bulk quotes, ETF history/profiles, quota accounting, modern picker |
 | Yahoo and historical prices / later code | Implemented extension | Default primary provider, symbol linking, current quotes and daily history |
 | Dividend calendar / f4, beyond the supplied specs | Implemented extension | Cached gross dividends, EUR totals, forecasts and background sync |
+| Themes and responsive tile UI / later frontend work | Implemented extension | System + 5 per-browser themes, tokenized colours, 360px–desktop tiles/cards, bottom tab bar on phones, Playwright smoke suite |
 | Docker deployment / later infrastructure | Implemented | Separate multi-stage backend/frontend images, dedicated network, persistent SQLite volume, health checks |
 
 ## Platform, security and shared rules
@@ -206,6 +207,64 @@ Item removal is API-only and rejects items with transactions (`ITEM_HAS_TRANSACT
   persists through tab switches and data refreshes; market-price fetches still
   cover the full portfolio.
 
+## Appearance: themes and responsive layout
+
+Frontend only: no backend, API, database or Docker involvement.
+
+- **Choices.** Six: System plus five themes. Theme IDs: `light`, `dark`, `tech-green`,
+  `tech-cappuccino`, `tech-red` (Tech Cappuccino is the Catppuccin Mocha palette).
+  `html[data-theme]` always holds the *resolved* theme; `html[data-theme-pref]` holds
+  the choice (`system` or a theme ID). New visitors get System.
+- **System** resolves to `light`/`dark` from `prefers-color-scheme` and follows OS
+  changes live, without a reload.
+- **Persistence.** Per browser, `localStorage` key `holdings.theme` (no account or
+  backend). A missing or invalid value means System. If storage throws, the choice
+  still applies for that page view and nothing breaks. A change in another tab is
+  adopted through the `storage` event.
+- **No flash.** An inline script in `<head>` of `app/layout.tsx` (`themeInitScript` in
+  `frontend/lib/theme.ts`) sets both attributes before first paint; everything in it
+  is wrapped in try/catch. `ThemeSync` re-resolves on mount and keeps System/tabs in step.
+- **Switcher.** In the sticky top bar of every page, including login: a trigger
+  (`data-testid="theme-trigger"`) opens a radio group named "Theme" with six `role="radio"`
+  options (`aria-checked`, colour swatches). Arrow keys/Home/End move and select, Escape
+  closes and returns focus to the trigger.
+- **Tokens.** [`frontend/app/styles/tokens.css`](../frontend/app/styles/tokens.css) is the
+  only file that contains colours (the Google logo colours are tokens there too).
+  Component CSS and TSX use semantic tokens only: `--bg`, `--surface`, `--surface-raised`,
+  `--surface-sunken`, `--border`, `--border-strong`, `--text`, `--text-muted`, `--link`,
+  `--accent`, `--accent-soft`, `--on-accent`, `--positive`, `--negative`, `--warning`,
+  `--info` (+ `-soft` tints), `--focus-ring`, `--shadow`, `--glow`, radii, font tokens.
+  Chart tokens: `--chart-grid`, `--chart-axis`, `--series-1`…`--series-7`, and the
+  dividend ex-date shades `--div-ex-a`…`e` with `--div-ex-opacity` (0.9). An instrument
+  keeps one colour slot everywhere: `instrumentColor(id)` is `var(--series-N)` with
+  N = ((id−1) mod 7)+1 (`frontend/lib/colors.ts`), so Recharts and the dividend chart
+  restyle on a theme switch. `scripts/check-theme-contrast.mjs` verifies WCAG AA for
+  every theme (text 4.5:1, controls/graphics 3:1, ex-date shades after opacity);
+  `tests/theme-contrast.test.mjs` runs it in `npm test`.
+- **Fonts.** Inter (UI) and JetBrains Mono (figures; also headings and labels in the
+  three tech themes), self-hosted variable woff2 under `frontend/app/fonts`, loaded with
+  `next/font/local` (no network at build or run time). Tech themes also use sharper radii.
+- **Gain/loss** never relies on colour: the text always carries the sign and ▲/▼
+  (`performanceDisplay`). Each theme defines its own `--positive`/`--negative`; in Tech Red
+  losses are amber-orange so they are not confused with the crimson accent.
+- **Responsive.** Works from 360px with no horizontal page scroll (checked at 360, 375
+  and 1280px); the page max-width is 1360px. The portfolio tab nav is one `<nav>`: segmented
+  pills on desktop, a fixed bottom tab bar with inline SVG icons at ≤640px. On phones and
+  touch devices (`≤640px` or `pointer: coarse`) buttons, selects, text inputs and summaries
+  are ≥44px tall, and buttons/summaries ≥44px wide (`app/styles/touch.css`, imported last);
+  checkbox labels are the hit area. Dialogs are bottom sheets at ≤640px; instrument search results
+  and the dividend details popover also open as sheets there. Motion is a subtle hover lift
+  and transitions; `prefers-reduced-motion` turns animation off.
+- **Tiles and cards instead of tables:** portfolio list (card grid), dashboard figures (KPI
+  tiles; current value and performance lead on phones), one tile per position (chart-colour
+  stripe, value, change vs purchase prices, share), dashboard history (one card per
+  transaction with a field chooser), Transactions entry (one tile per instrument),
+  Manage items and Selected instruments (tiles), dividend month cards. The CSV review stays a
+  grid above 800px and becomes stacked, labelled row cards at ≤800px (cells carry
+  `data-label`; the header row stays available to assistive technology).
+- CSS lives in [`frontend/app/styles`](../frontend/app/styles) (`tokens`, `base`, `layout`,
+  `touch`, `components/*`), imported by `app/globals.css`.
+
 ## Market data: current behavior
 
 **Superseded spec rules:** Eulerpool is no longer the default primary; fetching is
@@ -306,6 +365,9 @@ per-item errors and ECB historical FX. This does **not** create dividend transac
   Config: [`config.go`](../backend/internal/config/config.go).
 - UI: [`frontend/components`](../frontend/components), routes in
   [`frontend/app`](../frontend/app), decimal/helpers in [`frontend/lib`](../frontend/lib).
+  Themes/CSS: [`frontend/app/styles`](../frontend/app/styles), theme engine
+  [`frontend/lib/theme.ts`](../frontend/lib/theme.ts), contrast check
+  [`frontend/scripts/check-theme-contrast.mjs`](../frontend/scripts/check-theme-contrast.mjs).
   Migrations currently run through **00013**; add migrations rather than editing applied ones.
 - Deployment: [`compose.yaml`](../compose.yaml),
   [`backend/Dockerfile`](../backend/Dockerfile),
@@ -318,6 +380,14 @@ per-item errors and ECB historical FX. This does **not** create dividend transac
   Snapshot checks: `go test ./...` and `npm test` both passed on 2026-11-08.
   Run `go test ./...` in `backend`; `npm test` and `npm run typecheck` in `frontend`.
   Mock fixtures live under `testdata/` and embedded provider testdata.
+- Browser suite (Playwright, not part of `npm test`): `npm run test:e2e` in `frontend`
+  starts its own Next dev server and fulfils every API/auth call in the browser (no backend
+  or Google login). 131 cases in 8 spec files: 5 themes × login, portfolios and the five
+  tabs at 375×812 and 1280×800, plus 360px boundary, theme-engine, touch-target, overflow
+  and rendered-contrast checks. Needs Chromium (`npx playwright install chromium`) and its
+  system libraries; see [`frontend/e2e/README.md`](../frontend/e2e/README.md).
+- At `7040330`, `npm test`, `npm run typecheck`, `npm run build` and the 131-case
+  `npm run test:e2e` suite passed.
 - Docker checks passed on 2026-11-08: Compose validation, both image builds,
   frontend tests/type checking and isolated container smoke tests. Verified healthy
   non-root services, dedicated networking, internal-only backend port, writable

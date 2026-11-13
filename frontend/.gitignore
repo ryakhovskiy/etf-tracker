@@ -7,6 +7,8 @@ out/
 
 # Test and coverage output
 coverage/
+playwright-report/
+test-results/
 
 # Local environment files and secrets
 .env

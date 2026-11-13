@@ -9,7 +9,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit --incremental false",
-    "test": "node --experimental-strip-types --test lib/*.test.mjs && node --import tsx --test tests/*.test.mjs"
+    "test": "node --experimental-strip-types --test lib/*.test.mjs && node --import tsx --test tests/*.test.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "decimal.js": "^10.6.0",
@@ -19,6 +20,7 @@
     "recharts": "^3.10.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@testing-library/react": "^16.3.3",
     "@types/node": "22.10.2",
     "@types/react": "19.3.0",

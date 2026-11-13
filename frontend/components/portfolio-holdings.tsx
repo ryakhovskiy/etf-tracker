@@ -1,6 +1,7 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, APIError } from "../lib/api";
+import { instrumentColor } from "../lib/colors";
 import { dayLabel, money } from "../lib/dividends";
 import { usePortfolioUpdates } from "./portfolio-updates";
 
@@ -88,15 +89,13 @@ export function PortfolioHoldings({ id }: { id: number }) {
     <p className="muted">The pay-date delay moves each dividend from its ex-date to the estimated payment day (moved to the next German working day). It applies to this instrument in all your portfolios.</p>
     {error && <p className="error" role="alert">{error}</p>}
     {items === null ? (!error && <p className="muted" role="status">Loading items…</p>) : items.length === 0 ? <p className="selection-empty">No items in this portfolio yet.</p> :
-      <div className="table-scroll"><table>
-        <thead><tr>{["Ticker", "ISIN", "Name", "Current price", "Pay-date delay"].map(h => <th key={h}>{h}</th>)}</tr></thead>
-        <tbody>{items.map(item => <tr key={item.instrumentId}>
-          <td><strong>{item.ticker}</strong></td>
-          <td>{item.isin ?? "—"}</td>
-          <td>{item.name}</td>
-          <td className="price-cell">{item.latestQuote ? <>{money(item.latestQuote.priceEur)} <span className="muted">({dayLabel(item.latestQuote.quoteDate)})</span></> : <span className="muted" title="No stored quote yet.">–</span>}</td>
-          <td><DelayInput item={item} onSaved={days => { setItems(list => list && list.map(i => i.instrumentId === item.instrumentId ? { ...i, payDelayDays: days } : i)); changed(); }} /></td>
-        </tr>)}</tbody>
-      </table></div>}
+      <ul className="item-tiles">{items.map(item => <li key={item.instrumentId} className="item-tile tile" data-testid="portfolio-item" aria-label={`${item.ticker} ${item.name}`} style={{ "--stripe": instrumentColor(item.instrumentId) } as CSSProperties}>
+        <div className="item-head"><div className="item-title"><strong className="item-ticker">{item.ticker}</strong><span className="item-name">{item.name}</span></div><span className={`pill ${item.type === "ETF" ? "pill-etf" : "pill-stock"}`}>{item.type === "ETF" ? "ETF" : "Stock"}</span></div>
+        <dl className="item-facts">
+          <div><dt>ISIN</dt><dd className="num">{item.isin ?? "—"}</dd></div>
+          <div><dt>Current price</dt><dd className="price-cell">{item.latestQuote ? <>{money(item.latestQuote.priceEur)} <span className="muted">({dayLabel(item.latestQuote.quoteDate)})</span></> : <span className="muted" title="No stored quote yet.">–</span>}</dd></div>
+        </dl>
+        <div className="item-delay"><span className="field-caption">Pay-date delay</span><DelayInput item={item} onSaved={days => { setItems(list => list && list.map(i => i.instrumentId === item.instrumentId ? { ...i, payDelayDays: days } : i)); changed(); }} /></div>
+      </li>)}</ul>}
   </section>;
 }

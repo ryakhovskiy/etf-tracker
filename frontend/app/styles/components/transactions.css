@@ -1,0 +1,91 @@
+/* Transactions: the history as grouped transaction cards (dashboard) and the entry form as instrument tiles. */
+
+/* ---------- Generic tile fields (label above value, in the user's chosen order) ---------- */
+.tile-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px 16px; margin: 0; }
+.tile-field { min-width: 0; }
+.tile-field dt { color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: var(--label-tracking); text-transform: var(--label-case); }
+.tile-field dd { margin: 2px 0 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.tile-field[data-field="Name"], .tile-field[data-field="Performance"] { grid-column: span 2; }
+.tile-field[data-field="Ticker"] dd { font-family: var(--font-mono); font-weight: 600; }
+.tile-field[data-field="Amount €"] dd { font-family: var(--font-figure); font-weight: 650; }
+
+/* ---------- Dashboard history: one tile per transaction ---------- */
+.txn-groups { display: grid; gap: 16px; }
+.txn-group { padding: 0; overflow: hidden; }
+.txn-group-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 16px 20px; background: var(--surface-sunken); }
+.txn-group-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 4px; min-width: 0; }
+.txn-group-title h3 { font-size: 15px; margin-right: 8px; }
+.transaction-performance-total { font-variant-numeric: tabular-nums; font-size: 13px; }
+.txn-lines { list-style: none; margin: 0; padding: 8px 12px 12px; display: grid; gap: 8px; }
+.txn-line { padding: 14px 8px; border-radius: var(--radius-sm); }
+.txn-line + .txn-line { background: transparent; }
+.txn-line:nth-child(odd) { background: color-mix(in srgb, var(--surface-sunken) 55%, transparent); }
+
+/* Per-position gain/loss inside a card. Sign and arrow are in the text; colour only reinforces. */
+.transaction-performance { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: var(--radius-sm); font-variant-numeric: tabular-nums; font-size: 13px; }
+.transaction-performance.performance-positive { background: var(--positive-soft); }
+.transaction-performance.performance-negative { background: var(--negative-soft); }
+.transaction-performance small { font-size: 11.5px; }
+.transaction-performance .muted { color: var(--text-muted); }
+
+/* ---------- Entry form: controls tile, instrument tiles, total ---------- */
+.transactions h2 { margin-bottom: 16px; }
+.plan-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px 24px; margin-bottom: 16px; }
+.date-field { max-width: 220px; min-width: 0; }
+.date-field label { margin-bottom: 6px; }
+.date-field .error { margin-top: 6px; }
+.price-fetch { flex: 1 1 320px; display: flex; align-items: center; gap: 10px 12px; flex-wrap: wrap; min-width: 0; margin: 0; }
+.price-fetch p { margin: 0; font-size: 13px; flex-basis: 100%; }
+.price-fetch small { flex-basis: 100%; }
+
+.plan-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 16px; }
+.plan-tile { display: flex; flex-direction: column; gap: 14px; padding: 18px 20px; }
+.plan-head { display: flex; align-items: flex-start; gap: 12px; }
+.plan-fetch { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 0; min-width: 44px; font-size: 11px; font-weight: 500; color: var(--text-muted); cursor: pointer; }
+.plan-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.plan-ticker { font-family: var(--font-mono); font-weight: 700; font-size: 15px; }
+.plan-name { color: var(--text-muted); font-size: 13.5px; overflow-wrap: anywhere; }
+.plan-inputs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.plan-field { min-width: 0; }
+.plan-field input { text-align: right; padding: 0 10px; font-variant-numeric: tabular-nums; }
+.plan-field .error { margin-top: 4px; font-size: 12px; }
+.field-caption { display: block; margin-bottom: 4px; color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: var(--label-tracking); text-transform: var(--label-case); }
+.plan-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-top: 12px; border-top: 1px dashed var(--border); }
+.plan-source { margin: 0; font-size: 12.5px; line-height: 1.45; min-width: 0; flex: 1 1 140px; overflow-wrap: anywhere; }
+
+.plan-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-top: 16px; padding: 18px 22px; }
+.plan-summary strong { font-family: var(--font-figure); font-size: 20px; font-variant-numeric: tabular-nums; }
+
+/* Price link (Yahoo symbol) controls inside a tile. */
+.price-link { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 0; }
+.price-link .isin { padding: 2px 8px; border-radius: var(--radius-sm); background: var(--surface-sunken); font-family: var(--font-mono); font-size: 12px; white-space: nowrap; }
+.price-link .link-button { font-size: 13px; font-weight: 600; border-color: var(--accent); color: var(--accent); background: transparent; }
+.price-link .link-button:hover:not(:disabled) { background: var(--accent-soft); }
+.price-link .link-button.subtle { font-weight: 500; color: var(--text-muted); border-color: transparent; }
+.price-link .link-button.subtle:hover:not(:disabled) { border-color: var(--border-strong); }
+
+/* Link-symbol dialog */
+.link-search { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; }
+.link-search-row { display: flex; gap: 8px; }
+.link-search-row input { flex: 1; min-width: 0; }
+.link-results { list-style: none; margin: 12px 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 320px; overflow: auto; }
+.link-results button { width: 100%; justify-content: flex-start; gap: 12px; padding: 10px 12px; text-align: left; background: var(--surface-sunken); border-color: transparent; }
+.link-results button:hover:not(:disabled) { background: var(--accent-soft); border-color: var(--accent); }
+.link-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.link-main strong { overflow-wrap: anywhere; }
+
+@media (max-width: 640px) {
+  .plan-controls { align-items: stretch; }
+  .date-field { max-width: none; flex: 1 1 100%; }
+  .price-fetch button { flex: 1 1 100%; }
+  .plan-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .plan-tile { padding: 16px; }
+  .plan-inputs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .plan-field:first-child { grid-column: 1 / -1; }
+  .plan-summary { flex-direction: column; align-items: stretch; }
+  .plan-summary button { width: 100%; }
+  .txn-group-head { padding: 14px 16px; }
+  .txn-lines { padding: 4px 8px 8px; }
+  .tile-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tile-field[data-field="Name"], .tile-field[data-field="Performance"] { grid-column: 1 / -1; }
+}

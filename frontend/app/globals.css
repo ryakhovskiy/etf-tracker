@@ -14,5 +14,7 @@
 @import "./styles/components/theme-switcher.css";
 @import "./styles/components/portfolios.css";
 @import "./styles/components/dashboard.css";
+@import "./styles/components/transactions.css";
+@import "./styles/components/items.css";
 @import "./styles/legacy.css";
 @import "./styles/touch.css";

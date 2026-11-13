@@ -1,0 +1,96 @@
+/* Manage items (portfolio items with pay-date delay) and the instrument picker. */
+.selection { margin-top: 36px; }
+.selection h2 { margin-bottom: 12px; }
+.selection-empty { padding: 32px 20px; border: 1px dashed var(--border-strong); border-radius: var(--radius); text-align: center; color: var(--text-muted); font-size: 14px; }
+.portfolio-holdings > .muted { margin: 0 0 16px; max-width: 70ch; }
+.add-controls { margin-top: 20px; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+
+/* ---------- Item tiles (stripe = the instrument's chart colour) ---------- */
+.item-tiles, .selected-tiles { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 16px; }
+.item-tile { position: relative; display: flex; flex-direction: column; gap: 14px; padding: 18px 20px 18px 24px; overflow: hidden; }
+.item-tile::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: var(--stripe); }
+html[data-theme^="tech-"] .item-tile::before { width: 3px; }
+.item-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.item-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.item-ticker { font-family: var(--font-mono); font-weight: 700; font-size: 15px; }
+.item-name { color: var(--text-muted); font-size: 13.5px; overflow-wrap: anywhere; }
+.item-facts { display: grid; gap: 8px; margin: 0; }
+.item-facts > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--surface-sunken); }
+.item-facts dt { color: var(--text-muted); font-size: 13px; }
+.item-facts dd { margin: 0; font-size: 13.5px; font-weight: 550; text-align: right; }
+.price-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.item-delay { display: flex; flex-direction: column; gap: 4px; }
+.delay-field { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.delay-field input { width: 92px; text-align: right; font-variant-numeric: tabular-nums; }
+.delay-unit, .delay-status { font-size: 13px; color: var(--text-muted); }
+.delay-status.saved { color: var(--positive); }
+.delay-field .delay-error { flex-basis: 100%; margin: 0; font-size: 12.5px; }
+
+/* ---------- Selected instruments ---------- */
+.selected-tile { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 12px 16px 20px; }
+.selected-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.selected-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.selected-ids { font-size: 12.5px; }
+
+/* ---------- Picker ---------- */
+.search-picker { position: relative; max-width: 780px; }
+.search-picker > label { margin-bottom: 8px; }
+.search-bar { display: flex; align-items: center; gap: 8px; }
+.search-field {
+  position: relative; flex: 1; min-width: 0;
+  display: flex; align-items: center;
+  height: 48px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  transition: box-shadow 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.search-field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 35%, transparent); }
+.search-field > .icon { flex: none; margin-left: 14px; color: var(--text-muted); }
+.search-field input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; padding: 0 10px; outline: 0; }
+.clear-button { flex: none; width: 32px; min-width: 32px; margin-right: 8px; padding: 0; border: 0; border-radius: 50%; background: var(--surface-sunken); color: var(--text-muted); font-size: 18px; line-height: 1; }
+.search-button { flex: none; min-width: 112px; height: 48px; padding: 0 18px; border-radius: var(--radius); background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 650; }
+.search-button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+.search-dropdown {
+  position: absolute; top: calc(100% + 8px); left: 0; right: 0; z-index: 10;
+  min-width: 360px; max-height: 440px; overflow: auto;
+  padding: 8px;
+  background: var(--surface-raised); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-raised);
+  animation: pop-in 0.15s var(--ease);
+}
+.section-title { padding: 10px 10px 6px; color: var(--text-muted); font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.banner { margin: 0 0 6px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning); font-size: 12.5px; }
+/* Results are small tiles: no row lines, a soft fill on hover and for the active option. */
+.option { min-width: 0; display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 8px 12px; margin-bottom: 4px; border-radius: var(--radius-sm); cursor: pointer; font-size: 14px; }
+.option:hover, .option.active { background: var(--accent-soft); }
+.option.disabled { cursor: default; color: var(--text-muted); background: var(--surface-sunken); }
+.option-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.option-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.option-name mark { background: var(--accent-soft); color: var(--accent); border-radius: 3px; font-weight: 700; }
+.option.active .option-name mark, .option:hover .option-name mark { background: transparent; text-decoration: underline; }
+.option-meta { color: var(--text-muted); font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.option-side { flex: none; display: flex; align-items: center; gap: 8px; }
+.option-state { font-size: 12px; color: var(--text-muted); }
+.pill { min-width: 48px; }
+.state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 20px 16px; color: var(--text-muted); text-align: center; }
+.state p { margin: 0; }
+.skeleton-row { display: flex; align-items: center; gap: 12px; height: 60px; padding: 0 12px; }
+.skeleton-row span { height: 14px; border-radius: 7px; background: linear-gradient(90deg, var(--surface-sunken) 25%, var(--border) 50%, var(--surface-sunken) 75%); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
+.skeleton-row span:first-child { width: 48px; }
+.skeleton-row span:last-child { flex: 1; }
+@keyframes shimmer { to { background-position: -200% 0; } }
+.dropdown-footer { padding: 8px 10px 4px; color: var(--text-muted); font-size: 11.5px; }
+.info-button[aria-hidden="true"] { cursor: pointer; }
+
+@media (max-width: 640px) {
+  .search-button { min-width: 48px; padding: 0 12px; }
+  .search-button .label { display: none; }
+  /* The results open as a sheet at the bottom of the screen on phones. */
+  .search-dropdown { position: fixed; left: 0; right: 0; top: auto; bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px)); min-width: 0; width: 100%; max-height: 60dvh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; animation: sheet-in 0.2s var(--ease); }
+  .item-tiles, .selected-tiles { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .add-controls button.primary { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .skeleton-row span { animation: none; } }

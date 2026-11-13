@@ -173,9 +173,17 @@ html[data-theme^="tech-"] .holding-tile::before { width: 3px; }
   .figure:nth-child(3) { grid-column: 1 / -1; }
 }
 @media (max-width: 640px) {
-  .figures { grid-template-columns: minmax(0, 1fr); gap: 12px; }
-  .figure, .figure-current, .figure:nth-child(3) { grid-column: auto; }
-  .figure.tile { padding: 16px 18px; }
+  /* Phones: current value and current performance lead as a pair, the three purchase-price
+     figures follow in a compact two-column grid. */
+  .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .figure { grid-column: span 1; order: 1; }
+  .figure:nth-child(3) { grid-column: 1 / -1; }
+  .figure-current { order: 0; }
+  .figure.tile { padding: 12px 14px; gap: 6px; }
+  .figure .kpi-value { font-size: 18px; }
+  .figure-current .kpi-value { font-size: 22px; }
+  .figure .kpi-label { font-size: 12px; }
+  .figure .performance-percent { font-size: 12px; padding: 1px 8px; }
   .current-fetch { padding: 16px; }
   .fetch-toolbar { align-items: stretch; gap: 14px; }
   .fetch-description { flex-basis: 100%; }

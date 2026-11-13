@@ -59,3 +59,58 @@
   color: var(--accent);
 }
 .portfolios .hint { margin-bottom: 20px; }
+
+/* ---------- Summary: total strip and the metrics inside each portfolio tile ---------- */
+.summary-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(0, 1fr)) auto;
+  align-items: start;
+  gap: 16px 28px;
+  margin-bottom: 20px;
+  padding: 20px 24px;
+}
+.summary-strip .kpi-value { font-size: clamp(18px, 1.8vw, 22px); }
+.summary-strip-main .kpi-value { font-size: clamp(28px, 3.2vw, 40px); }
+.summary-status { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; min-width: 0; text-align: right; }
+.summary-asof { margin: 0; color: var(--text-muted); font-size: 12.5px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.summary-updating { display: inline-flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12.5px; }
+.summary-updating .spinner { width: 14px; height: 14px; border-width: 2px; }
+.summary-note { margin: 0; color: var(--text-muted); font-size: 12.5px; }
+.summary-refresh { min-height: 40px; }
+
+.portfolio-metrics { display: grid; gap: 10px; margin: 0; }
+.metric-list { display: grid; gap: 10px; margin: 0; }
+.metric-list dd, .metric-list dt { margin: 0; }
+.portfolio-hero { display: flex; flex-direction: column; gap: 2px; }
+.portfolio-hero .kpi-label { font-size: 12px; }
+.portfolio-hero .kpi-value { font-size: clamp(26px, 2.4vw, 32px); }
+.metric-row { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 2px 12px; }
+.metric-label { color: var(--text-muted); font-size: 12.5px; }
+.metric-value { font-family: var(--font-figure); font-size: 14px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; text-align: right; }
+.portfolio-asof { margin: 0; color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.partial-hint { display: inline-flex; align-items: center; margin-left: 6px; }
+
+/* Skeletons while the summaries load; stored values stay visible while prices refresh. */
+.skeleton-line { display: block; height: 14px; border-radius: 7px; background: linear-gradient(90deg, var(--surface-sunken) 25%, var(--border) 50%, var(--surface-sunken) 75%); background-size: 200% 100%; animation: shimmer 1.2s linear infinite; }
+.skeleton-line.is-hero { height: 30px; width: 60%; }
+.skeleton-line.is-short { width: 40%; }
+.is-updating .kpi-value, .is-updating .metric-value { transition: opacity 0.2s var(--ease); }
+
+@media (max-width: 900px) {
+  .summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .summary-strip-main { grid-column: 1 / -1; }
+  .summary-status { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; text-align: left; }
+}
+@media (max-width: 640px) {
+  .summary-strip { padding: 16px; gap: 12px 16px; }
+  .summary-strip .kpi-value { font-size: 16px; }
+  .summary-strip-main .kpi-value { font-size: 28px; }
+}
+@media (prefers-reduced-motion: reduce) { .skeleton-line { animation: none; } }
+/* The stretched tile link covers the metrics; the partial hint stays hoverable/focusable above it. */
+.portfolio-card .partial-hint { position: relative; z-index: 2; }
+.portfolio-card .portfolio-metrics { min-width: 0; }
+.summary-strip .metric-value { font-size: inherit; text-align: left; }
+.summary-strip .kpi-value .partial-hint { vertical-align: middle; }
+/* "partial" is a caution, not a brand accent. */
+.partial-hint .badge { background: var(--warning-soft); color: var(--warning); }

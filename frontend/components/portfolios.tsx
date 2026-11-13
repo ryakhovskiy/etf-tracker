@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { api, Portfolio } from "../lib/api";
 import { IconPlus } from "./icons";
+import { MetricsSkeleton, PortfolioMetrics } from "./portfolio-metrics";
+import { SummaryStrip } from "./summary-strip";
+import { usePortfolioSummaries } from "./use-portfolio-summaries";
 
 export function Portfolios() {
   const router = useRouter();
@@ -13,12 +16,13 @@ export function Portfolios() {
   const [editing, setEditing] = useState<Portfolio | "create" | null>(null);
   const [deleting, setDeleting] = useState<Portfolio | null>(null);
   const [busy, setBusy] = useState(false);
+  const summaries = usePortfolioSummaries(!!data && data.portfolios.length > 0);
   const load = () => api<{ portfolios: Portfolio[]; limit: number }>("/api/portfolios").then(setData);
   useEffect(() => { load().catch(e => setError(e.message)); }, []);
   const remove = async () => {
     if (!deleting) return;
     setBusy(true); setError("");
-    try { await api(`/api/portfolios/${deleting.id}`, { method: "DELETE" }); setDeleting(null); await load(); }
+    try { await api(`/api/portfolios/${deleting.id}`, { method: "DELETE" }); setDeleting(null); await load(); void summaries.retry(); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -28,7 +32,8 @@ export function Portfolios() {
       {data.portfolios.length === 0 ? <div className="portfolio-empty tile"><div className="empty-mark" aria-hidden="true"><IconPlus size={26} /></div><h1>Your portfolios</h1><p className="muted">Create a portfolio to start selecting stocks and ETFs.</p><button className="primary" onClick={() => setEditing("create")}>Create portfolio</button></div> : <>
         <div className="section-heading"><div><p className="eyebrow">Your workspace</p><h1>Portfolios</h1><p className="muted">{data.portfolios.length} / {data.limit} portfolios</p></div><button className="primary" disabled={data.portfolios.length >= data.limit} onClick={() => setEditing("create")}>Create portfolio</button></div>
         {data.portfolios.length >= data.limit && <p className="hint">Portfolio limit reached. Delete a portfolio to create another.</p>}
-        <ul className="portfolio-grid">{data.portfolios.map(p => <li key={p.id} className="portfolio-card tile tile-interactive" data-testid="portfolio-card"><Link href={`/portfolios/${p.id}`} className="portfolio-card-link"><span className="portfolio-card-mark" aria-hidden="true">{p.name.trim().charAt(0).toUpperCase() || "#"}</span><strong>{p.name}</strong><span className="muted">{p.itemCount} {p.itemCount === 1 ? "item" : "items"}</span></Link><div className="row-actions"><button onClick={() => setEditing(p)}>Rename<span className="sr-only"> {p.name}</span></button><button onClick={() => setDeleting(p)}>Delete<span className="sr-only"> {p.name}</span></button></div></li>)}</ul>
+        <SummaryStrip data={summaries.data} loading={summaries.loading} failed={summaries.failed} updating={summaries.updating} progress={summaries.progress} notice={summaries.notice} onRefresh={() => void summaries.refresh()} onRetry={() => void summaries.retry()} />
+        <ul className="portfolio-grid" aria-busy={summaries.loading || summaries.updating}>{data.portfolios.map(p => { const summary = summaries.data?.summaries.find(row => row.portfolioId === p.id); return <li key={p.id} className="portfolio-card tile tile-interactive" data-testid="portfolio-card"><Link href={`/portfolios/${p.id}`} className="portfolio-card-link"><span className="portfolio-card-mark" aria-hidden="true">{p.name.trim().charAt(0).toUpperCase() || "#"}</span><strong>{p.name}</strong><span className="muted">{p.itemCount} {p.itemCount === 1 ? "item" : "items"}</span></Link>{summary ? <PortfolioMetrics summary={summary} updating={summaries.updating} /> : summaries.loading ? <MetricsSkeleton /> : null}<div className="row-actions"><button onClick={() => setEditing(p)}>Rename<span className="sr-only"> {p.name}</span></button><button onClick={() => setDeleting(p)}>Delete<span className="sr-only"> {p.name}</span></button></div></li>; })}</ul>
       </>}
     </>}
     {editing && <NameDialog portfolio={editing} close={() => setEditing(null)} saved={async p => { const create = editing === "create"; setEditing(null); if (create) router.push(`/portfolios/${p.id}`); else await load(); }} />}

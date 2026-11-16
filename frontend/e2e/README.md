@@ -52,6 +52,64 @@ while updating, check partial-reason touch targets and explanation bounds, and
 verify safe manual recovery without repeated automatic job starts. Run only this
 matrix with `npm run test:e2e -- e2e/portfolio-summaries.spec.mjs`.
 
+PWA acceptance specs in `e2e/pwa/` require a **production** server. Build with
+`NEXT_PUBLIC_API_URL="" npm run build`, then in another terminal run
+`npm run start -- --hostname 127.0.0.1 --port 3200`. Run the PWA matrix with:
+
+```sh
+PLAYWRIGHT_BASE_URL=http://127.0.0.1:3200 npm run test:e2e -- --project=pwa-360 --project=pwa-375 --project=pwa-1280
+```
+
+After the Docker stack is rebuilt, repeat with
+`PLAYWRIGHT_BASE_URL=http://localhost:9443` and the same arguments. HTTPS or a
+trustworthy loopback origin is required by Chromium. `PLAYWRIGHT_BASE_URL` opts
+these projects into discovery; the default dev run never runs PWA tests.
+Only the PWA projects allow service workers. The other projects continue to block
+them, even when pointed at a production server. Omitting project arguments with
+an external production URL runs both the existing suite and the PWA matrix.
+
+The PWA cases check Chromium installability via CDP, served manifest/icon bytes
+(including opaque Apple icons and the maskable glyph safe zone), worker headers
+and first-load control, offline recovery on three routes in all five themes at
+360/375/1280px, rendered text contrast and touch targets, theme-color, install UI,
+and cache privacy through mocked OAuth, portfolio use and sign-out. Private
+fixtures use context routing, assert they are actually hit after SW control, and
+reject worker-owned private requests; a worker cannot conceal a broken mock by
+serving a cached response. Additional probes exercise non-GET, cross-origin,
+RSC/prefetch/data bypasses and a non-200 static response.
+
+The update case starts an isolated ephemeral loopback proxy forwarding the real
+production server, including Docker. It serves two build versions of the real
+worker by changing its build-id literal and appending a diagnostic MessagePort
+reply. Production install/activate/fetch/update UI logic is used unchanged. This
+avoids Playwright's inability to reliably intercept worker update-script fetches,
+never changes app source or the shared server, and proves that an actual waiting
+worker preserves a transaction draft until Reload, then activates, removes old
+caches and reloads exactly once. The test runner must be allowed to bind a local
+port. Browser storage and the proxy are isolated per test. The iOS and standalone
+cases simulate platform signals in Chromium; they do not claim native Safari or
+OS home-screen installation coverage.
+
+Further regression cases serve malformed precache and runtime responses through
+that proxy
+(201 PNG, HTML/JSON/RSC masquerading as a PNG, real redirects to auth/API or
+another image). They inspect Cache Storage after the actual worker's install
+finishes or is rejected, and after controlled runtime fetches. A positive case
+also proves valid PNGs enter both caches. Runtime cases inject open/match/put
+failures into the
+actual controlling worker and prove a successful network asset stays usable.
+A shared-context two-tab case activates an update from tab A, keeps tab B's draft
+and document intact, then proves B's later explicit Reload still works once.
+An iPhone WKWebView user agent without Safari/Version tokens must not offer the
+Safari-only Share hint.
+
+The asset test rejects empty/development worker identities. For a known build,
+set `BUILD_ID=<unique-id>` when building and
+`PLAYWRIGHT_EXPECTED_BUILD_ID=<unique-id>` when testing. The lifecycle proxy does
+not prove that two *real* builds ship different worker bytes: during deployment
+verification, compare the unmodified `/sw.js` bytes and embedded identities from
+the separate local production and Docker builds as well.
+
 Baseline before redesign, commit `0fbbbb715885653e90490d25848e1db85d62d067`:
 `npm test` passed (2 library files + 9 component files, zero failures),
 `npm run typecheck` passed, and `npm run build` passed (verified by the lead

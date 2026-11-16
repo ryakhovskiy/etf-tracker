@@ -97,9 +97,11 @@ function dividends(year) {
   };
 }
 
-export async function mockAPI(page, { loggedIn = true } = {}) {
+export async function mockAPI(page, { loggedIn = true, routingContext = page } = {}) {
   const unexpected = [];
-  await page.route(/\/(?:api|auth)(?:\/|\?|$)/, async route => {
+  // PWA tests use context routing so pass-through requests remain mocked while
+  // a real service worker controls the page. Existing tests keep page routing.
+  await routingContext.route(/\/(?:api|auth)(?:\/|\?|$)/, async route => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;

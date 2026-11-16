@@ -28,9 +28,21 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   projects: [
-    { name: 'mobile', testIgnore: '**/boundary.spec.mjs', use: { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true } },
-    { name: 'desktop', testIgnore: '**/boundary.spec.mjs', use: { viewport: { width: 1280, height: 800 } } },
+    { name: 'mobile', testIgnore: ['**/boundary.spec.mjs', '**/pwa/**'], use: { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true } },
+    { name: 'desktop', testIgnore: ['**/boundary.spec.mjs', '**/pwa/**'], use: { viewport: { width: 1280, height: 800 } } },
     { name: 'mobile-narrow', testMatch: ['**/boundary.spec.mjs', '**/portfolio-summaries.spec.mjs'], use: { viewport: { width: 360, height: 812 }, isMobile: true, hasTouch: true } },
+    // These require next build/start or Docker, never the owned dev server.
+    // Ordinary projects retain serviceWorkers:'block', including with an URL.
+    ...(externalURL ? [360, 375, 1280].map(width => ({
+      name: `pwa-${width}`,
+      testMatch: '**/pwa/*.spec.mjs',
+      use: {
+        viewport: { width, height: width === 1280 ? 800 : 812 },
+        isMobile: width < 640,
+        hasTouch: width < 640,
+        serviceWorkers: 'allow',
+      },
+    })) : []),
   ],
   webServer: externalURL ? undefined : {
     command: `npm run dev -- --hostname 127.0.0.1 --port ${port}`,

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Offline · Holdings</title>
+<meta name="theme-color" content="#f3f5f4">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/offline.css">
+<script>(function(){var d=document.documentElement,p="system";try{var s=localStorage.getItem("holdings.theme");if(s&&["system","light","dark","tech-green","tech-cappuccino","tech-red"].indexOf(s)>-1)p=s}catch(e){}var t=p;if(p==="system"){t="light";try{if(matchMedia("(prefers-color-scheme: dark)").matches)t="dark"}catch(e){}}d.setAttribute("data-theme",t);d.setAttribute("data-theme-pref",p);try{var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute("content",{"light":"#f3f5f4","dark":"#0d1110","tech-green":"#050907","tech-cappuccino":"#11111b","tech-red":"#0a0708"}[t])}catch(e){}})()</script>
+</head>
+<body>
+<main data-testid="offline-page">
+  <div class="mark" aria-hidden="true">h</div>
+  <p class="eyebrow">holdings</p>
+  <h1>You&rsquo;re offline</h1>
+  <p>Holdings needs a connection to show your portfolios. Your data is never stored on this device.</p>
+  <div class="actions">
+    <button type="button" id="retry" data-testid="offline-retry">Retry</button>
+    <a class="link" href="/">Open Holdings</a>
+  </div>
+</main>
+<script src="/offline.js"></script>
+</body>
+</html>

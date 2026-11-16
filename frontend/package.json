@@ -10,7 +10,8 @@
     "start": "next start",
     "typecheck": "next typegen && tsc --noEmit --incremental false",
     "test": "node --experimental-strip-types --test lib/*.test.mjs && node --import tsx --test tests/*.test.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "pwa:assets": "node --import tsx scripts/generate-pwa-assets.mjs"
   },
   "dependencies": {
     "decimal.js": "^10.6.0",

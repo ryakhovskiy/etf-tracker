@@ -1,0 +1,33 @@
+/* Styles of the offline page only; tokens.css (prepended by the generator) provides every colour. */
+@font-face { font-family: "Inter"; src: url("/fonts/Inter-latin-variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("/fonts/JetBrainsMono-latin-variable.woff2") format("woff2"); font-weight: 100 800; font-display: swap; }
+:root { --font-inter: "Inter"; --font-jetbrains-mono: "JetBrains Mono"; }
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  display: grid; place-items: center; min-height: 100vh; min-height: 100dvh;
+  padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background-color: var(--bg); background-image: var(--bg-texture); background-size: 36px 36px;
+  color: var(--text); font-family: var(--font-sans); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+}
+main {
+  width: min(100%, 440px); padding: 40px 32px 32px; text-align: center;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-raised), var(--glow);
+}
+.mark { display: grid; place-items: center; width: 56px; height: 56px; margin: 0 auto 24px; border-radius: var(--radius); background: var(--accent); color: var(--on-accent); font-family: var(--font-mono); font-size: 28px; font-weight: 800; box-shadow: var(--glow); }
+.eyebrow { margin: 0 0 8px; color: var(--accent); font-family: var(--font-mono); font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+h1 { margin: 0; font-family: var(--font-heading); font-size: 28px; font-weight: 650; line-height: 1.2; letter-spacing: -0.015em; }
+p { margin: 12px auto 28px; max-width: 320px; color: var(--text-muted); }
+.actions { display: grid; gap: 12px; }
+button, .link {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 20px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); font: inherit; font-weight: 650; text-decoration: none; cursor: pointer;
+}
+button { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.link { background: transparent; color: var(--text); }
+.link:hover { border-color: var(--accent); }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+html[data-theme^="tech-"] button, html[data-theme^="tech-"] .link { font-family: var(--font-mono); font-size: 13px; }
+@media (max-width: 640px) { main { padding: 32px 20px 24px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

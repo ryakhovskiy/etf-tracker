@@ -5,8 +5,11 @@
  * html[data-theme-pref] what the user picked: the same names, or "system"
  * "system" resolves to light or dark from prefers-color-scheme and follows live OS changes.
  *
- * The colour values live in app/styles/tokens.css; nothing here knows a colour.
+ * The colour values live in app/styles/tokens.css. The one exception is <meta name="theme-color">,
+ * whose per-theme values are in lib/pwa-colors.ts (a test ties them to the tokens).
  */
+import { THEME_COLORS } from "./pwa-colors";
+
 export const THEME_STORAGE_KEY = "holdings.theme";
 export const THEME_PREFERENCES = ["system", "light", "dark", "tech-green", "tech-cappuccino", "tech-red"] as const;
 export type ThemePreference = (typeof THEME_PREFERENCES)[number];
@@ -48,11 +51,18 @@ export function currentPreference(): ThemePreference {
   return isThemePreference(value) ? value : "system";
 }
 
+/** Keeps <meta name="theme-color"> (browser chrome / installed-app title bar) in step with the theme. */
+export function syncThemeColor(theme: ResolvedTheme) {
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLORS[theme]);
+}
+
 /** Writes the resolved theme and the preference to <html>. Does not touch storage. */
 export function applyTheme(preference: ThemePreference) {
   const root = document.documentElement;
-  root.setAttribute("data-theme", resolveTheme(preference, systemPrefersDark()));
+  const theme = resolveTheme(preference, systemPrefersDark());
+  root.setAttribute("data-theme", theme);
   root.setAttribute("data-theme-pref", preference);
+  syncThemeColor(theme);
 }
 
 /** Apply and persist. If storage throws, the choice still holds for this page view. */
@@ -72,4 +82,4 @@ export function subscribeTheme(onChange: () => void) {
  * Inline script for <head>: sets data-theme before first paint so there is no flash of the
  * wrong theme. Everything is wrapped in try/catch because storage and matchMedia can throw.
  */
-export const themeInitScript = `(function(){var d=document.documentElement,p="system";try{var s=localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)});if(s&&${JSON.stringify(THEME_PREFERENCES)}.indexOf(s)>-1)p=s}catch(e){}var t=p;if(p==="system"){t="light";try{if(matchMedia(${JSON.stringify(DARK_QUERY)}).matches)t="dark"}catch(e){}}d.setAttribute("data-theme",t);d.setAttribute("data-theme-pref",p)})()`;
+export const themeInitScript = `(function(){var d=document.documentElement,p="system";try{var s=localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)});if(s&&${JSON.stringify(THEME_PREFERENCES)}.indexOf(s)>-1)p=s}catch(e){}var t=p;if(p==="system"){t="light";try{if(matchMedia(${JSON.stringify(DARK_QUERY)}).matches)t="dark"}catch(e){}}d.setAttribute("data-theme",t);d.setAttribute("data-theme-pref",p);try{var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute("content",${JSON.stringify(THEME_COLORS)}[t])}catch(e){}})()`;

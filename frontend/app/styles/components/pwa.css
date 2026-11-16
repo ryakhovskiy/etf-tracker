@@ -1,0 +1,23 @@
+/* PWA UI: update notice (and, later, install hint). Tokens only. */
+.update-notice {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  left: auto;
+  z-index: 80;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px;
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 12px 14px 12px 18px;
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-raised), var(--glow);
+  animation: pop-in 0.18s var(--ease);
+}
+.update-notice-text { flex: 1 1 auto; font-weight: 600; font-size: 14px; }
+@media (max-width: 640px) {
+  .update-notice { left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right)); max-width: none; bottom: max(12px, env(safe-area-inset-bottom)); }
+  /* Portfolio pages carry the fixed bottom tab bar: sit above it. */
+  body:has(.portfolio-tabs) .update-notice { bottom: calc(var(--tabbar-height) + 12px + env(safe-area-inset-bottom, 0px)); }
+}

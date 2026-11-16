@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+import { PwaSync } from "../components/pwa-sync";
 import { ThemeSync } from "../components/theme-sync";
 import { THEME_COLORS } from "../lib/pwa-colors";
 import { themeInitScript } from "../lib/theme";
@@ -33,6 +34,6 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <meta name="theme-color" content={THEME_COLORS.light} suppressHydrationWarning />
       <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
     </head>
-    <body><ThemeSync />{children}</body>
+    <body><ThemeSync /><PwaSync />{children}</body>
   </html>;
 }

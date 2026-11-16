@@ -30,12 +30,27 @@ export const subscribePwa = (listener: () => void) => { listeners.add(listener);
 
 let waiting: ServiceWorker | null = null;
 let reloadRequested = false;
+let reloaded = false;
 let started = false;
 
+/** Reloads this document at most once, whatever triggers it. */
+function reloadOnce() {
+  if (reloaded) return;
+  reloaded = true;
+  window.location.reload();
+}
+
+/**
+ * The "Reload" click. Normally it asks the waiting worker to take over and the page reloads on controllerchange.
+ * In a second open tab the worker may already be active (another tab activated it): no controllerchange will
+ * follow there, so this click reloads the document itself. A tab only ever reloads on its own user's click.
+ */
 export function applyUpdate() {
-  if (!waiting) return;
+  const worker = waiting;
+  if (!worker) return;
   reloadRequested = true;
-  waiting.postMessage({ type: "SKIP_WAITING" });
+  if (worker.state !== "installed") { reloadOnce(); return; }
+  worker.postMessage({ type: "SKIP_WAITING" });
 }
 export const dismissUpdate = () => publish({ updateDismissed: true });
 
@@ -44,13 +59,9 @@ export function initPwa() {
   started = true;
   if (process.env.NODE_ENV !== "production" || !("serviceWorker" in navigator)) return;
   const container = navigator.serviceWorker;
-  // Reload exactly once, and only after the user chose to update (the first install also changes the controller).
-  let reloaded = false;
-  container.addEventListener("controllerchange", () => {
-    if (!reloadRequested || reloaded) return;
-    reloaded = true;
-    window.location.reload();
-  });
+  // Reload exactly once, and only after the user chose to update (the first install also changes the controller,
+  // and another tab's update changes it here too: neither reloads this tab).
+  container.addEventListener("controllerchange", () => { if (reloadRequested) reloadOnce(); });
   container.register(SW_URL, { scope: "/", updateViaCache: "none" }).then(registration => {
     const offer = (worker: ServiceWorker | null) => {
       // No controller yet means this is the very first install: nothing to update from.
@@ -76,11 +87,15 @@ const isStandalone = () => {
   try { return window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true; }
   catch { return false; }
 };
-/** iPhone/iPad Safari (iPadOS reports a Mac user agent with touch). Other iOS browsers are left out. */
-const isIosSafari = () => {
-  const ua = navigator.userAgent;
-  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
-  return ios && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+/**
+ * iPhone/iPad Safari (iPadOS reports a Mac user agent with touch). Safari must be identified positively
+ * (Version/ and Safari/ tokens): an embedded WKWebView or another iOS browser cannot Add to Home Screen.
+ */
+export const isIosSafari = (ua: string = navigator.userAgent, touchPoints: number = navigator.maxTouchPoints) => {
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && touchPoints > 1);
+  const safari = /Version\/[\d.]+/.test(ua) && /Safari\//.test(ua);
+  const otherBrowser = /CriOS|FxiOS|EdgiOS|OPiOS|DuckDuckGo|GSA\/|FBAN|FBAV|Instagram|Line\/|Twitter|MicroMessenger/.test(ua);
+  return ios && safari && !otherBrowser;
 };
 
 /** Asks the browser to show its install dialog (must run from a click). */

@@ -38,12 +38,14 @@ self.addEventListener("install", (event) => {
   // No skipWaiting here: an update waits until the page asks for it (see the message handler).
   event.waitUntil(
     caches.open(SHELL_CACHE).then((cache) =>
-      Promise.all(PRECACHE.map((url) =>
-        fetch(new Request(url, { cache: "reload" })).then((response) => {
-          if (!response.ok) throw new Error("Precache failed: " + url + " " + response.status);
+      Promise.all(PRECACHE.map((url) => {
+        const request = new Request(url, { cache: "reload" });
+        return fetch(request).then((response) => {
+          // A broken or redirected asset must fail the install, not be stored under the asset's key.
+          if (!isCacheable(request, response)) throw new Error("Precache refused: " + url + " (" + response.status + " " + response.type + ")");
           return cache.put(url, response);
-        })
-      ))
+        });
+      }))
     )
   );
 });
@@ -63,20 +65,62 @@ self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();
 });
 
-const isPlainOk = (response) => response && response.status === 200 && response.type === "basic";
+// One strict admission rule for everything written to Cache Storage (precache and runtime): exactly a 200,
+// same-origin ("basic"), not redirected, answering the URL that was asked for, with the content type the
+// file extension promises. A redirect to a login page, an API/RSC payload or an error page is never stored.
+const CONTENT_TYPES = {
+  html: ["text/html"],
+  css: ["text/css"],
+  js: ["text/javascript", "application/javascript"],
+  woff2: ["font/woff2", "application/font-woff2"],
+  woff: ["font/woff", "application/font-woff"],
+  png: ["image/png"],
+  jpg: ["image/jpeg"],
+  jpeg: ["image/jpeg"],
+  webp: ["image/webp"],
+  avif: ["image/avif"],
+  gif: ["image/gif"],
+  ico: ["image/x-icon", "image/vnd.microsoft.icon"],
+  svg: ["image/svg+xml"],
+  webmanifest: ["application/manifest+json"],
+};
 
+function isCacheable(request, response) {
+  if (!response || response.status !== 200 || response.type !== "basic" || response.redirected) return false;
+  if (response.url && response.url !== request.url) return false;
+  const path = new URL(request.url).pathname;
+  const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  const allowed = CONTENT_TYPES[extension];
+  if (!allowed) return false;
+  // offline.html is the one HTML document that may ever be stored.
+  if (extension === "html" && path !== OFFLINE_URL) return false;
+  const type = (response.headers.get("Content-Type") || "").split(";")[0].trim().toLowerCase();
+  return allowed.indexOf(type) !== -1;
+}
+
+// Cache Storage is an optimisation: when it fails (quota, private mode, eviction) the network response is
+// still returned.
 async function cacheFirst(request, cacheName) {
-  const cache = await caches.open(cacheName);
-  const hit = await cache.match(request);
-  if (hit) return hit;
+  let cache = null;
+  try {
+    cache = await caches.open(cacheName);
+    const hit = await cache.match(request);
+    if (hit) return hit;
+  } catch (error) { cache = null; }
   const response = await fetch(request);
-  if (isPlainOk(response)) await cache.put(request, response.clone());
+  if (cache && isCacheable(request, response)) {
+    try { await cache.put(request, response.clone()); } catch (error) { /* quota or storage error: serve anyway */ }
+  }
   return response;
 }
 
 async function fromShell(request) {
-  const cache = await caches.open(SHELL_CACHE);
-  return (await cache.match(new URL(request.url).pathname)) || fetch(request);
+  try {
+    const cache = await caches.open(SHELL_CACHE);
+    const hit = await cache.match(new URL(request.url).pathname);
+    if (hit) return hit;
+  } catch (error) { /* fall through to the network */ }
+  return fetch(request);
 }
 
 async function navigate(request) {
@@ -84,8 +128,12 @@ async function navigate(request) {
     // Network first: an online navigation is never answered from a cache and its HTML is never stored.
     return await fetch(request);
   } catch (error) {
-    const cache = await caches.open(SHELL_CACHE);
-    return (await cache.match(OFFLINE_URL)) || Response.error();
+    try {
+      const cache = await caches.open(SHELL_CACHE);
+      return (await cache.match(OFFLINE_URL)) || Response.error();
+    } catch (cacheError) {
+      return Response.error();
+    }
   }
 }
 

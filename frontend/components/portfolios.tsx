@@ -54,8 +54,8 @@ function NameDialog({ portfolio, close, saved }: { portfolio: Portfolio | "creat
   return <Modal title={portfolio === "create" ? "Create portfolio" : "Rename portfolio"} close={() => { if (!busy) close(); }}><form onSubmit={submit}><label htmlFor="portfolio-name">Name</label><input id="portfolio-name" autoFocus maxLength={100} value={name} onChange={e => setName(e.target.value)} required />{error && <p className="error" role="alert">{error}</p>}<div className="dialog-actions"><button type="button" disabled={busy} onClick={close}>Cancel</button><button className="primary" disabled={busy || !name.trim()}>{busy ? "Saving…" : "Save"}</button></div></form></Modal>;
 }
 
-export function Modal({ title, close, children }: { title: string; close: () => void; children: React.ReactNode }) {
+export function Modal({ title, close, children, testId }: { title: string; close: () => void; children: React.ReactNode; testId?: string }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { const dialog = ref.current!; dialog.showModal(); return () => dialog.close(); }, []);
-  return <dialog ref={ref} aria-label={title} onCancel={e => { e.preventDefault(); close(); }} onClick={e => { if (e.target === e.currentTarget) close(); }}><h2>{title}</h2>{children}</dialog>;
+  return <dialog ref={ref} aria-label={title} data-testid={testId} onCancel={e => { e.preventDefault(); close(); }} onClick={e => { if (e.target === e.currentTarget) close(); }}><h2>{title}</h2>{children}</dialog>;
 }

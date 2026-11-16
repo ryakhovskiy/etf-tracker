@@ -1,5 +1,5 @@
 /* Sign-in page. */
-.login-shell { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px 16px 48px; }
+.login-shell { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px max(16px, env(safe-area-inset-right)) max(48px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
 .login-card { position: relative; width: min(100%, 420px); padding: 44px 36px 36px; text-align: center; box-shadow: var(--shadow-raised), var(--glow); }
 .logo { display: grid; place-items: center; width: 56px; height: 56px; margin: 0 auto 24px; border-radius: var(--radius); background: var(--accent); color: var(--on-accent); font-family: var(--font-mono); font-size: 28px; font-weight: 800; box-shadow: var(--glow); }
 .login-card h1 { font-size: 28px; }

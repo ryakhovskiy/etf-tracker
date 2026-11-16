@@ -15,3 +15,5 @@ export const IconSignOut = (p: { size?: number }) => <Icon {...p}><path d="M9 4H
 export const IconArrowLeft = (p: { size?: number }) => <Icon {...p}><path d="M19 12H5" /><path d="m11 18-6-6 6-6" /></Icon>;
 export const IconPlus = (p: { size?: number }) => <Icon {...p}><path d="M12 5v14M5 12h14" /></Icon>;
 export const IconChevronDown = (p: { size?: number }) => <Icon {...p}><path d="m6 9 6 6 6-6" /></Icon>;
+export const IconInstall = (p: { size?: number }) => <Icon {...p}><rect x="6" y="2.5" width="12" height="19" rx="2.5" /><path d="M12 8v6" /><path d="m9.5 11.5 2.5 2.5 2.5-2.5" /><path d="M10 18.5h4" /></Icon>;
+export const IconShare = (p: { size?: number }) => <Icon {...p}><path d="M12 15V4" /><path d="m8 7.5 4-4 4 4" /><path d="M7 11H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1" /></Icon>;

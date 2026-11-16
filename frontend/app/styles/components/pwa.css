@@ -21,3 +21,7 @@
   /* Portfolio pages carry the fixed bottom tab bar: sit above it. */
   body:has(.portfolio-tabs) .update-notice { bottom: calc(var(--tabbar-height) + 12px + env(safe-area-inset-bottom, 0px)); }
 }
+
+/* iOS "Add to Home Screen" how-to (inside the shared dialog). */
+.install-hint-step { display: flex; align-items: center; gap: 12px; margin: 4px 0 8px; font-weight: 600; font-size: 16px; }
+.install-hint-step .icon { flex: none; color: var(--accent); }

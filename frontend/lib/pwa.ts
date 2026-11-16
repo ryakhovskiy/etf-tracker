@@ -10,11 +10,21 @@
 export const SW_URL = "/sw.js";
 const HOUR = 60 * 60 * 1000;
 
-export type PwaState = { updateReady: boolean; updateDismissed: boolean };
-let state: PwaState = { updateReady: false, updateDismissed: false };
+export type PwaState = {
+  updateReady: boolean;
+  updateDismissed: boolean;
+  /** The browser fired beforeinstallprompt (Chrome, Edge, Android): "Install app" can call prompt(). */
+  canInstall: boolean;
+  /** iPhone/iPad Safari, where installing means Share > Add to Home Screen (there is no prompt API). */
+  iosHint: boolean;
+  /** Running as an installed app, or just installed: the control is hidden. */
+  installed: boolean;
+};
+let state: PwaState = { updateReady: false, updateDismissed: false, canInstall: false, iosHint: false, installed: false };
 const listeners = new Set<() => void>();
 const publish = (next: Partial<PwaState>) => { state = { ...state, ...next }; listeners.forEach(listener => listener()); };
 
+export const SERVER_PWA_STATE: PwaState = state;
 export const getPwaState = () => state;
 export const subscribePwa = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 
@@ -55,4 +65,44 @@ export function initPwa() {
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") check(); });
     window.setInterval(check, HOUR);
   }).catch(() => { /* registration is an enhancement; the app works without it */ });
+}
+
+// ---- Install control ----
+
+type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
+let deferredPrompt: InstallPromptEvent | null = null;
+
+const isStandalone = () => {
+  try { return window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true; }
+  catch { return false; }
+};
+/** iPhone/iPad Safari (iPadOS reports a Mac user agent with touch). Other iOS browsers are left out. */
+const isIosSafari = () => {
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  return ios && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
+};
+
+/** Asks the browser to show its install dialog (must run from a click). */
+export async function promptInstall() {
+  const event = deferredPrompt;
+  if (!event) return;
+  deferredPrompt = null; // a captured prompt can be used once
+  publish({ canInstall: false });
+  try { await event.prompt(); await event.userChoice; } catch { /* the user closed it or the browser refused */ }
+}
+
+if (typeof window !== "undefined") {
+  // Listen from module load, not from an effect: the event can fire early and only fires once.
+  publish({ installed: isStandalone(), iosHint: isIosSafari() && !isStandalone() });
+  window.addEventListener("beforeinstallprompt", event => {
+    event.preventDefault();
+    deferredPrompt = event as InstallPromptEvent;
+    publish({ canInstall: true });
+  });
+  window.addEventListener("appinstalled", () => { deferredPrompt = null; publish({ canInstall: false, iosHint: false, installed: true }); });
+  try {
+    const query = window.matchMedia("(display-mode: standalone)");
+    query.addEventListener("change", () => publish({ installed: isStandalone() }));
+  } catch { /* matchMedia unavailable */ }
 }

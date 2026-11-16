@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { IconSignOut } from "./icons";
+import { InstallApp } from "./install-app";
 import { ThemeSwitcher } from "./theme-switcher";
 import type { User } from "./use-account";
 
@@ -18,6 +19,7 @@ export function AppHeader({ user, onSignOut, signingOut = false }: { user?: User
         {user && <div className="account">
           <span className="avatar" aria-hidden="true">{(user.name || user.email || "?").trim().charAt(0).toUpperCase()}</span>
           <span className="account-name">{user.name}</span>
+          <InstallApp />
           {onSignOut && <button type="button" className="ghost" onClick={onSignOut} disabled={signingOut}><IconSignOut size={18} /><span>{signingOut ? "Signing out…" : "Sign out"}</span></button>}
         </div>}
       </div>

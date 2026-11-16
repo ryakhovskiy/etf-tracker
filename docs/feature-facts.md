@@ -405,10 +405,14 @@ Frontend only: no backend, API or database involvement. Offline means **an offli
 | Request | What the worker does | Stored on the device |
 |---|---|---|
 | `/offline.html`, `/offline.css`, `/offline.js`, `/fonts/*` (two woff2), `/icons/*`, `/favicon.svg`, `/favicon-32.png`, `/manifest.webmanifest` | Precached at install; served from cache | `holdings-shell-<build>` |
-| `/_next/static/*` (hashed, immutable) | Cache-first; stored only when a plain 200 | `holdings-static-<build>` |
+| `/_next/static/*` (hashed, immutable) | Cache-first; stored only after the admission check below | `holdings-static-<build>` |
 | Page navigations | Network-first; on **network failure** the cached offline page; online HTML is never stored | nothing |
 | `/api/*`, `/auth/*` (OAuth redirects included), non-GET, cross-origin, RSC/data fetches (`RSC`, `Next-Router-Prefetch` header or `_rsc`), `/sw.js` | Not intercepted (no `respondWith`) | **never** |
 
+  **Admission:** every Cache Storage write (precache and runtime) passes one validator: exactly status 200,
+  same-origin (`basic`), not redirected, final URL equal to the requested URL, and a content type that matches
+  the file extension; HTML is accepted only for `/offline.html`. A failed precache check fails the install. Cache
+  Storage errors (quota, eviction) never drop a successful network response.
   **Portfolio data and login responses are never stored on the device:** nothing from `/api/*` or `/auth/*`
   is ever cached, so sign-out needs to clear nothing. Cache names are versioned by build; `activate` deletes older
   `holdings-*` caches.
@@ -420,11 +424,13 @@ Frontend only: no backend, API or database involvement. Offline means **an offli
   version available" appears with **Reload** and **Later** (`data-testid` `update-notice`, `update-reload`,
   `update-dismiss`). Nothing reloads by itself, so drafts and CSV imports in progress are safe. Reload posts
   `SKIP_WAITING` (the only way a worker activates early) and the page reloads once when the new worker takes over.
-  The first install shows no notice.
+  The first install shows no notice. If another tab already activated the update, Reload in this tab
+  reloads that document once; a tab never reloads without its own click.
 - **Install control.** A button "Install app" (`data-testid="install-app"`) in the header's account area, next to
   Sign out (icon-only at 480 px and below, name kept). It shows only after the browser fires `beforeinstallprompt`
   (Chrome, Edge, Android) and its click calls `prompt()`. On iPhone/iPad Safari that is not already standalone
-  it opens the hint dialog "Add to Home Screen": "Tap Share, then Add to Home Screen". It is hidden when the
+  it opens the hint dialog "Add to Home Screen": "Tap Share, then Add to Home Screen" (Safari is
+  identified positively by its `Version/` and `Safari/` tokens; other iOS browsers and in-app web views get no hint). It is hidden when the
   app runs standalone and after `appinstalled`.
 - **Standalone polish.** The header, page, login and bottom tab bar pad with `env(safe-area-inset-*)`; the
   sticky header clears the notch. Unknown URLs render `app/not-found.tsx` (header plus a link home), so every
@@ -569,6 +575,8 @@ per-item errors and ECB historical FX. This does **not** create dividend transac
   tabs at 375×812 and 1280×800, plus 360px boundary, theme-engine, touch-target, overflow
   and rendered-contrast checks. Needs Chromium (`npx playwright install chromium`) and its
   system libraries; see [`frontend/e2e/README.md`](../frontend/e2e/README.md).
+- At `1a15a5f`, the 102-case production-only PWA Playwright projects (`pwa-360`, `pwa-375`, `pwa-1280`, against
+  `next build` + `next start` with `NEXT_PUBLIC_API_URL=""`) passed, as did the 221-case regular suite.
 - At `7040330`, `npm test`, `npm run typecheck`, `npm run build` and the 131-case
   `npm run test:e2e` suite passed.
 - Docker checks passed on 2026-11-08: Compose validation, both image builds,

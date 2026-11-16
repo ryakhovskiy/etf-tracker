@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#f3f5f4">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/offline.css">
-<script>(function(){var d=document.documentElement,p="system";try{var s=localStorage.getItem("holdings.theme");if(s&&["system","light","dark","tech-green","tech-cappuccino","tech-red"].indexOf(s)>-1)p=s}catch(e){}var t=p;if(p==="system"){t="light";try{if(matchMedia("(prefers-color-scheme: dark)").matches)t="dark"}catch(e){}}d.setAttribute("data-theme",t);d.setAttribute("data-theme-pref",p);try{var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute("content",{"light":"#f3f5f4","dark":"#0d1110","tech-green":"#050907","tech-cappuccino":"#11111b","tech-red":"#0a0708"}[t])}catch(e){}})()</script>
+<script>(function(){var d=document.documentElement,p="system";try{var s=localStorage.getItem("holdings.theme");if(s&&["system","light","dark","tech-green","tech-cappuccino","tech-red"].indexOf(s)>-1)p=s}catch(e){}var t=p;if(p==="system"){t="light";try{if(matchMedia("(prefers-color-scheme: dark)").matches)t="dark"}catch(e){}}d.setAttribute("data-theme",t);d.setAttribute("data-theme-pref",p);try{var m=document.querySelector('meta[name="theme-color"]');if(!m){m=document.createElement("meta");m.setAttribute("name","theme-color");document.head.appendChild(m)}m.setAttribute("content",{"light":"#f3f5f4","dark":"#0d1110","tech-green":"#050907","tech-cappuccino":"#11111b","tech-red":"#0a0708"}[t])}catch(e){}})()</script>
 </head>
 <body>
 <main data-testid="offline-page">

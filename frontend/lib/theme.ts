@@ -53,7 +53,9 @@ export function currentPreference(): ThemePreference {
 
 /** Keeps <meta name="theme-color"> (browser chrome / installed-app title bar) in step with the theme. */
 export function syncThemeColor(theme: ResolvedTheme) {
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLORS[theme]);
+  let meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) { meta = document.createElement("meta"); meta.setAttribute("name", "theme-color"); document.head.appendChild(meta); }
+  meta.setAttribute("content", THEME_COLORS[theme]);
 }
 
 /** Writes the resolved theme and the preference to <html>. Does not touch storage. */
@@ -82,4 +84,4 @@ export function subscribeTheme(onChange: () => void) {
  * Inline script for <head>: sets data-theme before first paint so there is no flash of the
  * wrong theme. Everything is wrapped in try/catch because storage and matchMedia can throw.
  */
-export const themeInitScript = `(function(){var d=document.documentElement,p="system";try{var s=localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)});if(s&&${JSON.stringify(THEME_PREFERENCES)}.indexOf(s)>-1)p=s}catch(e){}var t=p;if(p==="system"){t="light";try{if(matchMedia(${JSON.stringify(DARK_QUERY)}).matches)t="dark"}catch(e){}}d.setAttribute("data-theme",t);d.setAttribute("data-theme-pref",p);try{var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute("content",${JSON.stringify(THEME_COLORS)}[t])}catch(e){}})()`;
+export const themeInitScript = `(function(){var d=document.documentElement,p="system";try{var s=localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)});if(s&&${JSON.stringify(THEME_PREFERENCES)}.indexOf(s)>-1)p=s}catch(e){}var t=p;if(p==="system"){t="light";try{if(matchMedia(${JSON.stringify(DARK_QUERY)}).matches)t="dark"}catch(e){}}d.setAttribute("data-theme",t);d.setAttribute("data-theme-pref",p);try{var m=document.querySelector('meta[name="theme-color"]');if(!m){m=document.createElement("meta");m.setAttribute("name","theme-color");document.head.appendChild(m)}m.setAttribute("content",${JSON.stringify(THEME_COLORS)}[t])}catch(e){}})()`;

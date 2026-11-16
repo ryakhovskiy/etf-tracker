@@ -43,6 +43,10 @@
 .theme-swatch-system > span { flex: 1; display: block; background: linear-gradient(135deg, var(--bg) 0 40%, var(--accent) 40% 100%); }
 
 @media (max-width: 640px) {
+  /* The trigger sits mid-header (more controls to its right when signed in or when Install is offered),
+     so a panel right-aligned to the trigger would run off the left edge: align it to the header instead. */
+  .theme-switcher { position: static; }
+  .theme-panel { right: max(12px, env(safe-area-inset-right)); left: auto; top: calc(100% + 8px); width: min(268px, calc(100vw - 24px)); }
   .theme-trigger-label { display: none; }
   .theme-trigger { padding: 0; width: 44px; }
 }

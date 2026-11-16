@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { PwaSync } from "../components/pwa-sync";
 import { ThemeSync } from "../components/theme-sync";
-import { THEME_COLORS } from "../lib/pwa-colors";
 import { themeInitScript } from "../lib/theme";
 import "./globals.css";
 
@@ -32,8 +31,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   // treat the attribute difference as a hydration error.
   return <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
     <head>
-      {/* The head script and ThemeSync keep this in step with the active theme (see lib/theme.ts). */}
-      <meta name="theme-color" content={THEME_COLORS.light} suppressHydrationWarning />
+      {/* <meta name="theme-color"> is created and kept in step by the head script and applyTheme (lib/theme.ts), not by React: a React-rendered copy would be duplicated on hydration once the script changed its colour. */}
       <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
     </head>
     <body><ThemeSync /><PwaSync />{children}</body>

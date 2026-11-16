@@ -1,6 +1,6 @@
 # Holdings: implemented feature facts
 
-Snapshot: 2026-11-08; updated 2026-11-13 for the frontend redesign (themes, responsive tile UI). Agent reference for the current checkout, consolidating
+Snapshot: 2026-11-08; updated 2026-11-13 for the frontend redesign (themes, responsive tile UI) and 2026-11-16 for the PWA. Agent reference for the current checkout, consolidating
 `f1-portfolio-core.md`, `f2.1`–`f2.5`, and `f3-eulerpool.md`.
 **Implemented** means present in code; it does not assert merge/deployment status
 or live-provider availability. Code and tests take precedence over historical specs.
@@ -18,6 +18,7 @@ or live-provider availability. Code and tests take precedence over historical sp
 | Eulerpool / f3 | Implemented; primary-provider default superseded | Search, stock bulk quotes, ETF history/profiles, quota accounting, modern picker |
 | Yahoo and historical prices / later code | Implemented extension | Default primary provider, symbol linking, current quotes and daily history |
 | Dividend calendar / f4, beyond the supplied specs | Implemented extension | Cached gross dividends, EUR totals, forecasts and background sync |
+| Progressive web app / later frontend work | Implemented extension | Installable (manifest, icons, in-app Install control); service worker caches only app code/fonts/icons and shows an offline page; non-forcing update notice; never caches `/api` or `/auth` |
 | Themes and responsive tile UI / later frontend work | Implemented extension | System + 5 per-browser themes, tokenized colours, 360px–desktop tiles/cards, bottom tab bar on phones, Playwright smoke suite |
 | Docker deployment / later infrastructure | Implemented | Separate multi-stage backend/frontend images, dedicated network, persistent SQLite volume, health checks |
 
@@ -373,6 +374,63 @@ Frontend only: no backend, API, database or Docker involvement.
 - CSS lives in [`frontend/app/styles`](../frontend/app/styles) (`tokens`, `base`, `layout`,
   `touch`, `components/*`), imported by `app/globals.css`.
 
+## Progressive web app
+
+Frontend only: no backend, API or database involvement. Offline means **an offline page only**.
+
+- **Installable.** `/manifest.webmanifest` comes from `frontend/app/manifest.ts`: `id`/`scope`/`start_url`
+  `/`, name and short name "Holdings", `display: standalone` (orientation is not locked), icons 192 and 512
+  `any` plus 512 `maskable`. Production builds pass Chromium's installability check. Production needs
+  HTTPS for the worker (`localhost` is exempt); config already requires HTTPS URLs in production.
+- **Icons** derive from the brand mark (an "h" in a rounded tile). `npm run pwa:assets` (tsx running
+  `frontend/scripts/generate-pwa-assets.mjs`, using the `sharp` that Next already installs; no network, no
+  new dependency) regenerates the committed files in `frontend/public`: `icons/` (192, 512, maskable 512,
+  `apple-touch-icon` 180 px opaque), `favicon.svg`, `favicon-32.png`, and `offline.html`/`offline.css` plus
+  font copies for the offline page. Colours are read from `tokens.css`. `appleWebApp` metadata
+  (capable, title "Holdings", default status bar) and `viewport-fit=cover` are set in `app/layout.tsx`.
+- **Colours.** `lib/pwa-colors.ts` is the one place with literal colours outside `tokens.css`: each
+  theme's `--bg` for `<meta name="theme-color">`, and the Light `--bg` for the manifest's `theme_color` and
+  `background_color`. `tests/pwa-colors.test.mjs` fails if they drift from `tokens.css`. The meta tag follows
+  the active theme (all five plus System): the head script sets it before paint and `applyTheme` keeps it in step.
+- **Service worker.** Source `frontend/pwa/sw.js` (plain JS, scope `/`), **served at `/sw.js` by
+  `app/sw.js/route.ts`**, which embeds the build id into the script at build time. A static file would be
+  byte-identical across deploys, and an already-open tab would never see an update. Consequence: **every
+  redeploy is a new worker and shows the update notice, even when nothing visible changed.**
+  `/sw.js` is served with `Cache-Control: no-cache, no-store, must-revalidate`, `Content-Type:
+  application/javascript; charset=utf-8`, `Content-Security-Policy: default-src 'self'; script-src 'self'` and
+  `Service-Worker-Allowed: /` (route response and `next.config.mjs` headers). It is registered in
+  **production builds only** (`next dev` never registers one) and checks for updates on load, when the tab becomes
+  visible again, and hourly.
+
+| Request | What the worker does | Stored on the device |
+|---|---|---|
+| `/offline.html`, `/offline.css`, `/offline.js`, `/fonts/*` (two woff2), `/icons/*`, `/favicon.svg`, `/favicon-32.png`, `/manifest.webmanifest` | Precached at install; served from cache | `holdings-shell-<build>` |
+| `/_next/static/*` (hashed, immutable) | Cache-first; stored only when a plain 200 | `holdings-static-<build>` |
+| Page navigations | Network-first; on **network failure** the cached offline page; online HTML is never stored | nothing |
+| `/api/*`, `/auth/*` (OAuth redirects included), non-GET, cross-origin, RSC/data fetches (`RSC`, `Next-Router-Prefetch` header or `_rsc`), `/sw.js` | Not intercepted (no `respondWith`) | **never** |
+
+  **Portfolio data and login responses are never stored on the device:** nothing from `/api/*` or `/auth/*`
+  is ever cached, so sign-out needs to clear nothing. Cache names are versioned by build; `activate` deletes older
+  `holdings-*` caches.
+- **Offline page.** `/offline.html` is static (no React): "You're offline", a **Retry** button (reloads the
+  current URL) and an "Open Holdings" link. It is themed from the stored `holdings.theme` by the app's own
+  inline theme script, so all five themes and System work with zero network. It answers any failed
+  navigation (`/`, a portfolio route, an unknown route).
+- **Update notice.** When a new worker is waiting while an old one controls the page, a status notice "New
+  version available" appears with **Reload** and **Later** (`data-testid` `update-notice`, `update-reload`,
+  `update-dismiss`). Nothing reloads by itself, so drafts and CSV imports in progress are safe. Reload posts
+  `SKIP_WAITING` (the only way a worker activates early) and the page reloads once when the new worker takes over.
+  The first install shows no notice.
+- **Install control.** A button "Install app" (`data-testid="install-app"`) in the header's account area, next to
+  Sign out (icon-only at 480 px and below, name kept). It shows only after the browser fires `beforeinstallprompt`
+  (Chrome, Edge, Android) and its click calls `prompt()`. On iPhone/iPad Safari that is not already standalone
+  it opens the hint dialog "Add to Home Screen": "Tap Share, then Add to Home Screen". It is hidden when the
+  app runs standalone and after `appinstalled`.
+- **Standalone polish.** The header, page, login and bottom tab bar pad with `env(safe-area-inset-*)`; the
+  sticky header clears the notch. Unknown URLs render `app/not-found.tsx` (header plus a link home), so every
+  page can be left without a browser back button. The update notice, install hint and offline page use the same
+  tokens, 44 px targets and `prefers-reduced-motion` rules as the rest of the UI.
+
 ## Market data: current behavior
 
 **Superseded spec rules:** Eulerpool is no longer the default primary; fetching is
@@ -489,6 +547,10 @@ per-item errors and ECB historical FX. This does **not** create dividend transac
   Themes/CSS: [`frontend/app/styles`](../frontend/app/styles), theme engine
   [`frontend/lib/theme.ts`](../frontend/lib/theme.ts), contrast check
   [`frontend/scripts/check-theme-contrast.mjs`](../frontend/scripts/check-theme-contrast.mjs).
+  PWA: [`frontend/pwa/sw.js`](../frontend/pwa/sw.js), [`frontend/app/sw.js/route.ts`](../frontend/app/sw.js/route.ts),
+  [`frontend/app/manifest.ts`](../frontend/app/manifest.ts), [`frontend/lib/pwa.ts`](../frontend/lib/pwa.ts),
+  [`frontend/lib/pwa-colors.ts`](../frontend/lib/pwa-colors.ts), [`frontend/scripts/generate-pwa-assets.mjs`](../frontend/scripts/generate-pwa-assets.mjs),
+  generated static files in [`frontend/public`](../frontend/public).
   Migrations currently run through **00017** (`00016_previous_close.sql`, `00017_previous_close_date.sql`); add migrations rather than editing applied ones.
 - Deployment: [`compose.yaml`](../compose.yaml),
   [`backend/Dockerfile`](../backend/Dockerfile),

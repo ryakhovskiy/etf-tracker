@@ -20,6 +20,8 @@ export const metadata: Metadata = {
   },
   // iOS home-screen app: opens standalone with this title; the default bar style keeps the clock readable in every theme.
   appleWebApp: { capable: true, title: "Holdings", statusBarStyle: "default" },
+  // Older iOS reads the legacy tag (Next only emits the generic mobile-web-app-capable).
+  other: { "apple-mobile-web-app-capable": "yes" },
 };
 
 // viewport-fit=cover lets standalone content reach the screen edges; the header and tab bar pad with env(safe-area-inset-*).

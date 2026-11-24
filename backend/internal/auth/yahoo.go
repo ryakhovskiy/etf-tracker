@@ -214,7 +214,7 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 		return append([]any{"user", job.user, "instrument", rows[i].InstrumentID, "isin", rows[i].ISIN, "date", date}, attrs...)
 	}
 	finish := func(i int, price, ccy, quoteDay string) {
-		q := &marketdata.Quote{InstrumentID: rows[i].InstrumentID, OrigPrice: price, Price: price, Currency: ccy, QuoteDate: quoteDay, FetchedAt: time.Now(), Provider: marketdata.ProviderYahoo}
+		q := &marketdata.Quote{InstrumentID: rows[i].InstrumentID, OrigPrice: price, Price: price, Currency: ccy, QuoteDate: quoteDay, FetchedAt: h.now(), Provider: marketdata.ProviderYahoo}
 		quote := []any{"price", price, "currency", ccy, "quoteDay", quoteDay}
 		fx, err := rate(ccy)
 		if err != nil {
@@ -349,7 +349,7 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 				fail(w.i, err)
 				return
 			}
-			if err = h.store.SaveHistory(ctx, w.ref.ID, w.symbol, series.Currency, marketdata.ProviderYahoo, series.Points, time.Now()); err != nil {
+			if err = h.store.SaveHistory(ctx, w.ref.ID, w.symbol, series.Currency, marketdata.ProviderYahoo, series.Points, h.now()); err != nil {
 				h.logger.Error("could not store Yahoo history", item(w.i, "symbol", w.symbol, "error", err.Error())...)
 			}
 			p, ok := series.LastCloseOnOrBefore(date)
@@ -491,7 +491,7 @@ func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem
 			fail(i, err)
 			return
 		}
-		q := &marketdata.Quote{InstrumentID: row.InstrumentID, OrigPrice: latest.Price, Price: latest.Price, Currency: latest.Currency, QuoteDate: marketdata.BerlinDay(latest.At), QuoteTime: latest.At, FetchedAt: time.Now(), Provider: marketdata.ProviderYahoo, PrevClose: latest.PrevClose, PrevCloseDate: latest.PrevDay}
+		q := &marketdata.Quote{InstrumentID: row.InstrumentID, OrigPrice: latest.Price, Price: latest.Price, Currency: latest.Currency, QuoteDate: marketdata.BerlinDay(latest.At), QuoteTime: latest.At, FetchedAt: h.now(), Provider: marketdata.ProviderYahoo, PrevClose: latest.PrevClose, PrevCloseDate: latest.PrevDay}
 		attrs := []any{"symbol", symbol, "price", latest.Price, "currency", latest.Currency, "at", latest.At.UTC().Format(time.RFC3339)}
 		fx, err := rate(latest.Currency)
 		if err == nil {
@@ -644,7 +644,7 @@ func (h *Handler) registerYahooRoutes(mux *http.ServeMux) {
 			marketError(w, err)
 			return
 		}
-		if err = h.store.SaveHistory(r.Context(), id, symbol, series.Currency, marketdata.ProviderYahoo, series.Points, time.Now()); err != nil {
+		if err = h.store.SaveHistory(r.Context(), id, symbol, series.Currency, marketdata.ProviderYahoo, series.Points, h.now()); err != nil {
 			storeError(w, err)
 			return
 		}

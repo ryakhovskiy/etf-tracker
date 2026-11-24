@@ -273,7 +273,7 @@ func (h *Handler) runEulerpoolPrices(job *priceJob, rows []database.SavingPlanIt
 	}
 	// finish converts a Eulerpool price to EUR and stores it.
 	finish := func(i int, price, ccy string, at time.Time) {
-		q := &marketdata.Quote{InstrumentID: rows[i].InstrumentID, OrigPrice: price, Price: price, Currency: ccy, QuoteDate: marketdata.BerlinDay(at), FetchedAt: time.Now(), Provider: marketdata.ProviderEulerpool}
+		q := &marketdata.Quote{InstrumentID: rows[i].InstrumentID, OrigPrice: price, Price: price, Currency: ccy, QuoteDate: marketdata.BerlinDay(at), FetchedAt: h.now(), Provider: marketdata.ProviderEulerpool}
 		fx, err := rate(ccy)
 		if err == nil {
 			err = marketdata.ApplyFX(q, fx)

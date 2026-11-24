@@ -189,7 +189,7 @@ func (h *Handler) registerSummaryRoutes(mux *http.ServeMux) {
 			httpapi.JSON(w, 200, refreshResult{Reason: refreshThrottled})
 			return
 		}
-		job := &priceJob{Status: "QUEUED", Kind: jobKindUserRealtime, user: user, created: time.Now(), Items: make([]priceItem, 0, len(rows))}
+		job := &priceJob{Version: 1, Status: "QUEUED", Kind: jobKindUserRealtime, user: user, created: time.Now(), Items: make([]priceItem, 0, len(rows))}
 		for _, row := range rows {
 			job.Items = append(job.Items, priceItem{InstrumentID: row.InstrumentID, Status: "PENDING"})
 		}

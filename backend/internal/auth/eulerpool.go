@@ -249,10 +249,12 @@ func (h *Handler) runEulerpoolPrices(job *priceJob, rows []database.SavingPlanIt
 	defer cancel()
 	h.jobs.mu.Lock()
 	job.Status = "RUNNING"
+	h.jobs.touch(job)
 	h.jobs.mu.Unlock()
 	set := func(i int, status, reason string, q *marketdata.Quote) {
 		h.jobs.mu.Lock()
 		job.Items[i] = priceItem{InstrumentID: rows[i].InstrumentID, Status: status, Reason: reason, Quote: q}
+		h.jobs.touch(job)
 		h.jobs.mu.Unlock()
 	}
 	backup := func(i int, reason string) { set(i, "NEEDS_BACKUP", reason, nil) }
@@ -399,6 +401,7 @@ func (h *Handler) runEulerpoolPrices(job *priceJob, rows []database.SavingPlanIt
 	}
 	h.jobs.mu.Lock()
 	job.Status = "DONE"
+	h.jobs.touch(job)
 	h.jobs.mu.Unlock()
 }
 

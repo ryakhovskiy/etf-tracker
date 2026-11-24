@@ -27,11 +27,16 @@ type priceJob struct {
 	Status        string      `json:"status"`
 	NextRequestAt time.Time   `json:"nextRequestAt"`
 	Items         []priceItem `json:"items"`
+	// Version starts at 1 and grows with every change (see priceJobs.touch); a
+	// client long-polls with ?since=<version> to be answered when it changes.
+	Version int64 `json:"version"`
 	// Kind is PORTFOLIO for a job started on one portfolio and USER_REALTIME for the
 	// user-level Yahoo real-time refresh over all portfolios.
 	Kind    string `json:"kind,omitempty"`
 	user    string
 	created time.Time
+	// changed is closed (and dropped) by touch to wake the waiters of this job.
+	changed chan struct{}
 }
 type priceJobs struct {
 	mu      sync.Mutex
@@ -264,7 +269,7 @@ func (h *Handler) registerAlphaRoutes(mux *http.ServeMux) {
 			storeError(w, err)
 			return
 		}
-		job := &priceJob{Status: "QUEUED", Kind: "PORTFOLIO", user: user, created: now, Items: []priceItem{}}
+		job := &priceJob{Version: 1, Status: "QUEUED", Kind: "PORTFOLIO", user: user, created: now, Items: []priceItem{}}
 		for _, row := range rows {
 			job.Items = append(job.Items, priceItem{InstrumentID: row.InstrumentID, Status: "PENDING"})
 		}
@@ -283,21 +288,48 @@ func (h *Handler) registerAlphaRoutes(mux *http.ServeMux) {
 		}
 		httpapi.JSON(w, 202, map[string]string{"jobId": key})
 	}))
+	// Answers at once, or with ?since=<version> when the job has changed since that
+	// version (long polling, see awaitJob). Every answer carries the job's version.
 	mux.HandleFunc("GET /api/price-fetch-jobs/{jobId}", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
-		h.jobs.mu.Lock()
-		defer h.jobs.mu.Unlock()
-		j := h.jobs.entries[r.PathValue("jobId")]
-		if j == nil || j.user != user || (j.Status == "DONE" && time.Since(j.created) > time.Hour) {
-			apiError(w, 404, "NOT_FOUND", "Price fetch job not found.")
-			return
-		}
-		b, err := h.store.AVBudget(r.Context(), user, time.Now(), h.av.Limits)
+		since, long, err := parseSince(r)
 		if err != nil {
 			storeError(w, err)
 			return
 		}
-		j.NextRequestAt = b.NextSlotAt
-		httpapi.JSON(w, 200, j)
+		job, found := h.awaitJob(r.Context(), user, r.PathValue("jobId"), since, long)
+		if !found {
+			apiError(w, 404, "NOT_FOUND", "Price fetch job not found.")
+			return
+		}
+		// The budget is read outside h.jobs.mu, and only added to the snapshot.
+		budget := h.avBudget
+		if budget == nil {
+			budget = func(ctx context.Context, user string) (marketdata.Budget, error) {
+				return h.store.AVBudget(ctx, user, time.Now(), h.av.Limits)
+			}
+		}
+		// When the client is gone or the server is shutting down (Drain, then Close;
+		// the store is closed soon after), the answer is the captured state: the
+		// optional budget refresh is not started, is cancelled if it is already
+		// running, and an error caused by that is not an error of the request.
+		gone := func() bool { return r.Context().Err() != nil || h.drain.Err() != nil || h.ctx.Err() != nil }
+		if gone() {
+			httpapi.JSON(w, 200, job)
+			return
+		}
+		bctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		defer context.AfterFunc(h.drain, cancel)()
+		b, err := budget(bctx, user)
+		switch {
+		case err == nil:
+			job.NextRequestAt = b.NextSlotAt
+		case gone():
+		default:
+			storeError(w, err)
+			return
+		}
+		httpapi.JSON(w, 200, job)
 	}))
 	mux.HandleFunc("GET /api/instruments/{id}/av-symbol/search", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
 		id, ok := portfolioID(w, r)
@@ -380,6 +412,7 @@ func (h *Handler) runPrices(job *priceJob, rows []database.SavingPlanItem, date 
 	defer cancel()
 	h.jobs.mu.Lock()
 	job.Status = "RUNNING"
+	h.jobs.touch(job)
 	h.jobs.mu.Unlock()
 	historical := date != marketdata.BerlinDay(time.Now())
 	rates := map[string]*marketdata.FXRate{}
@@ -464,9 +497,11 @@ func (h *Handler) runPrices(job *priceJob, rows []database.SavingPlanItem, date 
 		}
 		h.jobs.mu.Lock()
 		job.Items[i] = priceItem{InstrumentID: r.InstrumentID, Status: status, Quote: q}
+		h.jobs.touch(job)
 		h.jobs.mu.Unlock()
 	}
 	h.jobs.mu.Lock()
 	job.Status = "DONE"
+	h.jobs.touch(job)
 	h.jobs.mu.Unlock()
 }

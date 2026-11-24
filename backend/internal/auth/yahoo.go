@@ -141,8 +141,10 @@ func (h *Handler) startYahooJob(job *priceJob, run func()) {
 	h.jobs.mu.Lock()
 	for i := range job.Items {
 		job.Items[i].Status = "ERROR"
+		h.jobs.touch(job) // one version per item, like a runner's set
 	}
 	job.Status = "DONE"
+	h.jobs.touch(job)
 	h.jobs.mu.Unlock()
 }
 
@@ -229,10 +231,12 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 	defer cancel()
 	h.jobs.mu.Lock()
 	job.Status = "RUNNING"
+	h.jobs.touch(job)
 	h.jobs.mu.Unlock()
 	set := func(i int, status, reason string, q *marketdata.Quote) {
 		h.jobs.mu.Lock()
 		job.Items[i] = priceItem{InstrumentID: rows[i].InstrumentID, Status: status, Reason: reason, Quote: q}
+		h.jobs.touch(job)
 		h.jobs.mu.Unlock()
 	}
 	// One ECB lookup per currency and date for the whole job, success or failure:
@@ -413,6 +417,7 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 	prefetch.Wait()
 	h.jobs.mu.Lock()
 	job.Status = "DONE"
+	h.jobs.touch(job)
 	h.jobs.mu.Unlock()
 }
 
@@ -467,10 +472,12 @@ func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem
 	defer cancel()
 	h.jobs.mu.Lock()
 	job.Status = "RUNNING"
+	h.jobs.touch(job)
 	h.jobs.mu.Unlock()
 	set := func(i int, status string, q *marketdata.Quote) {
 		h.jobs.mu.Lock()
 		job.Items[i] = priceItem{InstrumentID: rows[i].InstrumentID, Status: status, Quote: q}
+		h.jobs.touch(job)
 		h.jobs.mu.Unlock()
 	}
 	item := func(i int, attrs ...any) []any {
@@ -596,6 +603,7 @@ func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem
 	prefetch.Wait()
 	h.jobs.mu.Lock()
 	job.Status = "DONE"
+	h.jobs.touch(job)
 	h.jobs.mu.Unlock()
 }
 

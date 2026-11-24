@@ -27,9 +27,17 @@ type Handler struct {
 	// ctx is cancelled by Close; the Yahoo price runners derive their context from it.
 	ctx    context.Context
 	cancel context.CancelFunc
+	// drain is cancelled when graceful shutdown begins (Drain), before Close: held
+	// long-poll requests are released then, so server.Shutdown does not wait for them.
+	drain     context.Context
+	drainStop context.CancelFunc
 	// closeMu orders bg.Add against Close, so no job starts once Close has begun.
-	closeMu     sync.Mutex
-	closed      bool
+	closeMu sync.Mutex
+	closed  bool
+	// jobWait overrides jobWaitMax (tests); zero means jobWaitMax.
+	jobWait time.Duration
+	// avBudget reads the Alpha Vantage budget for a job answer; nil means the store.
+	avBudget    func(ctx context.Context, user string) (marketdata.Budget, error)
 	fx          *marketdata.FXService
 	jobs        *priceJobs
 	dividends   *dividendSync
@@ -100,7 +108,8 @@ func NewHandler(cfg config.Config, store *database.Store, logger *slog.Logger) *
 	avGateway := marketdata.NewAVGateway(store, avTransport, marketdata.NewCache(size, ttl), cfg.AVLimits)
 	avGateway.Log = logger
 	bgCtx, bgCancel := context.WithCancel(context.Background())
-	h := &Handler{ctx: bgCtx, cancel: bgCancel, ep: ep, yahoo: yahoo, primary: primary, profileTTL: profileTTL, av: avGateway, fx: &marketdata.FXService{Store: store, Provider: fxProvider, ProviderKey: fxKey, Now: time.Now}, jobs: &priceJobs{entries: map[string]*priceJob{}}, figi: marketdata.Service{Provider: provider, Codes: codes}, frontendURL: cfg.FrontendURL, google: newGoogleClient(cfg, logger), store: store, tokens: newTokenManager(cfg, store), logger: logger}
+	drainCtx, drainStop := context.WithCancel(context.Background())
+	h := &Handler{ctx: bgCtx, cancel: bgCancel, drain: drainCtx, drainStop: drainStop, ep: ep, yahoo: yahoo, primary: primary, profileTTL: profileTTL, av: avGateway, fx: &marketdata.FXService{Store: store, Provider: fxProvider, ProviderKey: fxKey, Now: time.Now}, jobs: &priceJobs{entries: map[string]*priceJob{}}, figi: marketdata.Service{Provider: provider, Codes: codes}, frontendURL: cfg.FrontendURL, google: newGoogleClient(cfg, logger), store: store, tokens: newTokenManager(cfg, store), logger: logger}
 	h.dividends = newDividendSync(h)
 	return h
 }
@@ -122,9 +131,19 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/logout", h.logout)
 }
 
+// Drain releases every held long-poll request with its current state. The server
+// calls it when graceful shutdown begins (http.Server.RegisterOnShutdown), so that
+// Shutdown does not wait up to jobWaitMax for requests that have nothing to say.
+// Requests that arrive later are answered at once. It is idempotent.
+func (h *Handler) Drain() { h.drainStop() }
+
+// Draining is closed once Drain (or Close) has been called.
+func (h *Handler) Draining() <-chan struct{} { return h.drain.Done() }
+
 // Close cancels the running background work, waits for it, and only then
 // releases the gateways. The caller closes the store after Close returns.
 func (h *Handler) Close() {
+	h.Drain()
 	h.closeMu.Lock()
 	h.closed = true
 	h.closeMu.Unlock()

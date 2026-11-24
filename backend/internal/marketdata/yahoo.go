@@ -369,6 +369,12 @@ func (g *YahooGateway) runAttempt(a *sessionAttempt, user string) {
 	ctx, cancel := context.WithTimeout(base, sessionBuildTimeout)
 	defer cancel()
 	a.crumb, a.err = g.refreshCrumb(ctx, user)
+	if ctx.Err() != nil {
+		// Cancellation (Close, or the build timeout) is authoritative: a build that
+		// was cancelled never publishes a session, and its waiters see the
+		// cancellation rather than whatever the interrupted requests reported.
+		a.crumb, a.err = "", ctx.Err()
+	}
 	g.sessMu.Lock()
 	if a.err == nil {
 		// The generation names the published crumb: a request that saw no crumb,

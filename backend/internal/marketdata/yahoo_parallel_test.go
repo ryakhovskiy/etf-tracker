@@ -45,11 +45,43 @@ func (s *scriptedYahoo) Get(ctx context.Context, rawURL string) (int, http.Heade
 	s.mu.Lock()
 	s.inflight--
 	s.mu.Unlock()
+	if err := ctx.Err(); err != nil { // like net/http: a cancelled request fails, it never succeeds
+		return 0, nil, nil, err
+	}
 	status, body := s.handle(rawURL)
 	return status, http.Header{}, body, nil
 }
 
 func (s *scriptedYahoo) total() int { s.mu.Lock(); defer s.mu.Unlock(); return len(s.urls) }
+
+// watchCtx counts how often Done is requested. A caller of buildSession asks for
+// it exactly when it starts to wait for the session, so a test can tell when all
+// callers are parked instead of sleeping.
+type watchCtx struct {
+	context.Context
+	calls atomic.Int32
+}
+
+func (w *watchCtx) Done() <-chan struct{} {
+	w.calls.Add(1)
+	return w.Context.Done()
+}
+
+func awaitWaiting(t *testing.T, n int32, ctxs ...*watchCtx) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var total int32
+		for _, c := range ctxs {
+			total += c.calls.Load()
+		}
+		if total >= n {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("callers did not reach their wait for the session")
+}
 
 func okBody(string) (int, []byte) { return 200, []byte(`{}`) }
 
@@ -463,11 +495,15 @@ func TestYahooFailedSessionAttemptIsSharedByWaiters(t *testing.T) {
 	g := parallelGateway(&memStore{state: map[string]string{}}, tr, 10, 0)
 	const calls = 5
 	errs := make(chan error, calls)
-	for range calls {
-		go func() { errs <- quote(context.Background(), g) }()
+	watchers := make([]*watchCtx, calls)
+	for i := range watchers {
+		watchers[i] = &watchCtx{Context: context.Background()}
 	}
-	awaitEntered(t, tr, 1) // the first caller's cookie request is held; the others wait on its attempt
-	time.Sleep(100 * time.Millisecond)
+	for _, w := range watchers {
+		go func() { errs <- quote(w, g) }()
+	}
+	awaitEntered(t, tr, 1)
+	awaitWaiting(t, calls, watchers...) // all five are parked on the one attempt
 	close(cookieHeld)
 	for range calls {
 		if err := <-errs; !errors.Is(err, ErrYahooAuth) {
@@ -502,9 +538,10 @@ func TestYahooSessionWaiterHonoursContext(t *testing.T) {
 	go func() { leader <- quote(context.Background(), g) }()
 	awaitEntered(t, tr, 1)
 	ctx, cancel := context.WithCancel(context.Background())
+	watch := &watchCtx{Context: ctx}
 	waiter := make(chan error, 1)
-	go func() { waiter <- quote(ctx, g) }()
-	time.Sleep(50 * time.Millisecond) // the waiter is parked on the leader's attempt
+	go func() { waiter <- quote(watch, g) }()
+	awaitWaiting(t, 1, watch) // the waiter is parked on the leader's attempt
 	cancel()
 	select {
 	case err := <-waiter:
@@ -534,10 +571,12 @@ func TestYahooCancelledBuilderDoesNotFailWaiters(t *testing.T) {
 	g := parallelGateway(&memStore{state: map[string]string{}}, tr, 10, 0)
 	builderCtx, cancel := context.WithCancel(context.Background())
 	builder, waiter := make(chan error, 1), make(chan error, 1)
-	go func() { builder <- quote(builderCtx, g) }()
+	watchedBuilder := &watchCtx{Context: builderCtx}
+	watchedWaiter := &watchCtx{Context: context.Background()}
+	go func() { builder <- quote(watchedBuilder, g) }()
 	awaitEntered(t, tr, 1) // the build's cookie request is in flight
-	go func() { waiter <- quote(context.Background(), g) }()
-	time.Sleep(50 * time.Millisecond) // the waiter is parked on the build
+	go func() { waiter <- quote(watchedWaiter, g) }()
+	awaitWaiting(t, 1, watchedWaiter) // the waiter is parked on the build
 	cancel()
 	if err := <-builder; !errors.Is(err, context.Canceled) {
 		t.Fatal("builder:", err)

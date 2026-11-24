@@ -51,12 +51,68 @@ type FXService struct {
 	Provider    FXProvider
 	ProviderKey string
 	Now         func() time.Time
-	mu          sync.Mutex
+	// mu guards only the three maps below and is never held across a store or
+	// provider call. Calls for one currency are serialized by that currency's own
+	// lock (see lockCurrency), so the cache check, the Frankfurter request and the
+	// save stay one step per currency while different currencies run in parallel.
+	mu  sync.Mutex
+	cur map[string]*sync.Mutex
 	// checked records successful fetches that returned no new rows (e.g. holidays).
 	checked map[string]time.Time
 	// ranges records the [from, to] series fetched by RatesOn per currency, so a
 	// date without a usable publication is not requested again on every load.
 	ranges map[string][][2]string
+}
+
+// lockCurrency serializes the callers that look up one currency and returns the
+// func that releases it. Other currencies are not blocked.
+func (s *FXService) lockCurrency(currency string) func() {
+	s.mu.Lock()
+	if s.cur == nil {
+		s.cur = map[string]*sync.Mutex{}
+	}
+	m := s.cur[currency]
+	if m == nil {
+		m = &sync.Mutex{}
+		s.cur[currency] = m
+	}
+	s.mu.Unlock()
+	m.Lock()
+	return m.Unlock
+}
+
+func (s *FXService) checkedAt(currency string) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.checked[currency]
+}
+
+func (s *FXService) markChecked(currency string, t time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.checked == nil {
+		s.checked = map[string]time.Time{}
+	}
+	s.checked[currency] = t
+}
+
+func (s *FXService) fetchedRanges(currency string) [][2]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([][2]string(nil), s.ranges[currency]...)
+}
+
+func (s *FXService) markRange(currency string, t time.Time, from, to string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.checked == nil {
+		s.checked = map[string]time.Time{}
+	}
+	if s.ranges == nil {
+		s.ranges = map[string][][2]string{}
+	}
+	s.checked[currency] = t
+	s.ranges[currency] = append(s.ranges[currency], [2]string{from, to})
 }
 
 // publicationCutoff is when the ECB publication relevant for date d is
@@ -75,8 +131,7 @@ func (s *FXService) Rate(ctx context.Context, currency, date string) (*FXRate, e
 	if MinorUnit(currency) {
 		currency = MajorUnit(currency)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockCurrency(currency)()
 	d, err := time.Parse("2006-01-02", date)
 	if err != nil {
 		return nil, ErrFXUnavailable
@@ -89,7 +144,7 @@ func (s *FXService) Rate(ctx context.Context, currency, date string) (*FXRate, e
 	if err != nil {
 		return nil, err
 	}
-	if t := s.checked[currency]; t.After(fetched) {
+	if t := s.checkedAt(currency); t.After(fetched) {
 		fetched = t
 	}
 	// The cache answers for d only when no later publication on or before d can
@@ -131,10 +186,7 @@ func (s *FXService) Rate(ctx context.Context, currency, date string) (*FXRate, e
 	if err = s.Store.SaveFX(ctx, rates, s.ProviderKey, now); err != nil {
 		return nil, err
 	}
-	if s.checked == nil {
-		s.checked = map[string]time.Time{}
-	}
-	s.checked[currency] = now
+	s.markChecked(currency, now)
 	cached, err = s.Store.CachedFX(ctx, currency, date, s.ProviderKey)
 	if err != nil {
 		return nil, err
@@ -160,17 +212,17 @@ func (s *FXService) RatesOn(ctx context.Context, currency string, dates []string
 	if currency == "EUR" || len(dates) == 0 {
 		return out, nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lockCurrency(currency)()
 	now := s.Now()
 	today := BerlinDay(now)
 	newest, fetched, err := s.Store.FXCoverage(ctx, currency, s.ProviderKey)
 	if err != nil {
 		return nil, err
 	}
-	if t := s.checked[currency]; t.After(fetched) {
+	if t := s.checkedAt(currency); t.After(fetched) {
 		fetched = t
 	}
+	known := s.fetchedRanges(currency)
 	usable := func(r *FXRate, date string) bool {
 		if r == nil {
 			return false
@@ -203,11 +255,11 @@ func (s *FXService) RatesOn(ctx context.Context, currency string, dates []string
 			continue
 		}
 		// Already fetched for this date (and its 7 days before) without a usable publication.
-		known := false
-		for _, r := range s.ranges[currency] {
-			known = known || (at < today && r[0] <= d.AddDate(0, 0, -7).Format("2006-01-02") && r[1] >= at)
+		seen := false
+		for _, r := range known {
+			seen = seen || (at < today && r[0] <= d.AddDate(0, 0, -7).Format("2006-01-02") && r[1] >= at)
 		}
-		if !known {
+		if !seen {
 			missing = append(missing, date)
 		}
 	}
@@ -233,14 +285,7 @@ func (s *FXService) RatesOn(ctx context.Context, currency string, dates []string
 	if err = s.Store.SaveFX(ctx, rates, s.ProviderKey, now); err != nil {
 		return nil, err
 	}
-	if s.checked == nil {
-		s.checked = map[string]time.Time{}
-	}
-	if s.ranges == nil {
-		s.ranges = map[string][][2]string{}
-	}
-	s.checked[currency] = now
-	s.ranges[currency] = append(s.ranges[currency], [2]string{from, to})
+	s.markRange(currency, now, from, to)
 	for _, date := range missing {
 		at := min(date, today)
 		cached, err := s.Store.CachedFX(ctx, currency, at, s.ProviderKey)

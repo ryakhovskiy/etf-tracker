@@ -32,11 +32,11 @@ VHYD.L. Minor-unit codes (GBp, GBX, ZAc) are divided by 100 at conversion. Day l
 ## How it is used
 - **Symbols** are cached on the instrument (`yahoo_symbol`); "Yahoo does not know this ISIN" is remembered for 7 days.
 - **Today**: one batched quote request. **Any earlier date** (1990-01-01 up to today): one chart request per
-  instrument for [date-10 days, date]; the last close on or before the date is used, so weekends and holidays
+  instrument (in parallel) for [date-10 days, date]; the last close on or before the date is used, so weekends and holidays
   resolve to the previous trading day. Exact-day closes are stored in `price_history` and reused.
 - `GET /api/instruments/{id}/price-history?from=&to=` returns daily closes (up to 40 years) and stores them.
 - Every request (including cookie and crumb) is recorded in `provider_requests` with `provider='YAHOO'`;
-  `YAHOO_SOFT_DAILY_LIMIT` caps requests per 24h and `YAHOO_MIN_INTERVAL` spaces them.
+  `YAHOO_SOFT_DAILY_LIMIT` caps requests per 24h (a parallel run may exceed it by up to `YAHOO_MAX_CONCURRENCY - 1`), `YAHOO_MAX_CONCURRENCY` caps requests in flight and `YAHOO_MIN_INTERVAL` is the minimum gap between request starts.
 - A historical close is never reused as a "fresh" current price (only quotes dated today or the previous trading day are).
 - **Dividends** (Dividends tab): one `events=div` chart request per instrument for [from - 10 days, today], so the first
   ex-date still has the close of the trading day before it. Requests of one sync are at least 1 s apart. There is no

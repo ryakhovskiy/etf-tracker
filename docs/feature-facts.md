@@ -471,6 +471,21 @@ date and fetches a daily close on or before it. Default primary is **YAHOO**;
   rate is used. Quotes are saved with `quote_time` and `fx_source='YAHOO'`, and
   labelled "HH:MM · Yahoo Finance real-time · … (Yahoo live)". Yahoo's own exchange
   delay still applies: US listings are real time, XETRA/LSE are ~15 min delayed.
+  **Parallel:** the instruments of one job are fetched at the same time, not one
+  after another, so a 5-title refresh takes about one Yahoo round trip. The
+  `YahooGateway` allows at most `YAHOO_MAX_CONCURRENCY` requests in flight (default
+  10) and starts them at least `YAHOO_MIN_INTERVAL` apart (default 0s). Each foreign
+  currency is still fetched **once** per job, however many rows use it: the first
+  row asks Yahoo, the others wait for its answer (or the ECB fallback). The request
+  count and the estimate are unchanged. Past-date fetches (`runYahooPrices`) fetch
+  the History of their instruments in parallel the same way; today's batched quote
+  request and Alpha Vantage / Eulerpool jobs are unchanged. The cookie + crumb
+  session is built once, however many requests need it, and rebuilt once after a
+  401/403. A 429 starts the cool-down at once: requests that have not started are
+  refused (`RATE_LIMITED`), requests already in flight finish with their own
+  result. The soft daily limit is checked per request, so a parallel run can exceed
+  it by at most `YAHOO_MAX_CONCURRENCY - 1` requests. `Handler.Close` cancels running
+  Yahoo jobs and the session build and waits for them before the store is closed.
   The estimate's `realtime` field (null for past dates) counts searches +
   instruments + currencies of earlier quotes. A regular fetch that reuses a
   real-time quote as fresh converts it at the ECB rate again.
@@ -508,7 +523,7 @@ date and fetches a daily close on or before it. Default primary is **YAHOO**;
 | `OPENFIGI_EXCH_CODES`, `EXTERNAL_CACHE_SIZE`, `EXTERNAL_CACHE_TTL` | `GR,GY`, `1000`, `24h`; 1–3 allowed German exchange codes |
 | `AV_MAX_PER_MINUTE`, `AV_MAX_PER_DAY`, `AV_MAX_PER_USER_PER_DAY`, `AV_LIMIT_BACKOFF` | `5`, `25`, `10`, `1h` |
 | `EULERPOOL_SOFT_DAILY_LIMIT`, `EULERPOOL_QUOTE_TTL`, `EULERPOOL_PROFILE_TTL` | `500`, `15m`, `720h` |
-| `YAHOO_SOFT_DAILY_LIMIT`, `YAHOO_MIN_INTERVAL`, `YAHOO_COOLDOWN` | `1000`, `300ms`, `15m` |
+| `YAHOO_SOFT_DAILY_LIMIT`, `YAHOO_MAX_CONCURRENCY`, `YAHOO_MIN_INTERVAL`, `YAHOO_COOLDOWN` | `1000`, `10`, `0s`, `15m`; concurrency ≥ 1; the interval is the minimum gap between request *starts*, and `1` with `300ms` restores one request at a time |
 | `FRANKFURTER_BASE_URL`, `FX_PROVIDER` | `https://api.frankfurter.dev/v2`, `ECB` |
 | Live credentials | Current startup requires both `ALPHAVANTAGE_API_KEY` and `EULERPOOL_API_KEY`, even with Yahoo primary; `OPENFIGI_API_KEY` is optional. Keys remain server-side. |
 

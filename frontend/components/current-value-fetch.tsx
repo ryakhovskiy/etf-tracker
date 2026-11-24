@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, APIError } from "../lib/api";
-import { pollInterval, SLOW_POLL_MS } from "../lib/polling";
+import { pollJob } from "../lib/polling";
 import { today, type Performance } from "../lib/transactions";
 import { BackupFetch, BACKUP_STATUSES } from "./backup-fetch";
 import { REALTIME_TITLE } from "./price-fetch";
@@ -10,7 +10,7 @@ import { REALTIME_TITLE } from "./price-fetch";
 type Budget = { globalRemaining: number; userRemaining: number; nextSlotAt: string; blockedUntil?: string };
 type Estimate = { requestsNeeded: number; fresh: number[]; noSymbol: number[]; budget: Budget; provider?: string; eulerpool?: { requests: number; remaining: number; noIsin?: number[] }; yahoo?: { requests: number; remaining: number; noSymbol: number[] }; realtime?: { requests: number; remaining: number; noSymbol: number[] } | null };
 type Kind = "regular" | "realtime";
-type Job = { status: string; nextRequestAt: string; items: { instrumentId: number; status: string }[] };
+type Job = { status: string; version?: number; nextRequestAt: string; items: { instrumentId: number; status: string }[] };
 
 export function CurrentValueFetch({ id, performance, reload }: { id: string; performance: Performance; reload: () => Promise<unknown> }) {
  const [estimate, setEstimate] = useState<Estimate | null>(null);
@@ -18,8 +18,6 @@ export function CurrentValueFetch({ id, performance, reload }: { id: string; per
  const [job, setJob] = useState<Job | null>(null);
  const [starting, setStarting] = useState<Kind | null>(null);
  const [kind, setKind] = useState<Kind>("regular");
- // Read when the next poll is scheduled; the provider arrives with the estimate, after the poll effect is set up.
- const yahooJob = useRef(false);
  const [error, setError] = useState("");
  const [now, setNow] = useState(Date.now());
  const [version, setVersion] = useState(0);
@@ -57,30 +55,29 @@ export function CurrentValueFetch({ id, performance, reload }: { id: string; per
  useEffect(() => {
   if (!jobId) return;
   let active = true;
-  let timer: ReturnType<typeof setTimeout>;
   const finish = async () => {
    sessionStorage.removeItem(storageKey); sessionStorage.removeItem(`${storageKey}:kind`); setJobId(null);
    await reloadRef.current();
    window.dispatchEvent(new window.Event("av-budget-changed"));
   };
-  const poll = async () => {
-   try {
-    const next = await api<Job>(`/api/price-fetch-jobs/${jobId}`);
+  const stop = pollJob<Job>(`/api/price-fetch-jobs/${jobId}`, {
+   onJob: async next => {
     if (!active) return;
     setJob(next);
-    if (next.status === "DONE") { setBackup(next.items.filter(i => (mode === "ALPHAVANTAGE" && kind === "regular" ? ["NEEDS_BACKUP"] : BACKUP_STATUSES).includes(i.status)).map(i => i.instrumentId)); await finish(); }
-    else timer = setTimeout(poll, pollInterval(yahooJob.current));
-   } catch (e) {
-    if (!active) return;
+    if (next.status !== "DONE") return;
+    setBackup(next.items.filter(i => (mode === "ALPHAVANTAGE" && kind === "regular" ? ["NEEDS_BACKUP"] : BACKUP_STATUSES).includes(i.status)).map(i => i.instrumentId));
+    await finish();
+   },
+   onError: async e => {
+    if (!active) return false;
     const err = e as APIError;
     setError(err.status === 404 ? "Fetch interrupted. Prices fetched so far were saved." : err.message);
-    if (err.status === 404) {
-     try { await finish(); } catch (recoveryError) { if (active) setError((recoveryError as Error).message); }
-    } else timer = setTimeout(poll, SLOW_POLL_MS);
-   }
-  };
-  void poll();
-  return () => { active = false; clearTimeout(timer); };
+    if (err.status !== 404) return true;
+    try { await finish(); } catch (recoveryError) { if (active) setError((recoveryError as Error).message); }
+    return false;
+   },
+  });
+  return () => { active = false; stop(); };
  }, [jobId, storageKey, kind]);
  const start = async (next: Kind) => {
   setStarting(next); setError(""); setBackup([]);
@@ -94,7 +91,6 @@ export function CurrentValueFetch({ id, performance, reload }: { id: string; per
  // The primary provider comes with the estimate; older servers without it mean Alpha Vantage.
  const mode = estimate?.provider ?? (estimate?.eulerpool ? "EULERPOOL" : "ALPHAVANTAGE");
  const yahoo = mode === "YAHOO";
- yahooJob.current = yahoo || kind === "realtime";
  const eulerpool = mode === "EULERPOOL" || yahoo; // both are request-counted, quota-based sources
  const sourceName = yahoo ? "Yahoo" : "Eulerpool";
  const epRequests = (yahoo ? estimate?.yahoo?.requests : estimate?.eulerpool?.requests) ?? 0;

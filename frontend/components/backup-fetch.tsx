@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { api, APIError } from "../lib/api";
+import { pollJob } from "../lib/polling";
 
 export type JobItem = { instrumentId: number; status: string; reason?: string; priceEur?: string; origPrice?: string; currency?: string; fxRate?: string; fxRateDate?: string; fxSource?: string; quoteDate?: string; quoteTime?: string; quoteId?: number; provider?: string };
 type Provider = "YAHOO" | "EULERPOOL" | "ALPHAVANTAGE";
@@ -10,7 +11,7 @@ type Estimate = {
   eulerpool?: { requests: number; remaining: number; noIsin?: number[] };
   yahoo?: { requests: number; remaining: number; noSymbol: number[] };
 };
-type Job = { status: string; nextRequestAt: string; items: JobItem[] };
+type Job = { status: string; version?: number; nextRequestAt: string; items: JobItem[] };
 
 /** Job statuses of a primary source that mean "this item still needs a price". */
 export const BACKUP_STATUSES = ["NEEDS_BACKUP", "NO_SYMBOL", "NOT_FOUND", "RATE_LIMITED", "ERROR"];
@@ -51,24 +52,23 @@ export function BackupFetch({ portfolioId, date, primary, ids, names, onItems, o
   useEffect(() => {
     if (!jobId) return;
     let active = true;
-    let timer: ReturnType<typeof setTimeout>;
-    const tick = setInterval(() => setNow(Date.now()), 1000);
-    const poll = async () => {
-      try {
-        const next = await api<Job>(`/api/price-fetch-jobs/${jobId}`);
+    const stop = pollJob<Job>(`/api/price-fetch-jobs/${jobId}`, {
+      onJob: async next => {
         if (!active) return;
         setJob(next); callbacks.current.onItems(next.items);
         setPriced(p => [...new Set([...p, ...next.items.filter(i => i.status === "OK" || i.status === "FRESH").map(i => i.instrumentId)])]);
         if (next.status === "DONE") { setJobId(null); setRunning(null); await callbacks.current.onDone(); window.dispatchEvent(new window.Event("av-budget-changed")); }
-        else timer = setTimeout(poll, 2000);
-      } catch (e) {
-        if (!active) return;
-        if ((e as APIError).status === 404) { setJobId(null); setRunning(null); setError("Fetch interrupted. Prices fetched so far were saved."); return; }
-        setError((e as Error).message); timer = setTimeout(poll, 2000);
-      }
-    };
-    void poll();
-    return () => { active = false; clearTimeout(timer); clearInterval(tick); };
+      },
+      onError: e => {
+        if (!active) return false;
+        if ((e as APIError).status === 404) { setJobId(null); setRunning(null); setError("Fetch interrupted. Prices fetched so far were saved."); return false; }
+        setError((e as Error).message);
+        return true;
+      },
+    });
+    // The "next request in N s" countdown reads this clock, so it ticks without any poll.
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => { active = false; stop(); clearInterval(tick); };
   }, [jobId]);
   if (!open.length) return null;
   // Per provider: requests, what is left, and the items it cannot price (no symbol / ISIN).

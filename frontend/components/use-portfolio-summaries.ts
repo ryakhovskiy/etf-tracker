@@ -1,14 +1,10 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
-import { SLOW_POLL_MS, YAHOO_POLL_MS } from "../lib/polling";
+import { pollJob } from "../lib/polling";
 import type { RefreshJob, RefreshResult, Summaries } from "../lib/portfolio-summary";
 
 export type RefreshProgress = { done: number; total: number } | null;
-// The summary refresh is always a Yahoo job.
-const POLL_MS = YAHOO_POLL_MS;
-// Retries after a failed poll keep the original pace.
-const ERROR_POLL_MS = SLOW_POLL_MS;
 const MAX_POLL_ERRORS = 5;
 
 /**
@@ -86,24 +82,21 @@ export function usePortfolioSummaries(enabled: boolean) {
   useEffect(() => {
     if (!jobId) { setProgress(null); return; }
     let active = true;
-    let timer: ReturnType<typeof setTimeout>;
-    let errors = 0;
     const finish = async () => { if (!active) return; setJobId(null); await load(); };
-    const poll = async () => {
-      try {
-        const job = await api<RefreshJob>(`/api/price-fetch-jobs/${jobId}`);
+    const stop = pollJob<RefreshJob>(`/api/price-fetch-jobs/${jobId}`, {
+      onJob: async job => {
         if (!active) return;
-        errors = 0;
         setProgress({ done: job.items.filter(item => item.status !== "PENDING").length, total: job.items.length });
-        if (job.status === "DONE") await finish(); else timer = setTimeout(poll, POLL_MS);
-      } catch {
-        if (!active) return;
-        // The job may be gone (restart) or the network flaky: retry a few times, then show what is stored.
-        if (++errors >= MAX_POLL_ERRORS) await finish(); else timer = setTimeout(poll, ERROR_POLL_MS);
-      }
-    };
-    void poll();
-    return () => { active = false; clearTimeout(timer); };
+        if (job.status === "DONE") await finish();
+      },
+      // The job may be gone (restart) or the network flaky: retry a few times, then show what is stored.
+      onError: async (_error, errors) => {
+        if (errors < MAX_POLL_ERRORS) return true;
+        await finish();
+        return false;
+      },
+    });
+    return () => { active = false; stop(); };
   }, [jobId, load]);
 
   // When a known Yahoo cooldown ends, ask again: the server's answer replaces the stale "unavailable" flag.

@@ -31,7 +31,7 @@ export type RefreshResult =
   | { started: false; reused: true; jobId: string }
   | { started: false; reason: "FRESH" | "THROTTLED" | "NOTHING_TO_PRICE" }
   | { started: false; reason: "YAHOO_UNAVAILABLE"; blockedUntil?: string | null };
-export type RefreshJob = { status: "QUEUED" | "RUNNING" | "DONE"; kind?: string; items: { instrumentId: number; status: string }[] };
+export type RefreshJob = { status: "QUEUED" | "RUNNING" | "DONE"; version?: number; kind?: string; items: { instrumentId: number; status: string }[] };
 
 export const reasonText: Record<SummaryReason, string> = {
   NO_QUOTE: "no quote yet for some positions (valued at purchase price)",

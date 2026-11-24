@@ -4,7 +4,7 @@ import { api, APIError, OnlineInstrument } from "../lib/api";
 import { editRow, fetchable, fetchedSource, fetchDateInRange, PlanRow, today } from "../lib/transactions";
 import { BackupFetch, BACKUP_STATUSES, type JobItem } from "./backup-fetch";
 import { Modal } from "./portfolios";
-import { pollInterval, SLOW_POLL_MS } from "../lib/polling";
+import { pollJob } from "../lib/polling";
 import { usePortfolioUpdates } from "./portfolio-updates";
 
 type Budget = { globalRemaining: number; userRemaining: number; userLimit: number; nextSlotAt: string; blockedUntil?: string; primary?: string };
@@ -17,7 +17,7 @@ type Estimate = {
 type Realtime = { requests: number; remaining: number; noSymbol: number[] };
 type Kind = "regular" | "realtime";
 type QuoteItem = JobItem;
-type Job = { status: "QUEUED" | "RUNNING" | "DONE"; nextRequestAt: string; items: QuoteItem[] };
+type Job = { status: "QUEUED" | "RUNNING" | "DONE"; version?: number; nextRequestAt: string; items: QuoteItem[] };
 type Reload = (recoverPrices?: boolean) => Promise<unknown>;
 const count = (n: number | undefined, who: string) => `${n ?? "…"} ${who} ${n === 1 ? "request" : "requests"}`;
 const german = (iso: string) => iso.split("-").reverse().join(".");
@@ -74,36 +74,33 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
  useEffect(() => {
   if (!jobId) return;
   let active = true;
-  let timer: ReturnType<typeof setTimeout>;
-  const interval = pollInterval(kind === "realtime" || mode === "YAHOO");
   const applied = new Set<number>();
-  const poll = async () => {
-   try {
-    const next = await api<Job>(`/api/price-fetch-jobs/${jobId}`);
+  const stop = pollJob<Job>(`/api/price-fetch-jobs/${jobId}`, {
+   onJob: async next => {
     if (!active) return;
     setJob(next);
     applyItems(next.items, applied);
-    if (next.status === "DONE") {
-     // Whatever the primary source could not price can be fetched from a backup, on request.
-     const offer = mode === "ALPHAVANTAGE" && kind === "regular" ? ["NEEDS_BACKUP"] : BACKUP_STATUSES;
-     setBackup(next.items.filter(i => offer.includes(i.status)).map(i => i.instrumentId));
-     sessionStorage.removeItem(storageKey); sessionStorage.removeItem(`${storageKey}:kind`); setJobId(null);
-     await refreshBudget();
-     callbacks.current.changed();
-    } else if (active) timer = setTimeout(poll, interval);
-   } catch (e) {
-    if (!active) return;
+    if (next.status !== "DONE") return;
+    // Whatever the primary source could not price can be fetched from a backup, on request.
+    const offer = mode === "ALPHAVANTAGE" && kind === "regular" ? ["NEEDS_BACKUP"] : BACKUP_STATUSES;
+    setBackup(next.items.filter(i => offer.includes(i.status)).map(i => i.instrumentId));
+    sessionStorage.removeItem(storageKey); sessionStorage.removeItem(`${storageKey}:kind`); setJobId(null);
+    await refreshBudget();
+    callbacks.current.changed();
+   },
+   onError: async e => {
+    if (!active) return false;
     const err = e as APIError;
     setError(err.status === 404 ? "Fetch interrupted. Prices fetched so far were saved." : err.message);
-    if (err.status === 404) {
-     sessionStorage.removeItem(storageKey); sessionStorage.removeItem(`${storageKey}:kind`); setJobId(null);
-     try { await callbacks.current.reload(true); await refreshBudget(); callbacks.current.changed(); } catch (recoveryError) { if (active) setError(`Fetch interrupted. ${(recoveryError as Error).message}`); }
-    } else timer = setTimeout(poll, SLOW_POLL_MS);
-   }
-  };
-  void poll();
+    if (err.status !== 404) return true;
+    sessionStorage.removeItem(storageKey); sessionStorage.removeItem(`${storageKey}:kind`); setJobId(null);
+    try { await callbacks.current.reload(true); await refreshBudget(); callbacks.current.changed(); } catch (recoveryError) { if (active) setError(`Fetch interrupted. ${(recoveryError as Error).message}`); }
+    return false;
+   },
+  });
+  // The "next request in N s" countdown reads this clock, so it ticks without any poll.
   const tick = setInterval(() => setNow(Date.now()), 1000);
-  return () => { active = false; clearTimeout(timer); clearInterval(tick); };
+  return () => { active = false; stop(); clearInterval(tick); };
  }, [jobId, storageKey, refreshBudget, mode, kind]);
  // Applies fetched prices to the draft rows, once per item.
  const appliedItems = useRef(new Set<number>());

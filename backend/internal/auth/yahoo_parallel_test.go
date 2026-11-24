@@ -289,7 +289,7 @@ func jobStatus(h *Handler, key string) string {
 // closeDuring starts a real-time job on rows that need rows' requests, holds the
 // first request matching held until its context ends, closes the handler, and
 // checks that Close waited for that work and nothing touched the store after it.
-func closeDuring(t *testing.T, held func(rawURL string) bool, ids func(h *Handler) []int64) {
+func closeDuring(t *testing.T, historical bool, held func(rawURL string) bool, ids func(h *Handler) []int64) {
 	t.Helper()
 	h, handler, cookies, p := parallelSetup(t, map[string]string{"CL1": "SAP.DE"})
 	audit := &storeAudit{EPStore: h.yahoo.Store}
@@ -308,8 +308,11 @@ func closeDuring(t *testing.T, held func(rawURL string) bool, ids func(h *Handle
 		time.Sleep(60 * time.Millisecond)
 		finished.Store(true)
 	}
-	date := marketdata.BerlinDay(time.Now())
-	key := startPriceJob(t, handler, path, fmt.Sprintf(`{"date":%q,"instrumentIds":[%s],"realtime":true}`, date, idList(rows)), cookies)
+	body := fmt.Sprintf(`{"date":%q,"instrumentIds":[%s],"realtime":true}`, marketdata.BerlinDay(time.Now()), idList(rows))
+	if historical { // a past date runs runYahooPrices: History requests, not real-time charts
+		body = fmt.Sprintf(`{"date":"2026-11-06","instrumentIds":[%s],"provider":"YAHOO"}`, idList(rows))
+	}
+	key := startPriceJob(t, handler, path, body, cookies)
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
@@ -344,7 +347,7 @@ func closeDuring(t *testing.T, held func(rawURL string) bool, ids func(h *Handle
 
 // Close cancels a job blocked in a chart request and waits for it.
 func TestHandlerCloseCancelsAndWaitsForARunningYahooJob(t *testing.T) {
-	closeDuring(t, func(u string) bool {
+	closeDuring(t, false, func(u string) bool {
 		return strings.Contains(u, "/v8/finance/chart/") && strings.Contains(u, "range=5d")
 	},
 		func(h *Handler) []int64 { return linkedInstruments(t, h, "CL1") })
@@ -354,8 +357,14 @@ func TestHandlerCloseCancelsAndWaitsForARunningYahooJob(t *testing.T) {
 // shared and runs on its own context, so the job ending is not enough: Close must
 // wait for the cookie and crumb work too, and nothing may touch the store after.
 func TestHandlerCloseWaitsForYahooSessionBuild(t *testing.T) {
-	closeDuring(t, func(u string) bool { return strings.HasSuffix(u, "/") },
+	closeDuring(t, false, func(u string) bool { return strings.HasSuffix(u, "/") },
 		func(h *Handler) []int64 { return []int64{7} }) // SAP has no Yahoo symbol yet: the run searches, which needs a session
+}
+
+// Close also stops a past-date job (runYahooPrices) blocked in a History request.
+func TestHandlerCloseCancelsAndWaitsForAHistoricalYahooJob(t *testing.T) {
+	closeDuring(t, true, func(u string) bool { return strings.Contains(u, "period1=") },
+		func(h *Handler) []int64 { return linkedInstruments(t, h, "CL1") })
 }
 
 func TestForEachParallelRespectsLimitAndContext(t *testing.T) {
@@ -448,8 +457,9 @@ func TestFXMemoLoadsOncePerCurrency(t *testing.T) {
 	// A waiter stops waiting when its own context ends.
 	slow := &fxMemo{}
 	hold := make(chan struct{})
-	go slow.get(context.Background(), "CHF", func() (*marketdata.FXRate, error) { <-hold; return nil, nil })
-	time.Sleep(20 * time.Millisecond)
+	leading := make(chan struct{})
+	go slow.get(context.Background(), "CHF", func() (*marketdata.FXRate, error) { close(leading); <-hold; return nil, nil })
+	<-leading // the leader is loading; the call below can only wait for it
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 	if _, err := slow.get(ctx, "CHF", failing); !errors.Is(err, context.DeadlineExceeded) {

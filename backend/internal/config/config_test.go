@@ -86,10 +86,10 @@ func TestEulerpoolConfiguration(t *testing.T) {
 func TestYahooConfiguration(t *testing.T) {
 	t.Setenv("MARKETDATA_MODE", "mock")
 	cfg, err := Load()
-	if err != nil || cfg.YahooQueryURL != "https://query1.finance.yahoo.com" || cfg.YahooCookieURL != "https://fc.yahoo.com" || cfg.YahooSoftLimit != 1000 || cfg.YahooMinInterval.Milliseconds() != 300 || cfg.YahooCooldown.Minutes() != 15 || !strings.Contains(cfg.YahooUserAgent, "Mozilla/5.0") {
+	if err != nil || cfg.YahooQueryURL != "https://query1.finance.yahoo.com" || cfg.YahooCookieURL != "https://fc.yahoo.com" || cfg.YahooSoftLimit != 1000 || cfg.YahooMinInterval != 0 || cfg.YahooMaxConcurrency != 10 || cfg.YahooCooldown.Minutes() != 15 || !strings.Contains(cfg.YahooUserAgent, "Mozilla/5.0") {
 		t.Fatalf("%+v %v", cfg, err)
 	}
-	for _, tc := range []struct{ key, value string }{{"YAHOO_QUERY_URL", "ftp://x"}, {"YAHOO_COOKIE_URL", "nope"}, {"YAHOO_SOFT_DAILY_LIMIT", "0"}, {"YAHOO_MIN_INTERVAL", "-1s"}, {"YAHOO_COOLDOWN", "0s"}} {
+	for _, tc := range []struct{ key, value string }{{"YAHOO_QUERY_URL", "ftp://x"}, {"YAHOO_COOKIE_URL", "nope"}, {"YAHOO_SOFT_DAILY_LIMIT", "0"}, {"YAHOO_MIN_INTERVAL", "-1s"}, {"YAHOO_MAX_CONCURRENCY", "0"}, {"YAHOO_MAX_CONCURRENCY", "many"}, {"YAHOO_COOLDOWN", "0s"}} {
 		t.Run(tc.key, func(t *testing.T) {
 			t.Setenv(tc.key, tc.value)
 			if _, err := Load(); err == nil {

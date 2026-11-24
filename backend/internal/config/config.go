@@ -32,6 +32,7 @@ type Config struct {
 	YahooUserAgent      string
 	YahooSoftLimit      int
 	YahooMinInterval    time.Duration
+	YahooMaxConcurrency int
 	YahooCooldown       time.Duration
 	FrankfurterBaseURL  string
 	FXProvider          string
@@ -148,9 +149,13 @@ func Load() (Config, error) {
 	if err != nil || cfg.YahooSoftLimit < 1 {
 		return Config{}, errors.New("YAHOO_SOFT_DAILY_LIMIT must be a positive integer")
 	}
-	cfg.YahooMinInterval, err = time.ParseDuration(value("YAHOO_MIN_INTERVAL", "300ms"))
+	cfg.YahooMinInterval, err = time.ParseDuration(value("YAHOO_MIN_INTERVAL", "0s"))
 	if err != nil || cfg.YahooMinInterval < 0 {
 		return Config{}, errors.New("YAHOO_MIN_INTERVAL must be a non-negative duration")
+	}
+	cfg.YahooMaxConcurrency, err = strconv.Atoi(value("YAHOO_MAX_CONCURRENCY", "10"))
+	if err != nil || cfg.YahooMaxConcurrency < 1 {
+		return Config{}, errors.New("YAHOO_MAX_CONCURRENCY must be a positive integer")
 	}
 	cfg.YahooCooldown, err = time.ParseDuration(value("YAHOO_COOLDOWN", "15m"))
 	if err != nil || cfg.YahooCooldown <= 0 {

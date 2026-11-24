@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -78,16 +79,23 @@ func TestEPParsersReadRecordedFixtures(t *testing.T) {
 	}
 }
 
+// memStore is safe for concurrent use. Tests read rows and state directly only
+// after the code under test has finished.
 type memStore struct {
+	mu    sync.Mutex
 	rows  []bool
 	state map[string]string
 }
 
 func (m *memStore) RecordProviderRequest(_ context.Context, provider, _, _ string, _ time.Time, counted bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.rows = append(m.rows, counted)
 	return nil
 }
 func (m *memStore) ProviderUsage(context.Context, string, time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	n := 0
 	for _, c := range m.rows {
 		if c {
@@ -97,9 +105,13 @@ func (m *memStore) ProviderUsage(context.Context, string, time.Time) (int, error
 	return n, nil
 }
 func (m *memStore) ProviderState(_ context.Context, _, k string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.state[k], nil
 }
 func (m *memStore) SetProviderState(_ context.Context, _, k, v string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.state[k] = v
 	return nil
 }

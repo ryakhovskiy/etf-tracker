@@ -129,6 +129,7 @@ func (h *Handler) Close() {
 	h.closed = true
 	h.closeMu.Unlock()
 	h.cancel()
+	h.yahoo.Close()
 	h.dividends.stop()
 	h.bg.Wait()
 	h.av.Close()

@@ -119,20 +119,38 @@ type YahooGateway struct {
 	// slots limits the requests in flight. It is rebuilt when MaxConcurrency changes.
 	slotMu sync.Mutex
 	slots  chan struct{}
-	// admitMu serializes admission decisions: the cool-down and budget check, the
-	// start spacing and the count of requests admitted but not yet in the ledger.
-	admitMu     sync.Mutex
-	lastStart   time.Time
-	outstanding int
+	// startMu guards nextStart, the earliest start of the next request.
+	startMu   sync.Mutex
+	nextStart time.Time
 	// cdMu guards cooldownUntil, set the moment a 429 arrives so that no request
 	// starts after it, even while the ledger and the persisted state catch up.
 	cdMu          sync.Mutex
 	cooldownUntil time.Time
-	// sessMu guards the cookie + crumb session. Building a session holds it, so
-	// concurrent requests share one rebuild; gen identifies the current session.
-	sessMu sync.Mutex
-	crumb  string
-	gen    uint64
+	// sessMu guards the cookie + crumb session. gen identifies the current
+	// session; attempt is the session build in progress, which concurrent callers
+	// share instead of repeating it.
+	sessMu  sync.Mutex
+	crumb   string
+	gen     uint64
+	attempt *sessionAttempt
+	closed  bool
+	// life bounds every session build; Close cancels it and waits for the builds.
+	life     context.Context
+	stop     context.CancelFunc
+	attempts sync.WaitGroup
+}
+
+// sessionBuildTimeout bounds one cookie + crumb build, which runs on its own
+// context so that no single caller's cancellation fails the callers sharing it.
+const sessionBuildTimeout = 20 * time.Second
+
+// sessionAttempt is one cookie + crumb build. Callers that arrive while it runs
+// wait for done and share its result.
+type sessionAttempt struct {
+	done  chan struct{}
+	crumb string
+	gen   uint64
+	err   error
 }
 
 // DefaultYahooConcurrency is the in-flight cap used when none is configured.
@@ -176,52 +194,23 @@ func (g *YahooGateway) startCooldown(until time.Time) {
 	}
 }
 
-// admit decides whether a request may start now and returns a func that ends its
-// admission once the request is in the ledger. A request is refused while a 429
-// cool-down runs (the in-memory one is set at once, the persisted one follows) or
-// when the daily budget, less the requests admitted but not yet recorded, is spent.
-// Starts are at least MinInterval apart: the gap is checked again after every wait,
-// at the moment of admission, so late sleepers cannot bunch up.
-func (g *YahooGateway) admit(ctx context.Context, function string) (func(), error) {
-	for {
-		g.admitMu.Lock()
-		now := g.Now()
-		if g.cooldown().After(now) {
-			g.admitMu.Unlock()
-			logUpstream(g.Log, slog.LevelWarn, ProviderYahoo, "request refused locally: cooling down", "function", function)
-			return nil, ErrYahooLimit
-		}
-		b, err := g.Budget(ctx)
-		if err != nil {
-			g.admitMu.Unlock()
-			return nil, err
-		}
-		if b.Remaining-g.outstanding <= 0 {
-			g.admitMu.Unlock()
-			logUpstream(g.Log, slog.LevelWarn, ProviderYahoo, "request refused locally: budget exhausted or cooling down", "function", function, "blockedUntil", b.BlockedUntil)
-			return nil, ErrYahooLimit
-		}
-		if g.MinInterval > 0 && !g.lastStart.IsZero() {
-			if wait := g.lastStart.Add(g.MinInterval).Sub(now); wait > 0 {
-				g.admitMu.Unlock()
-				if err = g.Sleep(ctx, wait); err != nil {
-					return nil, err
-				}
-				continue
-			}
-		}
-		g.lastStart = now
-		g.outstanding++
-		g.admitMu.Unlock()
-		var once sync.Once
-		return func() {
-			once.Do(func() {
-				g.admitMu.Lock()
-				g.outstanding--
-				g.admitMu.Unlock()
-			})
-		}, nil
+// reserveStart books the next request start at least MinInterval after the
+// previous booking and returns how long to wait for it. It is called once the
+// budget check has passed, right before the request is sent, so a slow budget
+// query cannot compress the real starts.
+func (g *YahooGateway) reserveStart() time.Duration {
+	if g.MinInterval <= 0 {
+		return 0
 	}
+	g.startMu.Lock()
+	defer g.startMu.Unlock()
+	now := g.Now()
+	start := g.nextStart
+	if start.Before(now) {
+		start = now
+	}
+	g.nextStart = start.Add(g.MinInterval)
+	return start.Sub(now)
 }
 
 func NewYahooGateway(store EPStore, t YahooTransport, softDaily int, minInterval, cooldown time.Duration) *YahooGateway {
@@ -231,7 +220,8 @@ func NewYahooGateway(store EPStore, t YahooTransport, softDaily int, minInterval
 	if cooldown <= 0 {
 		cooldown = 15 * time.Minute
 	}
-	return &YahooGateway{Store: store, Transport: t, CookieURL: "https://fc.yahoo.com", QueryURL: "https://query1.finance.yahoo.com", FallbackURL: "https://query2.finance.yahoo.com",
+	life, stop := context.WithCancel(context.Background())
+	return &YahooGateway{life: life, stop: stop, Store: store, Transport: t, CookieURL: "https://fc.yahoo.com", QueryURL: "https://query1.finance.yahoo.com", FallbackURL: "https://query2.finance.yahoo.com",
 		SoftDaily: softDaily, MinInterval: minInterval, MaxConcurrency: DefaultYahooConcurrency, Cooldown: cooldown, Now: time.Now, Sleep: waitContext}
 }
 
@@ -261,20 +251,42 @@ func (g *YahooGateway) Budget(ctx context.Context) (YahooBudget, error) {
 // rejects error pages and "Too Many Requests" text, which contain spaces or markup.
 var crumbPattern = regexp.MustCompile(`^[A-Za-z0-9._/\-]{4,64}$`)
 
-// get performs one counted, paced exchange. It holds an in-flight slot from
-// admission until the response is read, so at most MaxConcurrency requests run at
-// once.
+// get performs one counted, paced exchange. It holds an in-flight slot from the
+// budget check until the response is read, so at most MaxConcurrency requests run
+// at once. The daily limit is checked per request against the ledger, so with
+// parallel requests it may be exceeded by at most MaxConcurrency-1 requests; that
+// is accepted. A 429 starts the cool-down in memory at once, before the ledger and
+// the persisted state are written, so requests that have not started are refused
+// while those in flight finish.
 func (g *YahooGateway) get(ctx context.Context, user, function, rawURL string) (int, []byte, error) {
 	release, err := g.acquire(ctx)
 	if err != nil {
 		return 0, nil, err
 	}
 	defer release()
-	done, err := g.admit(ctx, function)
+	if err = ctx.Err(); err != nil {
+		return 0, nil, err
+	}
+	refuse := func(b YahooBudget) (int, []byte, error) {
+		logUpstream(g.Log, slog.LevelWarn, ProviderYahoo, "request refused locally: budget exhausted or cooling down", "function", function, "blockedUntil", b.BlockedUntil)
+		return 0, nil, ErrYahooLimit
+	}
+	b, err := g.Budget(ctx)
 	if err != nil {
 		return 0, nil, err
 	}
-	defer done()
+	if b.Remaining <= 0 {
+		return refuse(b)
+	}
+	if wait := g.reserveStart(); wait > 0 {
+		if err = g.Sleep(ctx, wait); err != nil {
+			return 0, nil, err
+		}
+		// A 429 may have landed while this request waited for its start.
+		if g.cooldown().After(g.Now()) {
+			return refuse(YahooBudget{})
+		}
+	}
 	status, _, body, err := g.Transport.Get(ctx, rawURL)
 	if err != nil {
 		logUpstream(g.Log, slog.LevelError, ProviderYahoo, "transport error", "function", function, "error", cleanErr(err))
@@ -282,14 +294,11 @@ func (g *YahooGateway) get(ctx context.Context, user, function, rawURL string) (
 	}
 	var until time.Time
 	if status == http.StatusTooManyRequests {
-		// Stop new starts first; the ledger and the persisted state follow.
 		until = g.Now().Add(g.Cooldown)
 		g.startCooldown(until)
 	}
-	err = g.Store.RecordProviderRequest(ctx, ProviderYahoo, user, function, g.Now(), true)
-	done()
-	if err != nil {
-		return 0, nil, err
+	if e := g.Store.RecordProviderRequest(ctx, ProviderYahoo, user, function, g.Now(), true); e != nil {
+		return 0, nil, e
 	}
 	if status == http.StatusTooManyRequests {
 		logUpstream(g.Log, slog.LevelWarn, ProviderYahoo, "rate limited (429); cooling down", "function", function, "until", until.Format(time.RFC3339), "body", snippet(body))
@@ -308,22 +317,74 @@ func (g *YahooGateway) session() (string, uint64) {
 	return g.crumb, g.gen
 }
 
+// Close cancels the session build in progress, if any, and waits for it, so no
+// request touches the store afterwards. Later session builds are refused.
+func (g *YahooGateway) Close() {
+	g.sessMu.Lock()
+	g.closed = true
+	g.sessMu.Unlock()
+	if g.stop != nil {
+		g.stop()
+	}
+	g.attempts.Wait()
+}
+
 // buildSession returns the current session, building one first when there is
-// none. Concurrent callers wait on sessMu, so a session is built once: the
-// callers that waited find the new crumb and use it.
+// none. The build runs once, on its own context, and every caller waiting for it
+// shares its result, success or failure; each caller stops waiting when its own
+// ctx ends. A later request after a failure starts a new build.
 func (g *YahooGateway) buildSession(ctx context.Context, user string) (string, uint64, error) {
 	g.sessMu.Lock()
-	defer g.sessMu.Unlock()
-	if g.crumb == "" {
-		if err := g.refreshCrumb(ctx, user); err != nil {
-			return "", g.gen, err
-		}
+	if g.crumb != "" {
+		crumb, gen := g.crumb, g.gen
+		g.sessMu.Unlock()
+		return crumb, gen, nil
 	}
-	return g.crumb, g.gen, nil
+	a := g.attempt
+	if a == nil {
+		if g.closed {
+			g.sessMu.Unlock()
+			return "", 0, ErrUpstream
+		}
+		a = &sessionAttempt{done: make(chan struct{})}
+		g.attempt = a
+		g.attempts.Add(1)
+		go g.runAttempt(a, user)
+	}
+	g.sessMu.Unlock()
+	select {
+	case <-a.done:
+		return a.crumb, a.gen, a.err
+	case <-ctx.Done():
+		return "", 0, ctx.Err()
+	}
+}
+
+func (g *YahooGateway) runAttempt(a *sessionAttempt, user string) {
+	defer g.attempts.Done()
+	base := g.life
+	if base == nil {
+		base = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(base, sessionBuildTimeout)
+	defer cancel()
+	a.crumb, a.err = g.refreshCrumb(ctx, user)
+	g.sessMu.Lock()
+	if a.err == nil {
+		// The generation names the published crumb: a request that saw no crumb,
+		// or an older one, can never discard this one.
+		g.crumb = a.crumb
+		g.gen++
+	}
+	a.gen = g.gen
+	g.attempt = nil
+	g.sessMu.Unlock()
+	close(a.done)
 }
 
 // dropSession discards the session of generation gen after Yahoo rejected it.
-// A newer session, built meanwhile by another request, is left alone.
+// A newer session, built meanwhile by another request, is left alone; so is a
+// session published after the rejected request saw none.
 func (g *YahooGateway) dropSession(gen uint64) {
 	g.sessMu.Lock()
 	defer g.sessMu.Unlock()
@@ -334,32 +395,29 @@ func (g *YahooGateway) dropSession(gen uint64) {
 
 // refreshCrumb starts a new session: fresh cookie jar, A3 cookie from the cookie
 // host (its 404 is expected), then the crumb text from query1, falling back to query2.
-// The caller holds g.sessMu.
-func (g *YahooGateway) refreshCrumb(ctx context.Context, user string) error {
-	g.gen++
-	g.crumb = ""
+// Only the caller that owns the session attempt runs it.
+func (g *YahooGateway) refreshCrumb(ctx context.Context, user string) (string, error) {
 	if r, ok := g.Transport.(interface{ ResetCookies() }); ok {
 		r.ResetCookies()
 	}
 	if _, _, err := g.get(ctx, user, "cookie", g.CookieURL+"/"); err != nil {
-		return err
+		return "", err
 	}
 	var lastStatus int
 	for _, host := range []string{g.QueryURL, g.FallbackURL} {
 		status, body, err := g.get(ctx, user, "crumb", host+"/v1/test/getcrumb")
 		if err != nil {
-			return err
+			return "", err
 		}
 		lastStatus = status
 		crumb := strings.TrimSpace(string(body))
 		if status == http.StatusOK && crumbPattern.MatchString(crumb) {
-			g.crumb = crumb
-			return nil
+			return crumb, nil
 		}
 		logUpstream(g.Log, slog.LevelWarn, ProviderYahoo, "crumb request did not yield a crumb", "host", host, "status", status, "body", snippet(body))
 	}
 	logUpstream(g.Log, slog.LevelError, ProviderYahoo, "could not obtain a crumb", "lastStatus", lastStatus)
-	return ErrYahooAuth
+	return "", ErrYahooAuth
 }
 
 // call sends a request with the session crumb. A 401/403 means the crumb or

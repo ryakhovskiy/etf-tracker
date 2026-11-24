@@ -486,6 +486,26 @@ date and fetches a daily close on or before it. Default primary is **YAHOO**;
   result. The soft daily limit is checked per request, so a parallel run can exceed
   it by at most `YAHOO_MAX_CONCURRENCY - 1` requests. `Handler.Close` cancels running
   Yahoo jobs and the session build and waits for them before the store is closed.
+  **FX prefetch:** FX is never on the critical path. When a Yahoo job starts,
+  before any price request, it predicts the foreign currencies its rows will use
+  from stored data only (the currency of the instrument's latest stored quote, else
+  its stored listing currency: Eulerpool listing, then ETF profile; pence listings
+  count as their major currency) and starts one FX lookup per currency at once, in
+  parallel with each other and with the price requests, ahead of the price workers.
+  Real-time jobs prefetch the live Yahoo rate (`{CCY}EUR=X`, with its dated closes
+  for the previous-close conversion); today and past-date jobs prefetch the ECB rate
+  of the job's date. The rows use the same per-currency memo as the prefetch, so the
+  currency is looked up once per job whichever side asks first, and a failed
+  prefetch is kept for the job rather than repeated after the price. A currency that
+  was not predicted (a title never priced) is fetched on demand through the same
+  memo, once, and logged ("not predicted"). A prediction no row uses costs one
+  request and is ignored. Once every row has its answer, or the run stopped early
+  on a 429, the job cancels any prefetch still running and waits for it to end
+  before it is DONE, so an unused lookup never delays the job; `Handler.Close`
+  cancels the prefetch goroutines with the job. If the live FX request is itself
+  rate limited, the rows fall back to the ECB rate as before. Independent
+  currencies' ECB (Frankfurter) requests also run in parallel: `FXService` locks per
+  currency, not across currencies; the cache rules are unchanged.
   The estimate's `realtime` field (null for past dates) counts searches +
   instruments + currencies of earlier quotes. A regular fetch that reuses a
   real-time quote as fresh converts it at the ECB rate again.

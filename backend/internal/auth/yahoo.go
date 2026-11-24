@@ -235,8 +235,10 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 		job.Items[i] = priceItem{InstrumentID: rows[i].InstrumentID, Status: status, Reason: reason, Quote: q}
 		h.jobs.mu.Unlock()
 	}
-	// One FX load per currency, shared by the goroutines of a historical run.
-	rates := &fxMemo{}
+	// One ECB lookup per currency and date for the whole job, success or failure:
+	// the prefetch and the rows share it, so a lookup that failed before its price
+	// arrived is not started again after it.
+	rates := &fxMemo{keepErr: true}
 	rate := func(ccy string) (*marketdata.FXRate, error) {
 		ccy = fxCurrency(ccy)
 		if ccy == "EUR" {
@@ -404,7 +406,11 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 			finish(w.i, p.Close, series.Currency, p.Day)
 		}, func(k int) { set(work[k].i, "ERROR", "", nil) })
 	}
-	prefetch.Wait() // the job is DONE only when its FX lookups have ended too
+	// Every row has its answer by now, so a prefetch still running belongs to a
+	// currency no row needed, or the run stopped early (a 429): cancel it rather
+	// than let an unused FX request delay the job, then wait so none outlives it.
+	cancel()
+	prefetch.Wait()
 	h.jobs.mu.Lock()
 	job.Status = "DONE"
 	h.jobs.mu.Unlock()
@@ -583,7 +589,11 @@ func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem
 		h.logger.Info("real-time Yahoo quote stored", item(i, attrs...)...)
 		set(i, "OK", q)
 	}, func(i int) { set(i, "ERROR", nil) })
-	prefetch.Wait() // the job is DONE only when its FX lookups have ended too
+	// Every row has its answer by now, so a prefetch still running belongs to a
+	// currency no row needed, or the run stopped early (a 429): cancel it rather
+	// than let an unused FX request delay the job, then wait so none outlives it.
+	cancel()
+	prefetch.Wait()
 	h.jobs.mu.Lock()
 	job.Status = "DONE"
 	h.jobs.mu.Unlock()

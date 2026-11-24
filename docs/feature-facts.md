@@ -304,8 +304,8 @@ and covers only the caller's portfolios; `GET /api/portfolios` is unchanged.
   - First load: after the list and summaries arrive, if `refresh.runningJobId` is set
     the UI only polls that job; else if `refresh.autoFetch` it POSTs
     `/api/price-refresh-jobs` with `{}` exactly once per visit. The job is polled via
-    `GET /api/price-fetch-jobs/{id}` every 2 s (it stops after 5 consecutive poll
-    failures and shows the stored figures). `FRESH`, `THROTTLED` and
+    `GET /api/price-fetch-jobs/{id}` by long polling (see Jobs; it stops after 5
+    consecutive poll failures and shows the stored figures). `FRESH`, `THROTTLED` and
     `NOTHING_TO_PRICE` are silent; `YAHOO_UNAVAILABLE` (or `refresh.yahoo` blocked)
     shows "Yahoo is cooling down until HH:MM. Showing stored prices." and disables
     the button.
@@ -521,8 +521,28 @@ date and fetches a daily close on or before it. Default primary is **YAHOO**;
 - Shared fresh quotes avoid provider calls. Eulerpool stock TTL is 15m; Eulerpool
   ETF/AV quotes use calendar-day freshness; Yahoo also checks trading-date recency.
   Historical closes are cached separately and are not fresh current quotes.
-- Jobs: one running price job/user; poll every 2s; successful quotes saved
-  immediately; in-memory jobs expire after 1h and disappear on restart. UI reports
+- Jobs: one running price job/user; successful quotes saved
+  immediately; in-memory jobs expire after 1h and disappear on restart.
+  **Long polling:** every price job (Yahoo real-time, Yahoo prices, Alpha Vantage,
+  Eulerpool, `USER_REALTIME`) carries an integer `version`, 1 when queued, bumped
+  under the job lock on every change (status change or any item set). `GET
+  /api/price-fetch-jobs/{id}` answers at once. With `?since=N` it answers at once
+  if `version > N` or the job is `DONE`; otherwise it waits until the job changes
+  and answers with the latest state (several changes coalesce into one answer). The
+  wait ends after 10 s (`jobWaitMax`; the server `WriteTimeout` is 15 s), when the
+  client disconnects, or when graceful shutdown begins, and then answers `200` with
+  the current state, same shape. A malformed `since` (not a non-negative integer,
+  including empty and overflow) is `400 VALIDATION_ERROR`; 404 rules are unchanged
+  (unknown job, another user's job, `DONE` job older than 1 h, with or without
+  `since`). Clients poll immediately after each answer with the last `version`
+  (waiting 1 s if the version did not change, 2 s after an error). `nextRequestAt`
+  (Alpha Vantage queue) is read from the budget outside the job lock on each answer
+  and is not part of the version, so clients tick that countdown locally. The
+  budget read is skipped, or cancelled if already running, once the client is gone
+  or shutdown has begun: those answers are the captured snapshot. `Handler.Drain`
+  (registered with `http.Server.RegisterOnShutdown` in `cmd/api`) releases every
+  held request the moment `Shutdown` starts, so shutdown never waits for a hold;
+  `Handler.Close` then cancels the jobs before the store is closed. UI reports
   interruption and reloads saved quotes. Outcomes include fresh/success, backup,
   symbol, quota, FX and upstream failures.
 - FX uses the quote's listing currency, never a guessed search currency. Minor
@@ -559,7 +579,7 @@ duplicate lines or stale preview where applicable.
 | Instruments | `GET /api/instruments/search`; `GET .../search/online` (`provider=av` explicit fallback); `POST /api/instruments` |
 | Transactions | `GET /api/portfolios/{p}/saving-plan`; `GET/POST .../{p}/transactions`; `DELETE .../{p}/transactions/{txId}`; `GET .../{p}/performance` |
 | CSV | `GET/PUT /api/users/me/csv-settings`; `POST /api/portfolios/{p}/imports/parse`, `/imports/validate`, `/imports` |
-| Prices | `GET /api/market-data/budget`; `GET /api/portfolios/{p}/price-fetch/estimate`; `POST .../{p}/price-fetch-jobs`; `GET /api/price-fetch-jobs/{jobId}`; `POST /api/price-refresh-jobs` (user-level Yahoo real-time refresh, see below) |
+| Prices | `GET /api/market-data/budget`; `GET /api/portfolios/{p}/price-fetch/estimate`; `POST .../{p}/price-fetch-jobs`; `GET /api/price-fetch-jobs/{jobId}[?since=<version>]` (long poll, see Jobs); `POST /api/price-refresh-jobs` (user-level Yahoo real-time refresh, see below) |
 | Linking/history | `GET /api/instruments/{i}/av-symbol/search`, `/yahoo-symbol/search`, `/isin/search`; `PUT .../{i}/av-symbol`, `/yahoo-symbol`, `/isin`; `DELETE .../{i}/av-symbol`; `GET .../{i}/price-history` |
 | ETF profiles | `GET /api/instruments/{i}/etf-profile`; `POST .../{i}/etf-profile/refresh` |
 | Dividends | `GET /api/portfolios/{p}/dividends?year=`; `POST .../{p}/dividend-sync`; `GET /api/dividend-sync-jobs/{jobId}` |

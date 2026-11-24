@@ -119,9 +119,15 @@ type YahooGateway struct {
 	// slots limits the requests in flight. It is rebuilt when MaxConcurrency changes.
 	slotMu sync.Mutex
 	slots  chan struct{}
-	// startMu guards nextStart, the earliest start of the next request.
-	startMu   sync.Mutex
-	nextStart time.Time
+	// admitMu serializes admission decisions: the cool-down and budget check, the
+	// start spacing and the count of requests admitted but not yet in the ledger.
+	admitMu     sync.Mutex
+	lastStart   time.Time
+	outstanding int
+	// cdMu guards cooldownUntil, set the moment a 429 arrives so that no request
+	// starts after it, even while the ledger and the persisted state catch up.
+	cdMu          sync.Mutex
+	cooldownUntil time.Time
 	// sessMu guards the cookie + crumb session. Building a session holds it, so
 	// concurrent requests share one rebuild; gen identifies the current session.
 	sessMu sync.Mutex
@@ -156,21 +162,66 @@ func (g *YahooGateway) acquire(ctx context.Context) (func(), error) {
 	}
 }
 
-// reserveStart books the next request start at least MinInterval after the
-// previous booking and returns how long the caller must wait for it.
-func (g *YahooGateway) reserveStart() time.Duration {
-	if g.MinInterval <= 0 {
-		return 0
+func (g *YahooGateway) cooldown() time.Time {
+	g.cdMu.Lock()
+	defer g.cdMu.Unlock()
+	return g.cooldownUntil
+}
+
+func (g *YahooGateway) startCooldown(until time.Time) {
+	g.cdMu.Lock()
+	defer g.cdMu.Unlock()
+	if until.After(g.cooldownUntil) {
+		g.cooldownUntil = until
 	}
-	g.startMu.Lock()
-	defer g.startMu.Unlock()
-	now := g.Now()
-	start := g.nextStart
-	if start.Before(now) {
-		start = now
+}
+
+// admit decides whether a request may start now and returns a func that ends its
+// admission once the request is in the ledger. A request is refused while a 429
+// cool-down runs (the in-memory one is set at once, the persisted one follows) or
+// when the daily budget, less the requests admitted but not yet recorded, is spent.
+// Starts are at least MinInterval apart: the gap is checked again after every wait,
+// at the moment of admission, so late sleepers cannot bunch up.
+func (g *YahooGateway) admit(ctx context.Context, function string) (func(), error) {
+	for {
+		g.admitMu.Lock()
+		now := g.Now()
+		if g.cooldown().After(now) {
+			g.admitMu.Unlock()
+			logUpstream(g.Log, slog.LevelWarn, ProviderYahoo, "request refused locally: cooling down", "function", function)
+			return nil, ErrYahooLimit
+		}
+		b, err := g.Budget(ctx)
+		if err != nil {
+			g.admitMu.Unlock()
+			return nil, err
+		}
+		if b.Remaining-g.outstanding <= 0 {
+			g.admitMu.Unlock()
+			logUpstream(g.Log, slog.LevelWarn, ProviderYahoo, "request refused locally: budget exhausted or cooling down", "function", function, "blockedUntil", b.BlockedUntil)
+			return nil, ErrYahooLimit
+		}
+		if g.MinInterval > 0 && !g.lastStart.IsZero() {
+			if wait := g.lastStart.Add(g.MinInterval).Sub(now); wait > 0 {
+				g.admitMu.Unlock()
+				if err = g.Sleep(ctx, wait); err != nil {
+					return nil, err
+				}
+				continue
+			}
+		}
+		g.lastStart = now
+		g.outstanding++
+		g.admitMu.Unlock()
+		var once sync.Once
+		return func() {
+			once.Do(func() {
+				g.admitMu.Lock()
+				g.outstanding--
+				g.admitMu.Unlock()
+			})
+		}, nil
 	}
-	g.nextStart = start.Add(g.MinInterval)
-	return start.Sub(now)
 }
 
 func NewYahooGateway(store EPStore, t YahooTransport, softDaily int, minInterval, cooldown time.Duration) *YahooGateway {
@@ -199,6 +250,10 @@ func (g *YahooGateway) Budget(ctx context.Context) (YahooBudget, error) {
 		b.BlockedUntil = &t
 		b.Remaining = 0
 	}
+	if t := g.cooldown(); t.After(g.Now()) && (b.BlockedUntil == nil || t.After(*b.BlockedUntil)) {
+		b.BlockedUntil = &t
+		b.Remaining = 0
+	}
 	return b, nil
 }
 
@@ -206,39 +261,37 @@ func (g *YahooGateway) Budget(ctx context.Context) (YahooBudget, error) {
 // rejects error pages and "Too Many Requests" text, which contain spaces or markup.
 var crumbPattern = regexp.MustCompile(`^[A-Za-z0-9._/\-]{4,64}$`)
 
-// get performs one counted, paced exchange. It holds an in-flight slot while
-// it waits for its start slot and while the request runs. The budget and the
-// cool-down are checked after the wait, so once a 429 has landed every request
-// that has not started yet is refused locally while those in flight finish.
+// get performs one counted, paced exchange. It holds an in-flight slot from
+// admission until the response is read, so at most MaxConcurrency requests run at
+// once.
 func (g *YahooGateway) get(ctx context.Context, user, function, rawURL string) (int, []byte, error) {
 	release, err := g.acquire(ctx)
 	if err != nil {
 		return 0, nil, err
 	}
 	defer release()
-	if wait := g.reserveStart(); wait > 0 {
-		if err = g.Sleep(ctx, wait); err != nil {
-			return 0, nil, err
-		}
-	}
-	b, err := g.Budget(ctx)
+	done, err := g.admit(ctx, function)
 	if err != nil {
 		return 0, nil, err
 	}
-	if b.Remaining <= 0 {
-		logUpstream(g.Log, slog.LevelWarn, ProviderYahoo, "request refused locally: budget exhausted or cooling down", "function", function, "blockedUntil", b.BlockedUntil)
-		return 0, nil, ErrYahooLimit
-	}
+	defer done()
 	status, _, body, err := g.Transport.Get(ctx, rawURL)
 	if err != nil {
 		logUpstream(g.Log, slog.LevelError, ProviderYahoo, "transport error", "function", function, "error", cleanErr(err))
 		return 0, nil, ErrUpstream
 	}
-	if e := g.Store.RecordProviderRequest(ctx, ProviderYahoo, user, function, g.Now(), true); e != nil {
-		return 0, nil, e
+	var until time.Time
+	if status == http.StatusTooManyRequests {
+		// Stop new starts first; the ledger and the persisted state follow.
+		until = g.Now().Add(g.Cooldown)
+		g.startCooldown(until)
+	}
+	err = g.Store.RecordProviderRequest(ctx, ProviderYahoo, user, function, g.Now(), true)
+	done()
+	if err != nil {
+		return 0, nil, err
 	}
 	if status == http.StatusTooManyRequests {
-		until := g.Now().Add(g.Cooldown)
 		logUpstream(g.Log, slog.LevelWarn, ProviderYahoo, "rate limited (429); cooling down", "function", function, "until", until.Format(time.RFC3339), "body", snippet(body))
 		if e := g.Store.SetProviderState(ctx, ProviderYahoo, "blocked_until", until.UTC().Format(time.RFC3339Nano)); e != nil {
 			return 0, nil, e

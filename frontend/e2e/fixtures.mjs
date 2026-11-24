@@ -2,6 +2,7 @@
 // positive and negative performance, foreign currency dividends, CSV edits.
 // Unhandled API/auth requests fail the test instead of reaching a real backend.
 import { portfolioSummary, summaryPortfolios } from '../tests/fixtures/portfolio-summary.mjs';
+import { priceJob } from '../tests/fixtures/price-job.mjs';
 
 export const themes = ['light', 'dark', 'tech-green', 'tech-cappuccino', 'tech-red'];
 export const portfolio = summaryPortfolios[0];
@@ -97,7 +98,7 @@ function dividends(year) {
   };
 }
 
-export async function mockAPI(page, { loggedIn = true, routingContext = page } = {}) {
+export async function mockAPI(page, { loggedIn = true, routingContext = page, priceJobs = new Map() } = {}) {
   const unexpected = [];
   // PWA tests use context routing so pass-through requests remain mocked while
   // a real service worker controls the page. Existing tests keep page routing.
@@ -113,6 +114,11 @@ export async function mockAPI(page, { loggedIn = true, routingContext = page } =
     if (path === '/auth/refresh') return json({ error: { code: 'UNAUTHORIZED', message: 'Please sign in.' } }, 401);
     if (path === '/auth/logout') return json({ ok: true });
     if (method === 'GET') {
+      if (path.startsWith('/api/price-fetch-jobs/')) {
+        const job = priceJobs.get(path.slice('/api/price-fetch-jobs/'.length));
+        if (job) return json(await job.read(url.searchParams.get('since')));
+        return json({ error: { code: 'NOT_FOUND', message: 'Missing job' } }, 404);
+      }
       if (path === '/api/portfolios') return json({ portfolios: summaryPortfolios, limit: 10 });
       if (path === '/api/portfolios/summaries') return json(portfolioSummary());
       if (path === '/api/portfolios/1') return json(portfolio);
@@ -128,6 +134,12 @@ export async function mockAPI(page, { loggedIn = true, routingContext = page } =
       if (path === '/api/instruments/search') return json([{ id: 3, ticker: 'SAP.DE', name: 'SAP SE', type: 'STOCK', isin: 'DE0007164600', wkn: '716460', inPortfolio: false }]);
     }
     if (method === 'POST' && path === '/api/price-refresh-jobs') return json({ started: false, reason: 'FRESH' });
+    if (method === 'POST' && path === '/api/portfolios/1/price-fetch-jobs') {
+      const { instrumentIds } = request.postDataJSON();
+      const jobId = `fixture-job-${priceJobs.size + 1}`;
+      priceJobs.set(jobId, priceJob({ status: 'DONE', nextRequestAt: '', items: instrumentIds.map(instrumentId => ({ instrumentId, status: 'OK' })) }));
+      return json({ jobId }, 202);
+    }
     if (method === 'POST' && path === '/api/portfolios/1/imports/parse') return json(preview());
     if (method === 'POST' && path === '/api/portfolios/1/imports/validate') return json(preview(request.postDataJSON().rows.map(row => ({ ...importRow, ...row }))));
     unexpected.push(`${method} ${path}${url.search}`);

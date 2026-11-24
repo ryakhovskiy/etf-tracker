@@ -49,7 +49,8 @@ for (const theme of themes) {
           await expect(strip.getByRole('status')).toContainText('Updating prices');
           await expect(strip.getByRole('button', { name: 'Updating…' })).toBeDisabled();
           expect(fixture.calls.posts).toEqual(state === 'auto' ? [{}] : []);
-          await expect.poll(() => fixture.calls.polls).toBe(1);
+          await expect.poll(() => fixture.calls.polls).toBe(2);
+          expect(fixture.calls.since).toEqual([null, '1']);
         }
         if (state === 'fresh') {
           await expect(cards.nth(1)).toContainText('▼ -50,00');

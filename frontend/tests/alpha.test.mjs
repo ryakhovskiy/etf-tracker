@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { test, afterEach } from 'node:test';
 import { JSDOM } from 'jsdom';
 import React from 'react';
+import { priceJob } from './fixtures/price-job.mjs';
 const dom=new JSDOM('<!doctype html><html><body></body></html>',{url:'http://localhost/'});
 for(const key of ['window','document','HTMLElement','Node','MutationObserver','HTMLDialogElement','sessionStorage'])globalThis[key]=dom.window[key];
 globalThis.self=dom.window;Object.defineProperty(globalThis,'navigator',{configurable:true,value:dom.window.navigator});
 HTMLDialogElement.prototype.showModal=function(){this.open=true;};HTMLDialogElement.prototype.close=function(){this.open=false;};
-const {render,screen,fireEvent,waitFor,cleanup}=await import('@testing-library/react');
+const {render,screen,fireEvent,waitFor,cleanup,act}=await import('@testing-library/react');
 const {Transactions}=await import('../components/transactions.tsx');
 const {TransactionDraftProvider}=await import('../components/transaction-draft.tsx');
 const {InstrumentPicker}=await import('../components/instrument-picker.tsx');
@@ -31,14 +32,18 @@ test('estimate controls request cost, selection and quota availability',async t=
  fireEvent.click(screen.getByLabelText('Fetch MSFT'));await screen.findByRole('button',{name:'Fetch prices (uses 1 requests)'});await waitFor(()=>assert.equal(button.disabled,false));
 });
 test('job progress, applied price coupling, quote commit and budget refresh',async t=>{
- let polls=0,finished=false,committed;
+ let finished=false,committed;
+ const progress=priceJob({status:'RUNNING',nextRequestAt:new Date(Date.now()+9000).toISOString(),items:[{instrumentId:1,status:'PENDING'}]});
+ t.after(()=>progress.dispose());
  t.mock.method(globalThis,'fetch',responder((url,init)=>{
   if(url.endsWith('/price-fetch-jobs'))return json({jobId:'job'},202);
-  if(url.includes('/price-fetch-jobs/job')){polls++;if(polls===1)return json({status:'RUNNING',nextRequestAt:new Date(Date.now()+9000).toISOString(),items:[{instrumentId:1,status:'PENDING'}]});finished=true;return json({status:'DONE',nextRequestAt:new Date().toISOString(),items:[{instrumentId:1,status:'OK',priceEur:'25.0000',currency:'USD',fxRate:'0.92310000',fxRateDate:'2026-10-30',quoteDate:'2026-11-04',quoteId:7}]});}
+  if(url.includes('/price-fetch-jobs/job'))return progress.read(new URL(url,'http://localhost').searchParams.get('since'),{signal:init.signal}).then(json);
   if(url.includes('/market-data/budget'))return json(budget(finished?9:10));
+  if(url.includes('/price-fetch/estimate'))return json({requestsNeeded:finished?0:1,fresh:finished?[1]:[],noSymbol:[],budget:budget(finished?9:10)});
   if(init.method==='POST'&&url.endsWith('/transactions')){committed=JSON.parse(init.body);return json({id:1},201);}
  }));
  mount();fireEvent.click(await screen.findByRole('button',{name:'Fetch prices (uses 1 requests)'}));await screen.findByText(/0\/1 · next request in/);assert.equal(screen.getByRole('button',{name:'Commit transaction'}).disabled,true);
+ await act(async()=>{finished=true;progress.finish([{instrumentId:1,status:'OK',priceEur:'25.0000',currency:'USD',fxRate:'0.92310000',fxRateDate:'2026-10-30',quoteDate:'2026-11-04',quoteId:7}]);});
  await screen.findByText('1/1 · Done',{}, {timeout:4000});assert.equal(screen.getByLabelText('SAP price').value,'25,0000');assert.equal(screen.getByLabelText('SAP amount').value,'20,00');assert.equal(screen.getByLabelText('SAP quantity').value,'0,800000');assert.ok(screen.getByText('AV: 9 of 10 left today'));assert.ok(screen.getByText(/ECB 30.10.2026/));
  await waitFor(()=>assert.equal(screen.getByRole('button',{name:'Commit transaction'}).disabled,false));fireEvent.click(screen.getByRole('button',{name:'Commit transaction'}));await waitFor(()=>assert.equal(committed.lines[0].quoteId,7));assert.equal(committed.lines[0].amount,'20.00');
 });

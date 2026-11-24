@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test, afterEach } from 'node:test';
 import { JSDOM } from 'jsdom';
 import React from 'react';
+import { priceJob } from './fixtures/price-job.mjs';
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
 for (const key of ['window','document','HTMLElement','SVGElement','Node','MutationObserver','HTMLDialogElement','sessionStorage']) globalThis[key] = dom.window[key];
 globalThis.self = dom.window;
@@ -192,20 +193,23 @@ test('estimate, partial-budget, exhausted-budget and fresh button states', async
 });
 
 test('job submits Berlin today and holdings priority, shows progress, then reloads persistent figures', async t => {
- let polls = 0, submitted, loads = 0, finished = false;
+ let submitted, loads = 0, finished = false;
+ const progress=priceJob({status:'RUNNING',nextRequestAt:new Date(Date.now()+9000).toISOString(),items:[{instrumentId:1,status:'PENDING'},{instrumentId:2,status:'NO_SYMBOL'}]});
+ t.after(()=>progress.dispose());
  t.mock.method(globalThis,'fetch',async (url,init) => {
   if(url.endsWith('/performance')) {loads++;return json({...p,current:finished?current:null});}
   if(url.includes('/transactions?')) return json({lines:[],total:0,page:1});
   if(url.endsWith('/portfolios/1')) return json({itemCount:2});
   if(url.includes('/estimate')) return json(estimate(finished?0:1,10,{noSymbol:[2]}));
   if(url.endsWith('/price-fetch-jobs')) {submitted=JSON.parse(init.body);return json({jobId:'job'},202);}
-  if(url.endsWith('/price-fetch-jobs/job')) {polls++;finished=polls>1;return json({status:finished?'DONE':'RUNNING',nextRequestAt:new Date(Date.now()+9000).toISOString(),items:[{instrumentId:1,status:finished?'OK':'PENDING'},{instrumentId:2,status:'NO_SYMBOL'}]});}
+  if(new URL(url,'http://localhost').pathname.endsWith('/price-fetch-jobs/job')) return json(await progress.read(new URL(url,'http://localhost').searchParams.get('since'),{signal:init.signal}));
   throw Error(`Unexpected call ${url}`);
  });
  const view = render(React.createElement(Dashboard,{id:'1'}));
  fireEvent.click(await screen.findByRole('button',{name:'Fetch current value (uses 1 requests)'}));
  await waitFor(()=>assert.deepEqual(submitted,{date:today(),instrumentIds:[1,2],priority:'HOLDINGS_VALUE'}));
  await screen.findByText(/1\/2 · next request in/);
+ await act(async()=>{finished=true;progress.finish([{instrumentId:1,status:'OK'},{instrumentId:2,status:'NO_SYMBOL'}]);});
  await screen.findByText('1 of 2 holdings updated',{}, {timeout:4000});
  await screen.findByText('Current performance',{exact:true});
  assert.ok(loads>=2);assert.equal(sessionStorage.getItem('current-value-fetch:1'),null);
@@ -294,12 +298,14 @@ test('fresh linked holdings with missing symbols offer a free refresh without cl
 });
 
 test('real-time value button submits a real-time holdings job and reports it', async t => {
- let submitted, reloads = 0, polls = 0;
- const rt = estimate(1, 10, { realtime: { requests: 3, remaining: 900, noSymbol: [] } });
+ let submitted, reloads = 0;
+ const progress=priceJob({status:'RUNNING',nextRequestAt:new Date(Date.now()+9000).toISOString(),items:[{instrumentId:1,status:'PENDING'},{instrumentId:2,status:'NO_SYMBOL'}]});
+ t.after(()=>progress.dispose());
+ const rt = estimate(1, 10, { realtime: { requests: 3, remaining: 900, noSymbol: [] }, alphavantage: { requests: 0, remaining: 10 } });
  t.mock.method(globalThis,'fetch',async (url,init) => {
   if (url.includes('/estimate')) return json(rt);
   if (url.endsWith('/price-fetch-jobs')) { submitted = JSON.parse(init.body); return json({ jobId: 'rt' }, 202); }
-  if (url.endsWith('/price-fetch-jobs/rt')) { polls++; return json({ status: polls > 1 ? 'DONE' : 'RUNNING', nextRequestAt: new Date(Date.now()+9000).toISOString(), items: [{ instrumentId: 1, status: polls > 1 ? 'OK' : 'PENDING' }, { instrumentId: 2, status: 'NO_SYMBOL' }] }); }
+  if (new URL(url,'http://localhost').pathname.endsWith('/price-fetch-jobs/rt')) return json(await progress.read(new URL(url,'http://localhost').searchParams.get('since'),{signal:init.signal}));
   throw Error(`Unexpected call ${url}`);
  });
  mountFetch(p, async () => { reloads++; });
@@ -311,6 +317,7 @@ test('real-time value button submits a real-time holdings job and reports it', a
  await screen.findByText('1/2 · fetching real-time prices…');
  assert.equal(screen.getByRole('button', { name: 'Fetching real-time prices…' }).disabled, true);
  assert.equal(screen.getByRole('button', { name: 'Fetch current value (uses 1 requests)' }).disabled, true, 'one job at a time');
+ await act(async()=>progress.finish([{instrumentId:1,status:'OK'},{instrumentId:2,status:'NO_SYMBOL'}]));
  await screen.findByText('1 of 2 holdings updated with real-time prices', {}, { timeout: 4000 });
  assert.equal(reloads, 1);
  assert.equal(sessionStorage.getItem('current-value-fetch:1:kind'), null);

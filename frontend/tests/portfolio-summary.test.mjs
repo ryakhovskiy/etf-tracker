@@ -3,6 +3,7 @@ import { afterEach, test } from 'node:test';
 import { JSDOM } from 'jsdom';
 import React from 'react';
 import { portfolioSummary, summaryPortfolios } from './fixtures/portfolio-summary.mjs';
+import { priceJob } from './fixtures/price-job.mjs';
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
 for (const key of ['window', 'document', 'HTMLElement', 'Node', 'MutationObserver', 'HTMLDialogElement']) globalThis[key] = dom.window[key];
@@ -23,15 +24,21 @@ const text = node => node.textContent.replaceAll('\u00a0', ' ');
 const doneJob = { status: 'DONE', kind: 'USER_REALTIME', items: [{ instrumentId: 1, status: 'OK' }, { instrumentId: 2, status: 'OK' }] };
 function apiFixture(t, { summary = portfolioSummary(), refresh = { started: false, reason: 'FRESH' }, job = doneJob } = {}) {
   const calls = [];
+  const progress = priceJob(typeof job === 'function'
+    ? { ...doneJob, status: 'RUNNING', items: doneJob.items.map(item => ({ ...item, status: 'PENDING' })) }
+    : job);
+  if (typeof job === 'function') void Promise.resolve().then(job).then(value => progress.publish(value));
+  t.after(() => progress.dispose());
   t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
-    const path = new URL(url, 'http://localhost').pathname;
+    const parsed = new URL(url, 'http://localhost');
+    const path = parsed.pathname;
     const method = init.method ?? 'GET';
     calls.push({ path, method, body: init.body ? JSON.parse(init.body) : null });
     let value;
     if (path === '/api/portfolios' && method === 'GET') value = { portfolios: summaryPortfolios, limit: 10 };
     else if (path === '/api/portfolios/summaries') value = typeof summary === 'function' ? await summary() : summary;
     else if (path === '/api/price-refresh-jobs') value = typeof refresh === 'function' ? await refresh() : refresh;
-    else if (path.startsWith('/api/price-fetch-jobs/')) value = typeof job === 'function' ? await job() : job;
+    else if (path.startsWith('/api/price-fetch-jobs/')) value = await progress.read(parsed.searchParams.get('since'), { signal: init.signal });
     else throw new Error(`Unexpected request ${method} ${path}`);
     return value instanceof Response ? value : json(value);
   });
@@ -39,9 +46,8 @@ function apiFixture(t, { summary = portfolioSummary(), refresh = { started: fals
 }
 const mount = () => render(React.createElement(AppRouterContext.Provider, { value: { push() {} } }, React.createElement(Portfolios)));
 const posts = calls => calls.filter(call => call.method === 'POST');
-// Rendering "Updating prices" precedes the effect that issues the first poll.
-// Keep the response gated until that request has actually started.
-const waitForSummaryPoll = calls => waitFor(() => assert.equal(calls.filter(call => call.path === '/api/price-fetch-jobs/summary-job').length, 1));
+// The first response is immediate; the follow-up remains pending at its version.
+const waitForSummaryPoll = calls => waitFor(() => assert.equal(calls.filter(call => call.path === '/api/price-fetch-jobs/summary-job').length, 2));
 const strip = () => screen.getByRole('region', { name: 'All portfolios total' });
 const card = name => screen.getAllByTestId('portfolio-card').find(node => within(node).queryByRole('link', { name: new RegExp(name) }));
 async function valueLoaded(value = '1.750,00 €') { await waitFor(() => assert.match(text(strip()), new RegExp(value.replace('.', '\\.')))); }

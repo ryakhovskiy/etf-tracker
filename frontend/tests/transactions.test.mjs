@@ -271,7 +271,7 @@ for(const editedPrice of [false,true])test(`dashboard fetch updates transaction 
   if(url.includes('/market-data/budget'))return json(budget);
   if(url.includes('/estimate'))return json({requestsNeeded:fetched?0:1,fresh:fetched?[1]:[],noSymbol:[],budget});
   if(url.endsWith('/price-fetch-jobs'))return json({jobId:'dashboard-job'},202);
-  if(url.includes('/price-fetch-jobs/dashboard-job')){fetched=true;return json({status:'DONE',nextRequestAt:new Date().toISOString(),items:[{instrumentId:1,status:'OK',priceEur:'25.0000',quoteId:7}]});}
+  if(url.includes('/price-fetch-jobs/dashboard-job')){fetched=true;return json({version:1,status:'DONE',nextRequestAt:new Date().toISOString(),items:[{instrumentId:1,status:'OK',priceEur:'25.0000',quoteId:7}]});}
   return workspaceFetch(url);
  });
  const view=render(panelView('dashboard'));
@@ -298,7 +298,7 @@ test('fetching quotes in Transactions refreshes current value in the mounted das
   if(url.includes('/market-data/budget'))return json(budget);
   if(url.includes('/estimate'))return json({requestsNeeded:fetched?0:1,fresh:fetched?[1]:[],noSymbol:[],budget});
   if(url.endsWith('/price-fetch-jobs'))return json({jobId:'transaction-job'},202);
-  if(url.includes('/price-fetch-jobs/transaction-job')){fetched=true;return json({status:'DONE',nextRequestAt:new Date().toISOString(),items:[{instrumentId:1,status:'OK',priceEur:'25.0000',quoteId:7}]});}
+  if(url.includes('/price-fetch-jobs/transaction-job')){fetched=true;return json({version:1,status:'DONE',nextRequestAt:new Date().toISOString(),items:[{instrumentId:1,status:'OK',priceEur:'25.0000',quoteId:7}]});}
   return workspaceFetch(url);
  });
  const view=render(panelView('transactions'));

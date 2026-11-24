@@ -258,7 +258,7 @@ const budget = () => ({ globalRemaining: 25, userRemaining: 10, userLimit: 10, n
 const mountTx = () => render(React.createElement(AppRouterContext.Provider, { value: { push() {} } }, React.createElement(TransactionDraftProvider, null, React.createElement(Transactions, { id: '1' }))));
 
 const estimateOf = (provider, extra = {}) => ({ requestsNeeded: 0, fresh: [], noSymbol: [], budget: budget(), provider, ...extra });
-const jobDone = items => ({ status: 'DONE', nextRequestAt: new Date().toISOString(), items });
+const jobDone = items => ({ version: 1, status: 'DONE', nextRequestAt: new Date().toISOString(), items });
 
 test('prices (Eulerpool primary): Eulerpool cost on the main button, and the Alpha Vantage backup only for NEEDS_BACKUP items, only on click', async t => {
   let backupJob = false;

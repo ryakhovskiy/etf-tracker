@@ -146,7 +146,10 @@ func TestRealtimeRulesRateLimitAndFXFallback(t *testing.T) {
 	}
 
 	// A 429 stops the run: the rest is RATE_LIMITED and nothing more is sent.
+	// One request at a time (MaxConcurrency=1) reproduces the sequential behaviour
+	// exactly; TestRealtimeParallel429 covers the parallel case.
 	h.yahoo.Transport = y
+	h.yahoo.MaxConcurrency = 1
 	y.fail = 429
 	resetJobs(h)
 	job = waitPriceJob(t, handler, startPriceJob(t, handler, path, fmt.Sprintf(`{"date":%q,"instrumentIds":[7,18],"realtime":true}`, date), cookies), cookies)

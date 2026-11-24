@@ -200,7 +200,7 @@ func (h *Handler) registerSummaryRoutes(mux *http.ServeMux) {
 		h.jobs.lastRefresh[user] = now
 		h.jobs.mu.Unlock()
 		time.AfterFunc(time.Hour, func() { h.jobs.mu.Lock(); delete(h.jobs.entries, key); h.jobs.mu.Unlock() })
-		go h.runYahooRealtime(job, rows, marketdata.BerlinDay(now))
+		h.startYahooJob(job, func() { h.runYahooRealtime(job, rows, marketdata.BerlinDay(now)) })
 		requests := 0
 		if info.Estimate != nil {
 			requests = info.Estimate.Requests

@@ -273,11 +273,11 @@ func (h *Handler) registerAlphaRoutes(mux *http.ServeMux) {
 		time.AfterFunc(time.Hour, func() { h.jobs.mu.Lock(); delete(h.jobs.entries, key); h.jobs.mu.Unlock() })
 		switch provider := h.jobProvider(in); {
 		case in.Realtime:
-			go h.runYahooRealtime(job, rows, in.Date)
+			h.startYahooJob(job, func() { h.runYahooRealtime(job, rows, in.Date) })
 		case provider == marketdata.ProviderEulerpool:
 			go h.runEulerpoolPrices(job, rows, in.Date)
 		case provider == marketdata.ProviderYahoo:
-			go h.runYahooPrices(job, rows, in.Date)
+			h.startYahooJob(job, func() { h.runYahooPrices(job, rows, in.Date) })
 		default:
 			go h.runPrices(job, rows, in.Date)
 		}

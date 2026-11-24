@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
@@ -17,12 +18,18 @@ import (
 )
 
 type Handler struct {
-	av          *marketdata.AVGateway
-	ep          *marketdata.EPGateway
-	yahoo       *marketdata.YahooGateway
-	primary     string
-	profileTTL  time.Duration
-	bg          sync.WaitGroup
+	av         *marketdata.AVGateway
+	ep         *marketdata.EPGateway
+	yahoo      *marketdata.YahooGateway
+	primary    string
+	profileTTL time.Duration
+	bg         sync.WaitGroup
+	// ctx is cancelled by Close; the Yahoo price runners derive their context from it.
+	ctx    context.Context
+	cancel context.CancelFunc
+	// closeMu orders bg.Add against Close, so no job starts once Close has begun.
+	closeMu     sync.Mutex
+	closed      bool
 	fx          *marketdata.FXService
 	jobs        *priceJobs
 	dividends   *dividendSync
@@ -86,12 +93,14 @@ func NewHandler(cfg config.Config, store *database.Store, logger *slog.Logger) *
 	if cfg.YahooQueryURL != "" {
 		yahoo.CookieURL, yahoo.QueryURL, yahoo.FallbackURL = cfg.YahooCookieURL, cfg.YahooQueryURL, cfg.YahooFallbackURL
 	}
+	yahoo.MaxConcurrency = cfg.YahooMaxConcurrency
 	yahoo.Log = logger
 	ep := marketdata.NewEPGateway(store, epTransport, cfg.EulerpoolSoftLimit)
 	ep.Log = logger
 	avGateway := marketdata.NewAVGateway(store, avTransport, marketdata.NewCache(size, ttl), cfg.AVLimits)
 	avGateway.Log = logger
-	h := &Handler{ep: ep, yahoo: yahoo, primary: primary, profileTTL: profileTTL, av: avGateway, fx: &marketdata.FXService{Store: store, Provider: fxProvider, ProviderKey: fxKey, Now: time.Now}, jobs: &priceJobs{entries: map[string]*priceJob{}}, figi: marketdata.Service{Provider: provider, Codes: codes}, frontendURL: cfg.FrontendURL, google: newGoogleClient(cfg, logger), store: store, tokens: newTokenManager(cfg, store), logger: logger}
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	h := &Handler{ctx: bgCtx, cancel: bgCancel, ep: ep, yahoo: yahoo, primary: primary, profileTTL: profileTTL, av: avGateway, fx: &marketdata.FXService{Store: store, Provider: fxProvider, ProviderKey: fxKey, Now: time.Now}, jobs: &priceJobs{entries: map[string]*priceJob{}}, figi: marketdata.Service{Provider: provider, Codes: codes}, frontendURL: cfg.FrontendURL, google: newGoogleClient(cfg, logger), store: store, tokens: newTokenManager(cfg, store), logger: logger}
 	h.dividends = newDividendSync(h)
 	return h
 }
@@ -112,7 +121,34 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /auth/refresh", h.refresh)
 	mux.HandleFunc("POST /auth/logout", h.logout)
 }
-func (h *Handler) Close() { h.dividends.stop(); h.bg.Wait(); h.av.Close() }
+
+// Close cancels the running background work, waits for it, and only then
+// releases the gateways. The caller closes the store after Close returns.
+func (h *Handler) Close() {
+	h.closeMu.Lock()
+	h.closed = true
+	h.closeMu.Unlock()
+	h.cancel()
+	h.dividends.stop()
+	h.bg.Wait()
+	h.av.Close()
+}
+
+// goBackground runs fn tracked by h.bg and reports false, without running it,
+// when Close has begun.
+func (h *Handler) goBackground(fn func()) bool {
+	h.closeMu.Lock()
+	defer h.closeMu.Unlock()
+	if h.closed {
+		return false
+	}
+	h.bg.Add(1)
+	go func() {
+		defer h.bg.Done()
+		fn()
+	}()
+	return true
+}
 
 func (h *Handler) googleLogin(w http.ResponseWriter, r *http.Request) {
 	if h.google.clientID == "" || h.google.clientSecret == "" {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -96,11 +98,100 @@ func (h *Handler) yahooEstimate(ctx context.Context, rows []database.SavingPlanI
 	return out, err
 }
 
+// startYahooJob runs a Yahoo price runner as tracked background work. When the
+// handler is closing the job is not started and ends as DONE with ERROR items.
+func (h *Handler) startYahooJob(job *priceJob, run func()) {
+	if h.goBackground(run) {
+		return
+	}
+	h.jobs.mu.Lock()
+	for i := range job.Items {
+		job.Items[i].Status = "ERROR"
+	}
+	job.Status = "DONE"
+	h.jobs.mu.Unlock()
+}
+
+// forEachParallel calls fn(i) for i in [0, n) on at most limit goroutines and
+// returns when every started call has returned. Once ctx is done the indices not
+// started yet go to skip (when set) instead of fn.
+func forEachParallel(ctx context.Context, n, limit int, fn, skip func(i int)) {
+	if limit < 1 {
+		limit = 1
+	}
+	slots := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			if skip != nil {
+				skip(i)
+			}
+			continue
+		}
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			defer func() { <-slots }()
+			fn(i)
+		}(i)
+	}
+	wg.Wait()
+}
+
+// fxMemo loads one FX rate per currency, even when many goroutines ask at once:
+// the first caller loads, the others wait for its result. Failures are kept when
+// keepErr is set, otherwise the next caller retries.
+type fxMemo struct {
+	mu      sync.Mutex
+	calls   map[string]*fxCall
+	keepErr bool
+}
+
+type fxCall struct {
+	done chan struct{}
+	rate *marketdata.FXRate
+	err  error
+}
+
+func (m *fxMemo) get(ctx context.Context, ccy string, load func() (*marketdata.FXRate, error)) (*marketdata.FXRate, error) {
+	m.mu.Lock()
+	if m.calls == nil {
+		m.calls = map[string]*fxCall{}
+	}
+	c, ok := m.calls[ccy]
+	if !ok {
+		c = &fxCall{done: make(chan struct{})}
+		m.calls[ccy] = c
+	}
+	m.mu.Unlock()
+	if ok {
+		select {
+		case <-c.done:
+			return c.rate, c.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	defer func() {
+		if c.err != nil && !m.keepErr {
+			m.mu.Lock()
+			delete(m.calls, ccy)
+			m.mu.Unlock()
+		}
+		close(c.done)
+	}()
+	c.err = errors.New("FX load did not finish")
+	c.rate, c.err = load()
+	return c.rate, c.err
+}
+
 // runYahooPrices prices a job from Yahoo Finance. Today's date uses the batched
 // latest-quote endpoint; any earlier date uses the daily history and takes the
 // last close on or before that date. It only runs when the user asked for it.
 func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, date string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(h.ctx, 10*time.Minute)
 	defer cancel()
 	h.jobs.mu.Lock()
 	job.Status = "RUNNING"
@@ -110,20 +201,14 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 		job.Items[i] = priceItem{InstrumentID: rows[i].InstrumentID, Status: status, Reason: reason, Quote: q}
 		h.jobs.mu.Unlock()
 	}
-	rates := map[string]*marketdata.FXRate{}
+	// One FX load per currency, shared by the goroutines of a historical run.
+	rates := &fxMemo{}
 	rate := func(ccy string) (*marketdata.FXRate, error) {
 		ccy = fxCurrency(ccy)
 		if ccy == "EUR" {
 			return nil, nil
 		}
-		if r, ok := rates[ccy]; ok {
-			return r, nil
-		}
-		r, err := h.fx.Rate(ctx, ccy, date)
-		if err == nil {
-			rates[ccy] = r
-		}
-		return r, err
+		return rates.get(ctx, ccy, func() (*marketdata.FXRate, error) { return h.fx.Rate(ctx, ccy, date) })
 	}
 	item := func(i int, attrs ...any) []any {
 		return append([]any{"user", job.user, "instrument", rows[i].InstrumentID, "isin", rows[i].ISIN, "date", date}, attrs...)
@@ -155,12 +240,12 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 	}
 	today := marketdata.BerlinDay(time.Now())
 	historical := date != today
-	limited := false
+	var limited atomic.Bool
 	fail := func(i int, err error) {
 		h.logger.Warn("Yahoo could not price item", item(i, "error", err.Error())...)
 		switch {
 		case errors.Is(err, marketdata.ErrYahooLimit):
-			limited = true
+			limited.Store(true)
 			set(i, "RATE_LIMITED", "", nil)
 		case errors.Is(err, marketdata.ErrYahooNotFound):
 			set(i, "NOT_FOUND", "", nil)
@@ -203,7 +288,7 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 				continue
 			}
 		}
-		if limited {
+		if limited.Load() {
 			set(i, "RATE_LIMITED", "", nil)
 			continue
 		}
@@ -227,7 +312,7 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 			}
 			var quotes map[string]marketdata.YahooQuote
 			var err error
-			if limited {
+			if limited.Load() {
 				err = marketdata.ErrYahooLimit
 			} else {
 				quotes, err = h.yahoo.Quotes(ctx, job.user, symbols)
@@ -247,19 +332,22 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 		}
 	} else {
 		day, _ := time.Parse("2006-01-02", date)
-		for _, w := range work {
+		// The instruments are independent: one History request each, in parallel
+		// (the gateway caps the requests in flight).
+		forEachParallel(ctx, len(work), h.yahoo.Concurrency(), func(k int) {
+			w := work[k]
 			if cached, err := h.store.HistoryDay(ctx, w.ref.ID, marketdata.ProviderYahoo, date); err == nil && cached != nil {
 				finish(w.i, cached.Close, cached.Currency, cached.Day)
-				continue
+				return
 			}
-			if limited {
+			if limited.Load() {
 				set(w.i, "RATE_LIMITED", "", nil)
-				continue
+				return
 			}
 			series, err := h.yahoo.History(ctx, job.user, w.symbol, day.AddDate(0, 0, -yahooHistoryLookback), day)
 			if err != nil {
 				fail(w.i, err)
-				continue
+				return
 			}
 			if err = h.store.SaveHistory(ctx, w.ref.ID, w.symbol, series.Currency, marketdata.ProviderYahoo, series.Points, time.Now()); err != nil {
 				h.logger.Error("could not store Yahoo history", item(w.i, "symbol", w.symbol, "error", err.Error())...)
@@ -268,10 +356,10 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 			if !ok {
 				h.logger.Warn("Yahoo history has no close on or before date", item(w.i, "symbol", w.symbol, "points", len(series.Points))...)
 				set(w.i, "NOT_FOUND", "", nil)
-				continue
+				return
 			}
 			finish(w.i, p.Close, series.Currency, p.Day)
-		}
+		}, func(k int) { set(work[k].i, "ERROR", "", nil) })
 	}
 	h.jobs.mu.Lock()
 	job.Status = "DONE"
@@ -325,7 +413,7 @@ func (h *Handler) realtimeEstimate(ctx context.Context, rows []database.SavingPl
 // live rate can be had, the ECB reference rate is used and labelled as such.
 // It only runs when the user asked for it.
 func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem, date string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(h.ctx, 10*time.Minute)
 	defer cancel()
 	h.jobs.mu.Lock()
 	job.Status = "RUNNING"
@@ -338,12 +426,12 @@ func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem
 	item := func(i int, attrs ...any) []any {
 		return append([]any{"user", job.user, "instrument", rows[i].InstrumentID, "isin", rows[i].ISIN, "realtime", true}, attrs...)
 	}
-	limited := false
+	var limited atomic.Bool
 	fail := func(i int, err error) {
 		h.logger.Warn("Yahoo could not price item in real time", item(i, "error", err.Error())...)
 		switch {
 		case errors.Is(err, marketdata.ErrYahooLimit):
-			limited = true
+			limited.Store(true)
 			set(i, "RATE_LIMITED", nil)
 		case errors.Is(err, marketdata.ErrYahooNotFound):
 			set(i, "NOT_FOUND", nil)
@@ -351,58 +439,57 @@ func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem
 			set(i, "ERROR", nil)
 		}
 	}
-	type fxResult struct {
-		rate *marketdata.FXRate
-		err  error
-	}
-	rates := map[string]fxResult{}
+	// One live FX request per currency, however many rows share it: the first
+	// row asks Yahoo, the others wait for its answer (or the ECB fallback).
+	rates := &fxMemo{keepErr: true}
 	rate := func(ccy string) (*marketdata.FXRate, error) {
 		major := fxCurrency(ccy)
 		if major == "EUR" {
 			return nil, nil
 		}
-		if r, ok := rates[major]; ok {
-			return r.rate, r.err
-		}
-		var r *marketdata.FXRate
-		err := marketdata.ErrYahooLimit
-		if !limited {
-			r, err = h.yahoo.LiveFX(ctx, job.user, major)
-		}
-		if err != nil {
-			if errors.Is(err, marketdata.ErrYahooLimit) {
-				limited = true
+		return rates.get(ctx, major, func() (*marketdata.FXRate, error) {
+			var r *marketdata.FXRate
+			err := marketdata.ErrYahooLimit
+			if !limited.Load() {
+				r, err = h.yahoo.LiveFX(ctx, job.user, major)
 			}
-			h.logger.Warn("no live Yahoo FX rate; using the ECB reference rate", "currency", major, "error", err.Error())
-			r, err = h.fx.Rate(ctx, major, date)
-		}
-		rates[major] = fxResult{r, err}
-		return r, err
+			if err != nil {
+				if errors.Is(err, marketdata.ErrYahooLimit) {
+					limited.Store(true)
+				}
+				h.logger.Warn("no live Yahoo FX rate; using the ECB reference rate", "currency", major, "error", err.Error())
+				r, err = h.fx.Rate(ctx, major, date)
+			}
+			return r, err
+		})
 	}
-	for i, row := range rows {
-		if limited {
+	// The rows are independent, so they run in parallel; the gateway caps the
+	// requests in flight. Rows finish in any order and are stored by index.
+	forEachParallel(ctx, len(rows), h.yahoo.Concurrency(), func(i int) {
+		row := rows[i]
+		if limited.Load() {
 			set(i, "RATE_LIMITED", nil)
-			continue
+			return
 		}
 		ref, err := h.store.InstrumentRef(ctx, row.InstrumentID)
 		if err != nil {
 			h.logger.Error("could not load instrument for real-time pricing", item(i, "error", err.Error())...)
 			set(i, "ERROR", nil)
-			continue
+			return
 		}
 		symbol, err := h.yahooSymbol(ctx, job.user, ref)
 		if err != nil {
 			fail(i, err)
-			continue
+			return
 		}
 		if symbol == "" {
 			set(i, "NO_SYMBOL", nil)
-			continue
+			return
 		}
 		latest, err := h.yahoo.Latest(ctx, job.user, symbol)
 		if err != nil {
 			fail(i, err)
-			continue
+			return
 		}
 		q := &marketdata.Quote{InstrumentID: row.InstrumentID, OrigPrice: latest.Price, Price: latest.Price, Currency: latest.Currency, QuoteDate: marketdata.BerlinDay(latest.At), QuoteTime: latest.At, FetchedAt: time.Now(), Provider: marketdata.ProviderYahoo, PrevClose: latest.PrevClose, PrevCloseDate: latest.PrevDay}
 		attrs := []any{"symbol", symbol, "price", latest.Price, "currency", latest.Currency, "at", latest.At.UTC().Format(time.RFC3339)}
@@ -421,19 +508,19 @@ func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem
 		if err != nil {
 			h.logger.Error("real-time Yahoo price obtained but not converted to EUR", item(i, append(attrs, "status", quoteFailure(err), "error", err.Error())...)...)
 			set(i, quoteFailure(err), nil)
-			continue
+			return
 		}
 		if err = h.store.SaveQuote(ctx, q, ""); err != nil {
 			h.logger.Error("could not store real-time Yahoo quote", item(i, append(attrs, "error", err.Error())...)...)
 			set(i, "ERROR", nil)
-			continue
+			return
 		}
 		if fx != nil {
 			attrs = append(attrs, "fxRate", q.FXRate, "fxSource", q.FXSource, "eurPrice", q.Price)
 		}
 		h.logger.Info("real-time Yahoo quote stored", item(i, attrs...)...)
 		set(i, "OK", q)
-	}
+	}, func(i int) { set(i, "ERROR", nil) })
 	h.jobs.mu.Lock()
 	job.Status = "DONE"
 	h.jobs.mu.Unlock()

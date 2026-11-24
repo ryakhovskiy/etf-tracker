@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -96,6 +97,39 @@ func (h *Handler) yahooEstimate(ctx context.Context, rows []database.SavingPlanI
 	b, err := h.yahoo.Budget(ctx)
 	out.Remaining = b.Remaining
 	return out, err
+}
+
+// expectedCurrencies lists the foreign currencies (major units, sorted, no EUR) the
+// rows are expected to be quoted in, from what is stored: the currency of the latest
+// quote, else a stored listing currency of the instrument (Eulerpool listing, then
+// ETF profile). No network call is made. A title that has never been priced has
+// none, and its currency is fetched on demand once its price is known.
+func (h *Handler) expectedCurrencies(ctx context.Context, rows []database.SavingPlanItem) []string {
+	seen := map[string]bool{}
+	for _, row := range rows {
+		ccy, err := h.store.LatestQuoteCurrency(ctx, row.InstrumentID)
+		if err != nil {
+			continue
+		}
+		if ccy == "" {
+			ref, err := h.store.InstrumentRef(ctx, row.InstrumentID)
+			if err != nil {
+				continue
+			}
+			if ccy = ref.EPCurrency; ccy == "" {
+				ccy = ref.Currency
+			}
+		}
+		if major := fxCurrency(ccy); major != "" && major != "EUR" {
+			seen[major] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for ccy := range seen {
+		out = append(out, ccy)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // startYahooJob runs a Yahoo price runner as tracked background work. When the
@@ -209,6 +243,15 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 			return nil, nil
 		}
 		return rates.get(ctx, ccy, func() (*marketdata.FXRate, error) { return h.fx.Rate(ctx, ccy, date) })
+	}
+	// FX is never on the critical path: the ECB rates of the expected currencies are
+	// looked up now, at the same time as each other and before the first price
+	// request, through the same memo the rows use. The runner waits for them before
+	// it ends, so none outlives the job (they stop with ctx on Close).
+	var prefetch sync.WaitGroup
+	defer prefetch.Wait()
+	for _, ccy := range h.expectedCurrencies(ctx, rows) {
+		prefetch.Go(func() { rate(ccy) })
 	}
 	item := func(i int, attrs ...any) []any {
 		return append([]any{"user", job.user, "instrument", rows[i].InstrumentID, "isin", rows[i].ISIN, "date", date}, attrs...)
@@ -361,6 +404,7 @@ func (h *Handler) runYahooPrices(job *priceJob, rows []database.SavingPlanItem, 
 			finish(w.i, p.Close, series.Currency, p.Day)
 		}, func(k int) { set(work[k].i, "ERROR", "", nil) })
 	}
+	prefetch.Wait() // the job is DONE only when its FX lookups have ended too
 	h.jobs.mu.Lock()
 	job.Status = "DONE"
 	h.jobs.mu.Unlock()
@@ -440,7 +484,14 @@ func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem
 		}
 	}
 	// One live FX request per currency, however many rows share it: the first
-	// row asks Yahoo, the others wait for its answer (or the ECB fallback).
+	// caller asks Yahoo, the others wait for its answer (or the ECB fallback).
+	// The currencies the rows are expected to use are asked for before any price
+	// request is sent (below), so the rate is usually there when a price arrives.
+	predicted := map[string]bool{}
+	expected := h.expectedCurrencies(ctx, rows)
+	for _, ccy := range expected {
+		predicted[ccy] = true
+	}
 	rates := &fxMemo{keepErr: true}
 	rate := func(ccy string) (*marketdata.FXRate, error) {
 		major := fxCurrency(ccy)
@@ -448,6 +499,9 @@ func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem
 			return nil, nil
 		}
 		return rates.get(ctx, major, func() (*marketdata.FXRate, error) {
+			if !predicted[major] {
+				h.logger.Info("currency not predicted from stored data; fetching its live FX rate on demand", "currency", major)
+			}
 			var r *marketdata.FXRate
 			err := marketdata.ErrYahooLimit
 			if !limited.Load() {
@@ -462,6 +516,14 @@ func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem
 			}
 			return r, err
 		})
+	}
+	// The FX lookups start first, so they take their gateway slots before the
+	// price requests; a currency that no row ends up using costs one request and
+	// is ignored. The runner waits for them before it ends.
+	var prefetch sync.WaitGroup
+	defer prefetch.Wait()
+	for _, ccy := range expected {
+		prefetch.Go(func() { rate(ccy) })
 	}
 	// The rows are independent, so they run in parallel; the gateway caps the
 	// requests in flight. Rows finish in any order and are stored by index.
@@ -521,6 +583,7 @@ func (h *Handler) runYahooRealtime(job *priceJob, rows []database.SavingPlanItem
 		h.logger.Info("real-time Yahoo quote stored", item(i, attrs...)...)
 		set(i, "OK", q)
 	}, func(i int) { set(i, "ERROR", nil) })
+	prefetch.Wait() // the job is DONE only when its FX lookups have ended too
 	h.jobs.mu.Lock()
 	job.Status = "DONE"
 	h.jobs.mu.Unlock()

@@ -1,10 +1,14 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { SLOW_POLL_MS, YAHOO_POLL_MS } from "../lib/polling";
 import type { RefreshJob, RefreshResult, Summaries } from "../lib/portfolio-summary";
 
 export type RefreshProgress = { done: number; total: number } | null;
-const POLL_MS = 2000;
+// The summary refresh is always a Yahoo job.
+const POLL_MS = YAHOO_POLL_MS;
+// Retries after a failed poll keep the original pace.
+const ERROR_POLL_MS = SLOW_POLL_MS;
 const MAX_POLL_ERRORS = 5;
 
 /**
@@ -95,7 +99,7 @@ export function usePortfolioSummaries(enabled: boolean) {
       } catch {
         if (!active) return;
         // The job may be gone (restart) or the network flaky: retry a few times, then show what is stored.
-        if (++errors >= MAX_POLL_ERRORS) await finish(); else timer = setTimeout(poll, POLL_MS);
+        if (++errors >= MAX_POLL_ERRORS) await finish(); else timer = setTimeout(poll, ERROR_POLL_MS);
       }
     };
     void poll();

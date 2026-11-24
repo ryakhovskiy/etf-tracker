@@ -4,6 +4,7 @@ import { api, APIError, OnlineInstrument } from "../lib/api";
 import { editRow, fetchable, fetchedSource, fetchDateInRange, PlanRow, today } from "../lib/transactions";
 import { BackupFetch, BACKUP_STATUSES, type JobItem } from "./backup-fetch";
 import { Modal } from "./portfolios";
+import { pollInterval, SLOW_POLL_MS } from "../lib/polling";
 import { usePortfolioUpdates } from "./portfolio-updates";
 
 type Budget = { globalRemaining: number; userRemaining: number; userLimit: number; nextSlotAt: string; blockedUntil?: string; primary?: string };
@@ -74,6 +75,7 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
   if (!jobId) return;
   let active = true;
   let timer: ReturnType<typeof setTimeout>;
+  const interval = pollInterval(kind === "realtime" || mode === "YAHOO");
   const applied = new Set<number>();
   const poll = async () => {
    try {
@@ -88,7 +90,7 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(`${storageKey}:kind`); setJobId(null);
      await refreshBudget();
      callbacks.current.changed();
-    } else if (active) timer = setTimeout(poll, 2000);
+    } else if (active) timer = setTimeout(poll, interval);
    } catch (e) {
     if (!active) return;
     const err = e as APIError;
@@ -96,7 +98,7 @@ export function PriceFetch({ id, date, rows, selected, setRows, reload, busy, on
     if (err.status === 404) {
      sessionStorage.removeItem(storageKey); sessionStorage.removeItem(`${storageKey}:kind`); setJobId(null);
      try { await callbacks.current.reload(true); await refreshBudget(); callbacks.current.changed(); } catch (recoveryError) { if (active) setError(`Fetch interrupted. ${(recoveryError as Error).message}`); }
-    } else timer = setTimeout(poll, 2000);
+    } else timer = setTimeout(poll, SLOW_POLL_MS);
    }
   };
   void poll();

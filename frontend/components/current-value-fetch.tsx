@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, APIError } from "../lib/api";
+import { pollInterval, SLOW_POLL_MS } from "../lib/polling";
 import { today, type Performance } from "../lib/transactions";
 import { BackupFetch, BACKUP_STATUSES } from "./backup-fetch";
 import { REALTIME_TITLE } from "./price-fetch";
@@ -17,6 +18,8 @@ export function CurrentValueFetch({ id, performance, reload }: { id: string; per
  const [job, setJob] = useState<Job | null>(null);
  const [starting, setStarting] = useState<Kind | null>(null);
  const [kind, setKind] = useState<Kind>("regular");
+ // Read when the next poll is scheduled; the provider arrives with the estimate, after the poll effect is set up.
+ const yahooJob = useRef(false);
  const [error, setError] = useState("");
  const [now, setNow] = useState(Date.now());
  const [version, setVersion] = useState(0);
@@ -66,14 +69,14 @@ export function CurrentValueFetch({ id, performance, reload }: { id: string; per
     if (!active) return;
     setJob(next);
     if (next.status === "DONE") { setBackup(next.items.filter(i => (mode === "ALPHAVANTAGE" && kind === "regular" ? ["NEEDS_BACKUP"] : BACKUP_STATUSES).includes(i.status)).map(i => i.instrumentId)); await finish(); }
-    else timer = setTimeout(poll, 2000);
+    else timer = setTimeout(poll, pollInterval(yahooJob.current));
    } catch (e) {
     if (!active) return;
     const err = e as APIError;
     setError(err.status === 404 ? "Fetch interrupted. Prices fetched so far were saved." : err.message);
     if (err.status === 404) {
      try { await finish(); } catch (recoveryError) { if (active) setError((recoveryError as Error).message); }
-    } else timer = setTimeout(poll, 2000);
+    } else timer = setTimeout(poll, SLOW_POLL_MS);
    }
   };
   void poll();
@@ -91,6 +94,7 @@ export function CurrentValueFetch({ id, performance, reload }: { id: string; per
  // The primary provider comes with the estimate; older servers without it mean Alpha Vantage.
  const mode = estimate?.provider ?? (estimate?.eulerpool ? "EULERPOOL" : "ALPHAVANTAGE");
  const yahoo = mode === "YAHOO";
+ yahooJob.current = yahoo || kind === "realtime";
  const eulerpool = mode === "EULERPOOL" || yahoo; // both are request-counted, quota-based sources
  const sourceName = yahoo ? "Yahoo" : "Eulerpool";
  const epRequests = (yahoo ? estimate?.yahoo?.requests : estimate?.eulerpool?.requests) ?? 0;

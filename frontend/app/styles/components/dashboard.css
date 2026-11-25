@@ -14,6 +14,8 @@
 .figure.tile { padding: 20px 22px; justify-content: space-between; }
 .figure-current .kpi-value { font-size: clamp(26px, 3vw, 36px); }
 .figure-current:first-of-type { border-color: var(--border-strong); }
+/* One shared "quotes as of … · fetched …" line, shown on phones instead of one per tile. */
+.figures-asof { display: none; }
 
 .performance-amount { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .performance-value { white-space: nowrap; }
@@ -175,29 +177,43 @@ html[data-theme^="tech-"] .holding-tile::before { width: 3px; }
 }
 @media (max-width: 640px) {
   /* Phones: current value and current performance lead as a pair, the three purchase-price
-     figures follow in a compact two-column grid. */
-  .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+     figures follow in a compact two-column grid. Same design, smaller sizes and spacing. */
+  .dashboard > h2 { margin: 24px 0 0; font-size: 17px; }
+  .performance-overview, .performance-summary { gap: 10px; }
+  .performance-selection { gap: 8px; font-size: 12.5px; }
+  .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .figure { grid-column: span 1; order: 1; }
   .figure:nth-child(3) { grid-column: 1 / -1; }
   .figure-current { order: 0; }
-  .figure.tile { padding: 12px 14px; gap: 6px; }
-  .figure .kpi-value { font-size: 18px; }
-  .figure-current .kpi-value { font-size: 22px; }
-  .figure .kpi-label { font-size: 12px; }
-  .figure .performance-percent { font-size: 12px; padding: 1px 8px; }
-  .current-fetch { padding: 16px; }
-  .fetch-toolbar { align-items: stretch; gap: 14px; }
-  .fetch-description { flex-basis: 100%; }
+  .figure.tile { padding: 10px 12px; gap: 4px; }
+  .figure .kpi-value { font-size: 16px; }
+  .figure-current .kpi-value { font-size: 18px; }
+  .figure .kpi-label { font-size: 11px; line-height: 1.25; letter-spacing: 0.02em; overflow-wrap: anywhere; }
+  .figure .performance-amount { gap: 2px 6px; font-size: clamp(14px, 4.4vw, 17px); }
+  /* Numbers shrink or wrap, they never run past their tile. */
+  .figure .performance-value { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+  .figure .performance-percent { font-size: 11.5px; padding: 1px 7px; }
+  .figure .figure-meta { display: none; }
+  .figures-asof { display: block; grid-column: 1 / -1; order: 0; margin: -2px 2px 2px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .current-fetch { padding: 10px 12px; gap: 8px; }
+  .fetch-toolbar { align-items: stretch; gap: 8px; }
+  .fetch-description { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; }
+  .fetch-description > strong { margin: 0; font-size: 14px; }
+  .fetch-lead { display: none; }
   .fetch-actions, .fetch-action, .fetch-action button { width: 100%; }
+  .fetch-action button { padding-top: 6px; padding-bottom: 6px; font-size: 13px; }
   .fetch-details li { flex-direction: column; align-items: flex-start; }
   .fetch-details li > span { flex-basis: auto; }
-  .chart-card { padding: 16px 8px; }
+  .chart-card { padding: 12px 8px; }
   .chart-card h2 { padding: 0 8px; font-size: 15px; }
-  .chart-heading { flex-wrap: wrap; gap: 12px; padding: 0 8px; }
+  .chart-heading { flex-wrap: wrap; gap: 8px; padding: 0 8px; margin-bottom: 8px; }
   .chart-heading h2 { flex-basis: 220px; padding: 0; }
   .chart-period { margin-left: auto; }
   .chart-navigation, .chart-interaction-hint { margin-left: 8px; margin-right: 8px; }
-  .chart-legend { padding: 0 8px; }
+  .chart-legend { padding: 0 8px; margin-top: 10px; }
   .chart-legend button { width: 100%; }
-  .holding-tiles { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .holding-tiles { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .holding-tile { gap: 4px; padding: 12px 14px 12px 20px; }
+  .holding-value { font-size: 22px; margin-top: 0; }
+  .holding-share { margin-top: 4px; }
 }

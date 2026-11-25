@@ -37,6 +37,8 @@ func storeError(w http.ResponseWriter, err error) {
 		httpapi.JSON(w, 409, map[string]any{"error": limit})
 	case errors.Is(err, database.ErrNotFound):
 		apiError(w, 404, "NOT_FOUND", "Portfolio or item not found.")
+	case errors.Is(err, database.ErrFavoritesStale):
+		apiError(w, 409, "FAVORITES_STALE", err.Error())
 	case errors.Is(err, database.ErrNameTaken):
 		apiError(w, 409, "NAME_TAKEN", err.Error())
 	case errors.Is(err, database.ErrInvalid):

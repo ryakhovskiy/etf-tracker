@@ -208,6 +208,45 @@ Item removal is API-only and rejects items with transactions (`ITEM_HAS_TRANSACT
   persists through tab switches and data refreshes; market-price fetches still
   cover the full portfolio.
 
+### Favorites
+
+Backend contract. A user stars a **title (instrument)**, not a portfolio item: one
+star per user and instrument however many of their portfolios hold it. Stars are
+ordered; tiles on the portfolio list page follow `position`.
+
+- Table `favorites(user_id, instrument_id, position, created_at)`, primary key
+  `(user_id, instrument_id)` (migration `00018_favorites.sql`). `position` is
+  contiguous from 0 per user: appending uses the count, and every removal and
+  reorder renumbers inside the same `BEGIN IMMEDIATE` transaction.
+- Only an instrument in one of the caller's portfolios can be starred, otherwise
+  `404 NOT_FOUND`. Removing an item from the caller's last portfolio holding it,
+  or deleting such a portfolio, deletes the favorite and compacts the positions
+  in the same transaction as that removal.
+- `GET /api/favorites` → `{favorites:[{instrumentId, name, ticker, position,
+  priceEur, change:{amount, percent}|null, asOf, reasons[]}]}` in order. It reads
+  stored quotes only (no provider call). `priceEur` is the latest stored quote in
+  EUR as stored (4 dp), `asOf` the same object as a summary's (`quoteDate`,
+  `quoteTime`, `fetchedAt`, `providers`, `realtime`); both are `null` without a
+  quote. `change` is price − previous close, both in EUR (`amount` signed, 2 dp,
+  `percent` against the previous close), with the previous close converted by the
+  summaries' rules (`previousClose()`: the previous day's `{CCY}EUR=X` close,
+  minor units through the major currency). It is `null`, with a reason, when
+  data is missing: `NO_QUOTE`, `NO_PREVIOUS_CLOSE`, or `FX_PREVIOUS_UNAVAILABLE`
+  (the previous close could only be converted at the quote's own rate; unlike a
+  summary, a tile has no partial marker, so no approximate figure is shown).
+  `reasons` is always an array.
+- `PUT /api/favorites/{i}` stars and appends (idempotent, keeps the place when
+  already starred) → `200 {instrumentId, position}`. `DELETE /api/favorites/{i}`
+  → `204`, compacts; `404` when the caller has not starred it.
+- `PUT /api/favorites/order` with `{instrumentIds:[…]}` must list exactly the
+  caller's current favorites, each once, else `409 FAVORITES_STALE` and nothing
+  changes. It is atomic and returns `{favorites:[…]}` like the GET. A missing or
+  malformed body is `400 INVALID_BODY`.
+- `GET /api/portfolios/{p}/items` adds `favorite: boolean` per item (the caller's
+  own star).
+- Another user's data is never visible: a title the caller does not hold or has
+  not starred is `404`, never `403`.
+
 ### Portfolio list summaries
 
 Backend contract (frontend UI facts below). Everything is session-scoped (`401`)
@@ -256,7 +295,9 @@ and covers only the caller's portfolios; `GET /api/portfolios` is unchanged.
   or `{"force":true}` (manual "Refresh prices": skips only the freshness and
   throttle checks) starts ONE job of kind `USER_REALTIME` over the de-duplicated
   union of the user's held instruments across all portfolios (instruments without
-  units are excluded). It runs the existing real-time Yahoo runner: Yahoo only,
+  units are excluded) **plus the user's favorites** (starred titles need not be
+  held; see Favorites). The request `estimate`, `stale`, `newestFetchedAt` and
+  `NOTHING_TO_PRICE` use the same set. It runs the existing real-time Yahoo runner: Yahoo only,
   never Alpha Vantage, never Eulerpool, no fallback. Poll it with
   `GET /api/price-fetch-jobs/{jobId}`; when `DONE`, reload the summaries.
   - `202 {started:true, reused:false, jobId, requests}` when started.
@@ -267,8 +308,8 @@ and covers only the caller's portfolios; `GET /api/portfolios` is unchanged.
     lock that registers the job, so concurrent requests cannot start two), `YAHOO_UNAVAILABLE`
     (cooling down or budget used up; `blockedUntil` may be set; wins over `force`)
     or `NOTHING_TO_PRICE`. These are not errors: show the stored figures.
-  - `refresh` in the summaries response: `stale` (no quote for any held
-    instrument, or the NEWEST fetch time among them is strictly older than
+  - `refresh` in the summaries response: `stale` (no quote for any held or
+    favorite instrument, or the NEWEST fetch time among them is strictly older than
     `maxAgeSeconds` = 900; other instruments being old or unpriced does not make it
     stale), `newestFetchedAt`, `autoFetch` (a POST would start a job now),
     `runningJobId`, `lastAttemptAt`, `yahoo {available, blockedUntil}` and
@@ -575,6 +616,7 @@ duplicate lines or stale preview where applicable.
 
 | Area | Routes |
 |---|---|
+| Favorites | `GET /api/favorites`; `PUT/DELETE /api/favorites/{i}`; `PUT /api/favorites/order` |
 | Portfolios/items | `GET/POST /api/portfolios`; `GET /api/portfolios/summaries`; `GET/PATCH/DELETE /api/portfolios/{p}`; `GET/POST .../{p}/items`; `DELETE .../{p}/items/{i}`; `PUT /api/users/me/instruments/{i}/pay-delay` |
 | Instruments | `GET /api/instruments/search`; `GET .../search/online` (`provider=av` explicit fallback); `POST /api/instruments` |
 | Transactions | `GET /api/portfolios/{p}/saving-plan`; `GET/POST .../{p}/transactions`; `DELETE .../{p}/transactions/{txId}`; `GET .../{p}/performance` |
@@ -634,7 +676,7 @@ calendar, the FX rates of all currencies it needs are requested concurrently
   [`frontend/app/manifest.ts`](../frontend/app/manifest.ts), [`frontend/lib/pwa.ts`](../frontend/lib/pwa.ts),
   [`frontend/lib/pwa-colors.ts`](../frontend/lib/pwa-colors.ts), [`frontend/scripts/generate-pwa-assets.mjs`](../frontend/scripts/generate-pwa-assets.mjs),
   generated static files in [`frontend/public`](../frontend/public).
-  Migrations currently run through **00017** (`00016_previous_close.sql`, `00017_previous_close_date.sql`); add migrations rather than editing applied ones.
+  Migrations currently run through **00018** (`00016_previous_close.sql`, `00017_previous_close_date.sql`, `00018_favorites.sql`); add migrations rather than editing applied ones.
 - Deployment: [`compose.yaml`](../compose.yaml),
   [`backend/Dockerfile`](../backend/Dockerfile),
   [`frontend/Dockerfile`](../frontend/Dockerfile), per-service `.dockerignore`

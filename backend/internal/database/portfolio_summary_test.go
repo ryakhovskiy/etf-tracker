@@ -218,11 +218,11 @@ func TestPortfolioSummaryUserScopeExactTotalsAndRefreshUnion(t *testing.T) {
 	checkSummaryPointer(t, "total rounds after aggregation", got.Total.CurrentValue, "1.01")
 	checkSummaryFigure(t, "total change", got.Total.Change, "0.01", "1.00")
 	checkSummaryFigure(t, "total performance", got.Total.Performance, "0.01", "1.00")
-	held, err := s.UserHeldInstruments(ctx, "alice")
+	held, err := s.UserPricedInstruments(ctx, "alice")
 	if err != nil || len(held) != 1 || held[0].InstrumentID != 1 {
 		t.Fatalf("union %+v %v", held, err)
 	}
-	newest, ok, err := s.NewestHeldFetchedAt(ctx, "alice")
+	newest, ok, err := s.NewestPricedFetchedAt(ctx, "alice")
 	if err != nil || !ok || !newest.Equal(q.FetchedAt) {
 		t.Fatalf("foreign/unheld quote affected freshness: %v %v %v", newest, ok, err)
 	}
@@ -232,7 +232,7 @@ func TestPortfolioSummaryUserScopeExactTotalsAndRefreshUnion(t *testing.T) {
 	if err := s.SaveQuote(ctx, oldHistory, ""); err != nil {
 		t.Fatal(err)
 	}
-	newest, _, err = s.NewestHeldFetchedAt(ctx, "alice")
+	newest, _, err = s.NewestPricedFetchedAt(ctx, "alice")
 	if err != nil || !newest.Equal(q.FetchedAt) {
 		t.Fatalf("newly fetched old history outranked latest market date: %v %v", newest, err)
 	}

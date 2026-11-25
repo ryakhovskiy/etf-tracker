@@ -10,7 +10,7 @@ import (
 	"holdings/backend/internal/marketdata"
 )
 
-// summaryMaxAge is how old the newest quote of the user's held instruments may
+// summaryMaxAge is how old the newest quote of the user's held instruments and favorites may
 // be before the list page refreshes prices (strictly older than this is stale),
 // and the minimum gap between two unforced refresh attempts.
 const summaryMaxAge = 15 * time.Minute
@@ -68,10 +68,10 @@ func (h *Handler) runningJobLocked(user string) (string, *priceJob) {
 func (h *Handler) refreshDecision(ctx context.Context, user string, force bool) (info refreshInfo, rows []database.SavingPlanItem, reason string, err error) {
 	now := h.now()
 	info = refreshInfo{MaxAgeSeconds: int(summaryMaxAge / time.Second)}
-	if rows, err = h.store.UserHeldInstruments(ctx, user); err != nil {
+	if rows, err = h.store.UserPricedInstruments(ctx, user); err != nil {
 		return
 	}
-	newest, ok, err := h.store.NewestHeldFetchedAt(ctx, user)
+	newest, ok, err := h.store.NewestPricedFetchedAt(ctx, user)
 	if err != nil {
 		return
 	}
@@ -138,7 +138,7 @@ func (h *Handler) registerSummaryRoutes(mux *http.ServeMux) {
 		httpapi.JSON(w, 200, map[string]any{"summaries": s.Summaries, "total": s.Total, "refresh": info})
 	}))
 	// One Yahoo-only real-time job over the user's held instruments in all
-	// portfolios. Never Alpha Vantage, never Eulerpool.
+	// portfolios plus their favorites. Never Alpha Vantage, never Eulerpool.
 	mux.HandleFunc("POST /api/price-refresh-jobs", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
 		var in struct {
 			Force bool `json:"force"`

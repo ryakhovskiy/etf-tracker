@@ -123,6 +123,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerEulerpoolRoutes(mux)
 	h.registerYahooRoutes(mux)
 	h.registerSummaryRoutes(mux)
+	h.registerFavoriteRoutes(mux)
 	h.registerDividendRoutes(mux)
 	mux.HandleFunc("GET /auth/google", h.googleLogin)
 	mux.HandleFunc("GET /auth/google/callback", h.googleCallback)

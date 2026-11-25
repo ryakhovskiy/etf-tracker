@@ -127,18 +127,21 @@ func (s *Store) SavePortfolio(ctx context.Context, user string, id int64, name s
 	return p, err
 }
 func (s *Store) DeletePortfolio(ctx context.Context, user string, id int64) error {
-	result, err := s.db.ExecContext(ctx, "DELETE FROM portfolios WHERE id=? AND user_id=?", id, user)
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if count == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.write(ctx, func(conn *sql.Conn) error {
+		result, err := conn.ExecContext(ctx, "DELETE FROM portfolios WHERE id=? AND user_id=?", id, user)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return ErrNotFound
+		}
+		// Favorites that only this portfolio held go in the same transaction.
+		return pruneFavorites(ctx, conn, user)
+	})
 }
 
 type AddedItems struct {
@@ -210,7 +213,8 @@ func (s *Store) RemoveItem(ctx context.Context, user string, id, item int64) err
 		if n == 0 {
 			return ErrNotFound
 		}
-		return nil
+		// A title no portfolio of the user holds any more cannot stay a favorite.
+		return pruneFavorites(ctx, conn, user)
 	})
 }
 func (s *Store) Search(ctx context.Context, user, q string, portfolio int64) ([]Instrument, error) {

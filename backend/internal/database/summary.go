@@ -371,10 +371,45 @@ func (s *Store) heldInstrumentIDs(ctx context.Context, user string) ([]int64, er
 	return ids, nil
 }
 
-// UserHeldInstruments lists the instruments to price for the user-level
-// real-time job: the union of held instruments across all portfolios.
-func (s *Store) UserHeldInstruments(ctx context.Context, user string) ([]SavingPlanItem, error) {
+// pricedInstrumentIDs is the set the user-level refresh prices, estimates and
+// checks for staleness: the held instruments plus the user's favorites (which
+// need not be held), de-duplicated, by ID.
+func (s *Store) pricedInstrumentIDs(ctx context.Context, user string) ([]int64, error) {
 	ids, err := s.heldInstrumentIDs(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT instrument_id FROM favorites WHERE user_id=?", user)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		seen[id] = true
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids, nil
+}
+
+// UserPricedInstruments lists the instruments to price for the user-level
+// real-time job: the union of held instruments across all portfolios and the
+// user's favorites.
+func (s *Store) UserPricedInstruments(ctx context.Context, user string) ([]SavingPlanItem, error) {
+	ids, err := s.pricedInstrumentIDs(ctx, user)
 	if err != nil {
 		return nil, err
 	}
@@ -389,10 +424,10 @@ func (s *Store) UserHeldInstruments(ctx context.Context, user string) ([]SavingP
 	return out, nil
 }
 
-// NewestHeldFetchedAt is the fetch time of the newest latest-quote among the
-// user's held instruments; false when none of them has a quote.
-func (s *Store) NewestHeldFetchedAt(ctx context.Context, user string) (time.Time, bool, error) {
-	ids, err := s.heldInstrumentIDs(ctx, user)
+// NewestPricedFetchedAt is the fetch time of the newest latest-quote among the
+// user's held instruments and favorites; false when none of them has a quote.
+func (s *Store) NewestPricedFetchedAt(ctx context.Context, user string) (time.Time, bool, error) {
+	ids, err := s.pricedInstrumentIDs(ctx, user)
 	if err != nil {
 		return time.Time{}, false, err
 	}

@@ -25,6 +25,7 @@ type PortfolioItemOverview struct {
 	Type         string       `json:"type"`
 	LatestQuote  *LatestQuote `json:"latestQuote"`
 	PayDelayDays int          `json:"payDelayDays"`
+	Favorite     bool         `json:"favorite"`
 }
 
 // PortfolioItems lists the items of one of the user's portfolios with their
@@ -33,10 +34,11 @@ func (s *Store) PortfolioItems(ctx context.Context, user string, id int64) ([]Po
 	if _, err := s.Portfolio(ctx, user, id); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.ticker,COALESCE(i.isin,''),i.name,i.type,COALESCE(d.days,0)
+	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.ticker,COALESCE(i.isin,''),i.name,i.type,COALESCE(d.days,0),
+		EXISTS(SELECT 1 FROM favorites f WHERE f.user_id=? AND f.instrument_id=i.id)
 		FROM portfolio_items pi JOIN instruments i ON i.id=pi.instrument_id
 		LEFT JOIN instrument_pay_delays d ON d.instrument_id=i.id AND d.user_id=?
-		WHERE pi.portfolio_id=? ORDER BY i.ticker COLLATE NOCASE,i.id`, user, id)
+		WHERE pi.portfolio_id=? ORDER BY i.ticker COLLATE NOCASE,i.id`, user, user, id)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +46,7 @@ func (s *Store) PortfolioItems(ctx context.Context, user string, id int64) ([]Po
 	for rows.Next() {
 		var it PortfolioItemOverview
 		var isin string
-		if err = rows.Scan(&it.InstrumentID, &it.Ticker, &isin, &it.Name, &it.Type, &it.PayDelayDays); err != nil {
+		if err = rows.Scan(&it.InstrumentID, &it.Ticker, &isin, &it.Name, &it.Type, &it.PayDelayDays, &it.Favorite); err != nil {
 			rows.Close()
 			return nil, err
 		}

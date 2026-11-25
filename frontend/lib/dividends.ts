@@ -19,7 +19,7 @@ export type DividendCalendar = {
   months: DividendMonth[];
   sync: { provider: string; lastSyncedAt: string | null; stale: number[]; errors: DividendSyncError[]; jobId: string | null };
 };
-export type DividendSyncJob = { status: "RUNNING" | "DONE"; done: number; total: number; items: { instrumentId: number; status: "PENDING" | "OK" | "ERROR"; error?: string }[] };
+export type DividendSyncJob = { status: "RUNNING" | "DONE"; version?: number; done: number; total: number; items: { instrumentId: number; status: "PENDING" | "OK" | "ERROR"; error?: string }[] };
 
 const berlinDate = (d: Date, options: Intl.DateTimeFormatOptions) => d.toLocaleDateString("de-DE", { timeZone: "Europe/Berlin", ...options });
 /** Today's year and month in Europe/Berlin, the server's calendar. */

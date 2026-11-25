@@ -2,14 +2,13 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { api, APIError } from "../lib/api";
+import { pollJob } from "../lib/polling";
 import {
   amount, berlinYearMonth, dayLabel, entryKey, exLabel, fxLabel, listingAmount, money, monthName, payLabel, payRule, percent, perUnit, shortDay, syncedLabel, warningText,
   type DividendCalendar, type DividendEntry, type DividendSyncJob,
 } from "../lib/dividends";
 import { DividendChart } from "./dividend-chart";
 import { usePortfolioUpdates } from "./portfolio-updates";
-
-const POLL_MS = 2000;
 
 function parseYear(raw: string | null | undefined) {
   return raw && /^\d{4}$/.test(raw) ? Number(raw) : null;
@@ -161,32 +160,30 @@ export function Dividends({ id }: { id: string }) {
     if (revision > 0 && loadedYear.current !== null) void load(loadedYear.current);
   }, [revision, load]);
 
-  // Poll the job every 2 s; reload the calendar when it is done.
+  // Follow the job by long polling; reload the calendar when it is done.
   const yearRef = useRef(year); yearRef.current = year;
   useEffect(() => {
     if (!jobId) return;
     let alive = true;
-    let timer: ReturnType<typeof setTimeout>;
     const finish = async () => {
       setJobId(null);
       if (yearRef.current !== null) await load(yearRef.current);
     };
-    const poll = async () => {
-      try {
-        const next = await api<DividendSyncJob>(`/api/dividend-sync-jobs/${jobId}`);
+    const stop = pollJob<DividendSyncJob>(`/api/dividend-sync-jobs/${jobId}`, {
+      onJob: async next => {
         if (!alive) return;
         setJob(next);
         if (next.status === "DONE") await finish();
-        else timer = setTimeout(poll, POLL_MS);
-      } catch (e) {
-        if (!alive) return;
+      },
+      onError: async e => {
+        if (!alive) return false;
         const err = e as APIError;
-        if (err.status === 404) await finish(); // finished long ago or the server restarted
-        else { setSyncError(err.message); timer = setTimeout(poll, POLL_MS); }
-      }
-    };
-    void poll();
-    return () => { alive = false; clearTimeout(timer); };
+        if (err.status === 404) { await finish(); return false; } // finished long ago or the server restarted
+        setSyncError(err.message);
+        return true;
+      },
+    });
+    return () => { alive = false; stop(); };
   }, [jobId, load]);
 
   // Close the popover with Escape or a click elsewhere.

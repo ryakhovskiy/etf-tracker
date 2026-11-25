@@ -2,6 +2,7 @@ package database
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,16 +27,19 @@ func divEvent(day, amount, ccy, close string) StoredDividend {
 }
 
 type fxTable struct {
+	mu    sync.Mutex                   // the calendar asks for the currencies concurrently
 	rates map[string]map[string]string // currency -> fx date -> "rate@publication"
 	calls map[string][]string
 	err   map[string]error
 }
 
 func (f *fxTable) lookup(currency string, dates []string) (map[string]*marketdata.FXRate, error) {
+	f.mu.Lock()
 	if f.calls == nil {
 		f.calls = map[string][]string{}
 	}
 	f.calls[currency] = append(f.calls[currency], strings.Join(dates, ","))
+	f.mu.Unlock()
 	if err := f.err[currency]; err != nil {
 		return nil, err
 	}

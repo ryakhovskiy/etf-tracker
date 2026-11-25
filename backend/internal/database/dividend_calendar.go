@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"holdings/backend/internal/marketdata"
@@ -25,7 +26,8 @@ const (
 )
 
 // FXRates returns, for each date, the ECB publication used on it (latest on or
-// before the date). It is called once per currency. Missing dates have no rate.
+// before the date). It is called once per currency, the currencies concurrently,
+// so it must be safe for concurrent use. Missing dates have no rate.
 type FXRates func(currency string, dates []string) (map[string]*marketdata.FXRate, error)
 
 type DividendEntry struct {
@@ -317,15 +319,27 @@ func BuildDividendCalendar(snap DividendSnapshot, year int, today string, rates 
 		rates map[string]*marketdata.FXRate
 		err   error
 	}
-	loaded := map[string]result{}
 	currencies := make([]string, 0, len(dates))
 	for c := range dates {
 		currencies = append(currencies, c)
 	}
 	sort.Strings(currencies)
-	for _, c := range currencies {
-		r, err := rates(c, dates[c])
-		loaded[c] = result{r, err}
+	// The currencies are independent, so a cold cache costs one round trip, not one
+	// per currency. Each goroutine writes its own slot.
+	results := make([]result, len(currencies))
+	var wg sync.WaitGroup
+	for i, c := range currencies {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := rates(c, dates[c])
+			results[i] = result{r, err}
+		}()
+	}
+	wg.Wait()
+	loaded := make(map[string]result, len(currencies))
+	for i, c := range currencies {
+		loaded[c] = results[i]
 	}
 	hundred := big.NewRat(100, 1)
 	received, expected := new(big.Rat), new(big.Rat)

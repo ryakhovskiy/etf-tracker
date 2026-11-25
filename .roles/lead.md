@@ -30,7 +30,7 @@ Each worker's role is in .roles/<name>.md, and shared rules are in .roles/_commo
 2. Name your own pane `lead`, so the workers can message you: `herdr agent rename "$HERDR_PANE_ID" lead`. Without it their reports fail with `agent_not_found`.
 3. List the agents and panes. For each worker not yet running, start the workers with these exact commands (one per available worker pane):
    - frontend, backend: `--kind claude -- --model claude-sonnet-5-5 --effort high`
-   - qa, reviewer, deployment: `--kind codex -- -m gpt-6.1-sol -c model_reasoning_effort=xhigh -c sandbox_workspace_write.network_access=true` (the user chose network access so the Codex workers can bind local test ports and use Herdr)
+   - qa, reviewer, deployment: `--kind codex -- -m gpt-6.1-sol -c model_reasoning_effort=xhigh --sandbox danger-full-access` (the user chose no sandbox for the Codex workers, because `network_access` alone still blocked local ports, Herdr and Docker)
 
 4. Prompt each worker: "Read .roles/_common.md and .roles/<name>.md and follow them. Reply 'ready' when done."
 

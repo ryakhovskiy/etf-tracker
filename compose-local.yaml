@@ -5,6 +5,8 @@ services:
     image: kryakhovskiy/etracker-backend:latest
     build:
       context: ./backend
+      secrets:
+        - cacert
     env_file: .env
     environment:
       SSL_CERT_DIR: /etc/ssl/certs:/etc/ssl/certs
@@ -41,6 +43,10 @@ networks:
   holdings:
     name: holdings-network
     driver: bridge
+
+secrets:
+  cacert:
+    file: /etc/ssl/certs/zscaler-root-ca.crt
 
 volumes:
   holdings-data:

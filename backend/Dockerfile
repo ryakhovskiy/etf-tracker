@@ -3,7 +3,15 @@ FROM golang:1.27.3-alpine AS build
 WORKDIR /src
 
 COPY go.mod go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
+
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=secret,id=cacert,required=false \
+    if [ -s /run/secrets/cacert ]; then \
+      cat /etc/ssl/certs/ca-certificates.crt /run/secrets/cacert > /tmp/ca.crt \
+      && export SSL_CERT_FILE=/tmp/ca.crt; \
+    fi \
+    && go mod download
+
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \

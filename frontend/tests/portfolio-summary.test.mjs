@@ -36,6 +36,7 @@ function apiFixture(t, { summary = portfolioSummary(), refresh = { started: fals
     calls.push({ path, method, body: init.body ? JSON.parse(init.body) : null });
     let value;
     if (path === '/api/portfolios' && method === 'GET') value = { portfolios: summaryPortfolios, limit: 10 };
+    else if (path === '/api/favorites') value = { favorites: [] };
     else if (path === '/api/portfolios/summaries') value = typeof summary === 'function' ? await summary() : summary;
     else if (path === '/api/price-refresh-jobs') value = typeof refresh === 'function' ? await refresh() : refresh;
     else if (path.startsWith('/api/price-fetch-jobs/')) value = await progress.read(parsed.searchParams.get('since'), { signal: init.signal });
@@ -73,7 +74,7 @@ test('summaries loading uses skeletons and aria-busy until real figures arrive',
   await screen.findByRole('link', { name: /Long-term/ });
   assert.equal(screen.getAllByTestId('portfolio-metrics-skeleton').length, 3);
   assert.equal(strip().getAttribute('aria-busy'), 'true');
-  assert.match(screen.getByRole('status').textContent, /Loading totals/);
+  assert.match(within(screen.getByRole('region', { name: 'All portfolios total' })).getByRole('status').textContent, /Loading totals/);
   assert.doesNotMatch(text(strip()), /0,00/);
   await act(async () => gate.resolve(portfolioSummary()));
   await valueLoaded();

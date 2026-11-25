@@ -11,7 +11,7 @@ const instruments = [
   { id: 1, ticker: 'HMWO.L', name: 'HSBC MSCI World UCITS ETF USD (Distributing)', type: 'ETF', isin: 'IE00B4X9L533', wkn: 'A1C9KK', inPortfolio: true },
   { id: 2, ticker: 'AAPL', name: 'Apple Inc.', type: 'STOCK', isin: 'US0378331005', wkn: '865985', inPortfolio: true },
 ];
-const performance = {
+export const performance = {
   dates: ['2026-09-01', '2026-10-01', '2026-11-02'],
   series: [
     { instrumentId: 1, name: instruments[0].name, values: ['100.00', '105.00', '110.00'] },
@@ -114,6 +114,7 @@ export async function mockAPI(page, { loggedIn = true, routingContext = page, pr
     if (path === '/auth/refresh') return json({ error: { code: 'UNAUTHORIZED', message: 'Please sign in.' } }, 401);
     if (path === '/auth/logout') return json({ ok: true });
     if (method === 'GET') {
+      if (path === '/api/favorites') return json({ favorites: [] });
       if (path.startsWith('/api/dividend-sync-jobs/')) {
         const job = dividendJobs.get(path.slice('/api/dividend-sync-jobs/'.length));
         if (job) return json(await job.read(url.searchParams.get('since')));

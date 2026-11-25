@@ -3,6 +3,7 @@ package marketdata
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
@@ -164,6 +165,38 @@ func startGaps(tr *scriptedYahoo) []time.Duration {
 	return gaps
 }
 
+// The gateway books request starts exactly MinInterval apart. This is checked on the
+// booked waits with a fixed clock, so it does not depend on how late the scheduler
+// wakes a sleeper.
+func TestYahooBooksRequestStartsMinIntervalApart(t *testing.T) {
+	const gap = 60 * time.Millisecond
+	tr := newScriptedYahoo(okBody)
+	g := parallelGateway(&memStore{state: map[string]string{}}, tr, 10, gap)
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	var waits []time.Duration
+	g.Now = func() time.Time { return now }
+	g.Sleep = func(ctx context.Context, d time.Duration) error {
+		mu.Lock()
+		waits = append(waits, d)
+		mu.Unlock()
+		return ctx.Err()
+	}
+	var wg sync.WaitGroup
+	for i := range 5 {
+		wg.Go(func() { chart(context.Background(), g, "u", "S"+strconv.Itoa(i)) })
+	}
+	wg.Wait()
+	sort.Slice(waits, func(i, j int) bool { return waits[i] < waits[j] })
+	want := []time.Duration{gap, 2 * gap, 3 * gap, 4 * gap} // the first start needs no wait
+	if fmt.Sprint(waits) != fmt.Sprint(want) {
+		t.Fatalf("booked waits %v, want %v", waits, want)
+	}
+}
+
+// With the real clock the starts are spread over the booked schedule. Only the span
+// is checked: the single gaps jitter with scheduler wake-up latency (a late sleeper
+// followed by an on-time one), which says nothing about the gateway.
 func TestYahooSpacesRequestStarts(t *testing.T) {
 	const gap = 60 * time.Millisecond
 	tr := newScriptedYahoo(okBody)
@@ -177,10 +210,14 @@ func TestYahooSpacesRequestStarts(t *testing.T) {
 	if len(gaps) != 4 {
 		t.Fatal(gaps)
 	}
-	for i, d := range gaps {
-		if d < gap-20*time.Millisecond { // the test's own timestamps jitter a little
-			t.Fatalf("start %d only %v after the previous one (MinInterval %v)", i+1, d, gap)
-		}
+	var span time.Duration
+	for _, d := range gaps {
+		span += d
+	}
+	// A sleeper never wakes early, so the last start is at least 4 intervals behind
+	// the first one; the margin only covers the first request's own delay.
+	if span < 4*gap-20*time.Millisecond {
+		t.Fatalf("5 starts within %v (MinInterval %v): %v", span, gap, gaps)
 	}
 }
 

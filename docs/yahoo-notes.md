@@ -39,7 +39,7 @@ VHYD.L. Minor-unit codes (GBp, GBX, ZAc) are divided by 100 at conversion. Day l
   `YAHOO_SOFT_DAILY_LIMIT` caps requests per 24h (a parallel run may exceed it by up to `YAHOO_MAX_CONCURRENCY - 1`), `YAHOO_MAX_CONCURRENCY` caps requests in flight and `YAHOO_MIN_INTERVAL` is the minimum gap between request starts.
 - A historical close is never reused as a "fresh" current price (only quotes dated today or the previous trading day are).
 - **Dividends** (Dividends tab): one `events=div` chart request per instrument for [from - 10 days, today], so the first
-  ex-date still has the close of the trading day before it. Requests of one sync are at least 1 s apart. There is no
+  ex-date still has the close of the trading day before it. The requests of one sync run in parallel, capped by `YAHOO_MAX_CONCURRENCY`; after a 429 the items not yet started are not sent. There is no
   fallback provider. Fixtures `chart-div-{ispa,vhyd,aapl,ulvr,sap,iwda}.json` were recorded on 2026-11-07 for
   2023-01-01..2026-11-07 and trimmed to the bars from 7 days before each ex-date through the ex-date plus the last 10
   bars (all per-bar arrays in parallel, `meta` and `events` verbatim). `search-isin-ispa` / `search-isin-iwda` are the

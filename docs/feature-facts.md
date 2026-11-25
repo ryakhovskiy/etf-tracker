@@ -582,7 +582,7 @@ duplicate lines or stale preview where applicable.
 | Prices | `GET /api/market-data/budget`; `GET /api/portfolios/{p}/price-fetch/estimate`; `POST .../{p}/price-fetch-jobs`; `GET /api/price-fetch-jobs/{jobId}[?since=<version>]` (long poll, see Jobs); `POST /api/price-refresh-jobs` (user-level Yahoo real-time refresh, see below) |
 | Linking/history | `GET /api/instruments/{i}/av-symbol/search`, `/yahoo-symbol/search`, `/isin/search`; `PUT .../{i}/av-symbol`, `/yahoo-symbol`, `/isin`; `DELETE .../{i}/av-symbol`; `GET .../{i}/price-history` |
 | ETF profiles | `GET /api/instruments/{i}/etf-profile`; `POST .../{i}/etf-profile/refresh` |
-| Dividends | `GET /api/portfolios/{p}/dividends?year=`; `POST .../{p}/dividend-sync`; `GET /api/dividend-sync-jobs/{jobId}` |
+| Dividends | `GET /api/portfolios/{p}/dividends?year=`; `POST .../{p}/dividend-sync`; `GET /api/dividend-sync-jobs/{jobId}[?since=<version>]` (long poll, see dividends) |
 
 ## Additional implemented feature: dividends
 
@@ -596,6 +596,28 @@ recent actual events annually using current units; show forecast/not-held/unsupp
 currency states. Yahoo is the sole dividend provider. Shared cache renders first;
 stale/never-synced data refreshes in background, with manual refresh, progress,
 per-item errors and ECB historical FX. This does **not** create dividend transactions.
+
+**Parallel sync and long polling.** A dividend sync fetches its instruments in
+parallel through the same runner as the price jobs (`forEachParallel`), at most
+`YAHOO_MAX_CONCURRENCY` (default 10) requests in flight; the Yahoo gateway still
+enforces the daily budget and the 429 cool-down, and there is no extra spacing.
+Items finish in any order: each item's status/error is set by its index and `done`
+counts the finished ones. A `429` lets the requests in flight finish with their own
+results; items that have not started fail with the rate-limit message without a
+request (and are recorded like any failed fetch). Unchanged: one running sync per
+portfolio (`409 SYNC_RUNNING`), the 30-minute timeout, the `ALL`/`STALE` scope and
+the per-item messages. `Handler.Close` cancels the dividend sync before closing the
+Yahoo gateway, waits for it, and records nothing for items interrupted by the
+shutdown (they report "The sync was interrupted."). The job carries an integer
+`version` (1 when queued, bumped on every item and on `DONE`) and
+`GET /api/dividend-sync-jobs/{jobId}?since=N` has the contract of the price jobs
+(see Jobs above: it answers at once if `version > N` or the job is `DONE`, else
+waits at most 10 s and ends early on a change, client disconnect or shutdown; always
+`200` with the same shape, `items` always an array; malformed `since` →
+`400 VALIDATION_ERROR`; 404 rules unchanged). Both job kinds share one wake-up
+mechanism (`jobSignal`, `awaitChange`); no lock is held while waiting. In the
+calendar, the FX rates of all currencies it needs are requested concurrently
+(`FXService` locks per currency); results and cache semantics are unchanged.
 
 ## Source map, verification and boundaries
 

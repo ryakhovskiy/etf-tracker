@@ -2,7 +2,7 @@
 import { useState, useSyncExternalStore } from "react";
 import { getPwaState, promptInstall, SERVER_PWA_STATE, subscribePwa } from "../lib/pwa";
 import { IconInstall, IconShare } from "./icons";
-import { Modal } from "./portfolios";
+import { Modal } from "./modal";
 
 /**
  * "Install app" in the header's account area. It appears only where it can work: after the browser's

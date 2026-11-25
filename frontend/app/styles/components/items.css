@@ -94,3 +94,13 @@ html[data-theme^="tech-"] .item-tile::before { width: 3px; }
   .add-controls button.primary { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) { .skeleton-row span { animation: none; } }
+
+/* ---------- Favorite star in the item tile head ---------- */
+.item-head-side { display: flex; align-items: center; gap: 4px; flex: none; }
+.star-toggle { width: 40px; padding: 0; border-radius: 50%; color: var(--text-muted); }
+.star-toggle.is-on { color: var(--warning); }
+.star-toggle.is-on:hover:not(:disabled) { color: var(--warning); }
+@media (max-width: 640px) {
+  .item-tile { gap: 10px; padding: 14px 14px 14px 20px; }
+  .item-facts > div { padding: 6px 10px; }
+}

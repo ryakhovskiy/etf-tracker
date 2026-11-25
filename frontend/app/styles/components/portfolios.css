@@ -128,3 +128,54 @@
   .partial-hint { margin: -8px -2px; }
   .partial-hint .partial-tooltip { position: fixed; left: 12px; right: 12px; top: auto; bottom: 16px; width: auto; max-width: none; min-width: 0; z-index: 70; }
 }
+
+/* ---------- Favorites: compact tiles (name, price, change) in ordered grid cells ---------- */
+.favorites { margin-top: 32px; }
+.favorites-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 12px; }
+.favorites-head h2 { margin: 0; }
+.favorites-asof { font-size: 12px; font-variant-numeric: tabular-nums; }
+.favorites-empty { margin: 0; padding: 20px; border: 1px dashed var(--border-strong); border-radius: var(--radius); text-align: center; font-size: 14px; }
+.favorites-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr)); gap: 12px; }
+.favorite-cell { min-width: 0; }
+.favorite-tile {
+  display: flex; flex-direction: column; gap: 2px;
+  min-height: 0; padding: 12px 14px;
+  cursor: grab;
+  /* Long-press starts a drag; a normal swipe still scrolls the page. */
+  touch-action: manipulation;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.favorite-tile:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.favorite-name, .favorite-price, .favorite-change { display: block; min-width: 0; line-height: 1.35; }
+.favorite-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 14px; }
+.favorite-price { font-family: var(--font-figure); font-size: 15px; font-variant-numeric: tabular-nums; }
+.favorite-change { font-family: var(--font-figure); font-size: 13px; font-weight: 550; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+/* The cell keeps its place as a dashed placeholder while the tile is lifted. */
+.favorite-tile.is-placeholder { opacity: 0.45; border-style: dashed; border-color: var(--accent); box-shadow: none; background: var(--accent-soft); }
+.favorite-tile.is-lifted { cursor: grabbing; box-shadow: var(--shadow-raised); border-color: var(--accent); background: var(--surface-raised); }
+
+@media (max-width: 640px) {
+  .section-heading { margin-bottom: 12px; gap: 8px 16px; }
+  .section-heading h1 { font-size: 24px; }
+  .portfolios .hint { margin-bottom: 12px; padding: 8px 12px; font-size: 13px; }
+  .portfolio-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .portfolio-card { gap: 10px; padding: 14px; }
+  .portfolio-card-link { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 12px; row-gap: 0; }
+  .portfolio-card-mark { grid-row: span 2; width: 36px; height: 36px; margin: 0; font-size: 17px; }
+  .portfolio-card-link strong { font-size: 16px; }
+  .portfolio-hero .kpi-value { font-size: 22px; }
+  .portfolio-metrics, .metric-list { gap: 6px; }
+  /* The summary strip already says "as of … · fetched …" once for all tiles. */
+  .portfolio-card .portfolio-asof { display: none; }
+  .portfolio-card .row-actions button { min-height: 36px !important; font-size: 12.5px; }
+  .summary-strip { margin-bottom: 12px; padding: 12px 14px; gap: 8px 12px; }
+  .summary-strip .kpi { gap: 2px; }
+  .summary-strip .kpi-label { font-size: 11px; }
+  .summary-strip .kpi-value { font-size: 15px; }
+  .summary-strip-main .kpi-value { font-size: 24px; }
+  .summary-strip .kpi-sub { font-size: 12px; }
+  .summary-refresh { width: 100%; }
+  .favorites { margin-top: 20px; }
+  .favorites-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .favorite-tile { padding: 10px 12px; }
+}

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateA
 import { api, APIError, OnlineInstrument } from "../lib/api";
 import { editRow, fetchable, fetchedSource, fetchDateInRange, PlanRow, today } from "../lib/transactions";
 import { BackupFetch, BACKUP_STATUSES, type JobItem } from "./backup-fetch";
-import { Modal } from "./portfolios";
+import { Modal } from "./modal";
 import { pollJob } from "../lib/polling";
 import { usePortfolioUpdates } from "./portfolio-updates";
 

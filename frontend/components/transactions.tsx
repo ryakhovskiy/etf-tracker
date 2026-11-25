@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type SetStateAction } from "react";
 import { api, APIError } from "../lib/api";
 import { decimal, fetchable, hasPrice, editRow, euro, Line, PlanItem, PlanRow, planRow, rowProblem, today, total } from "../lib/transactions";
-import { Modal } from "./portfolios";
+import { Modal } from "./modal";
 import { useTransactionDraft } from "./transaction-draft";
 import { usePortfolioUpdates } from "./portfolio-updates";
 export function Transactions({id}:{id:string}){

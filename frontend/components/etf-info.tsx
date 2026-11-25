@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { api, APIError } from "../lib/api";
 import { formatAum, formatDate, formatPercent, type EtfProfile } from "../lib/etf";
-import { Modal } from "./portfolios";
+import { Modal } from "./modal";
 
 /** The ⓘ icon next to an ETF name; opens the profile panel. */
 export function EtfInfoButton({ instrumentId, name }: { instrumentId: number; name: string }) {

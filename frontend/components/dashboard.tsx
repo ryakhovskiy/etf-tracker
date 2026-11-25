@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { Performance, TransactionPage, TransactionRow, units, euro } from "../lib/transactions";
-import { Modal } from "./portfolios";
+import { Modal } from "./modal";
 import { usePortfolioUpdates } from "./portfolio-updates";
 import {PageSize,useTableColumns} from "./table-controls";
 import { TransactionGroups, groupLines } from "./transaction-groups";

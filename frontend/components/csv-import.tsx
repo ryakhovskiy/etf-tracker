@@ -18,7 +18,7 @@ import {
   type Preview,
   type SettingsResult,
 } from "../lib/csv-import";
-import { Modal } from "./portfolios";
+import { Modal } from "./modal";
 import { usePortfolioUpdates } from "./portfolio-updates";
 import { PageSize, TableCells, useTableColumns } from "./table-controls";
 

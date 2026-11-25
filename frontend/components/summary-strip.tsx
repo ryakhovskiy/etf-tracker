@@ -4,6 +4,8 @@ import { euro } from "../lib/transactions";
 import { AsOf, Gain, PartialHint, timeLabel } from "./portfolio-metrics";
 
 type Props = {
+  /** The user has starred titles: they are priced by the refresh too, even without positions. */
+  hasFavorites?: boolean;
   data: Summaries | null;
   loading: boolean;
   failed: boolean;
@@ -15,7 +17,7 @@ type Props = {
 };
 
 /** Combined figures of all portfolios, above the grid, with the price refresh status and control. */
-export function SummaryStrip({ data, loading, failed, updating, progress, notice, onRefresh, onRetry }: Props) {
+export function SummaryStrip({ hasFavorites = false, data, loading, failed, updating, progress, notice, onRefresh, onRetry }: Props) {
   const total = data?.total;
   const refresh = data?.refresh;
   const blockedUntil = refresh?.yahoo.blockedUntil && Date.parse(refresh.yahoo.blockedUntil) > Date.now() ? refresh.yahoo.blockedUntil : null;
@@ -24,6 +26,7 @@ export function SummaryStrip({ data, loading, failed, updating, progress, notice
   const yahooDown = !!blockedUntil;
   const yahooUnavailable = !!refresh && !refresh.yahoo.available && !blockedUntil;
   const hasPositions = !!total && total.positionCount > 0;
+  const canRefresh = hasPositions || hasFavorites;
   const message = notice || (yahooDown ? `Yahoo is cooling down until ${timeLabel(blockedUntil!)}. Showing stored prices.` : yahooUnavailable ? "Yahoo is not available right now. Showing stored prices." : "");
   return <section className={`summary-strip tile${updating ? " is-updating" : ""}`} data-testid="portfolio-summary-strip" aria-label="All portfolios total" aria-busy={loading || updating}>
     {loading && !data ? <>
@@ -46,7 +49,7 @@ export function SummaryStrip({ data, loading, failed, updating, progress, notice
         {updating && <span className="summary-updating" role="status"><span className="spinner" aria-hidden="true" />Updating prices…{progress && progress.total > 0 ? ` ${progress.done}/${progress.total}` : ""}</span>}
         {!updating && hasPositions && <p className="summary-asof"><AsOf summary={total} /></p>}
         {message && !updating && <p className="summary-note" role="status">{message}</p>}
-        {hasPositions && <button type="button" className="summary-refresh" disabled={updating || yahooDown} onClick={onRefresh}>{updating ? "Updating…" : refreshLabel(refresh?.estimate?.requests ?? 0)}</button>}
+        {canRefresh && <button type="button" className="summary-refresh" disabled={updating || yahooDown} onClick={onRefresh}>{updating ? "Updating…" : refreshLabel(refresh?.estimate?.requests ?? 0)}</button>}
       </div>
     </>}
   </section>;

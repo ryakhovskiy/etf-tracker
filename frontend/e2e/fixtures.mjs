@@ -98,7 +98,7 @@ function dividends(year) {
   };
 }
 
-export async function mockAPI(page, { loggedIn = true, routingContext = page, priceJobs = new Map() } = {}) {
+export async function mockAPI(page, { loggedIn = true, routingContext = page, priceJobs = new Map(), dividendJobs = new Map() } = {}) {
   const unexpected = [];
   // PWA tests use context routing so pass-through requests remain mocked while
   // a real service worker controls the page. Existing tests keep page routing.
@@ -114,6 +114,11 @@ export async function mockAPI(page, { loggedIn = true, routingContext = page, pr
     if (path === '/auth/refresh') return json({ error: { code: 'UNAUTHORIZED', message: 'Please sign in.' } }, 401);
     if (path === '/auth/logout') return json({ ok: true });
     if (method === 'GET') {
+      if (path.startsWith('/api/dividend-sync-jobs/')) {
+        const job = dividendJobs.get(path.slice('/api/dividend-sync-jobs/'.length));
+        if (job) return json(await job.read(url.searchParams.get('since')));
+        return json({ error: { code: 'NOT_FOUND', message: 'Missing dividend sync job' } }, 404);
+      }
       if (path.startsWith('/api/price-fetch-jobs/')) {
         const job = priceJobs.get(path.slice('/api/price-fetch-jobs/'.length));
         if (job) return json(await job.read(url.searchParams.get('since')));
@@ -134,6 +139,11 @@ export async function mockAPI(page, { loggedIn = true, routingContext = page, pr
       if (path === '/api/instruments/search') return json([{ id: 3, ticker: 'SAP.DE', name: 'SAP SE', type: 'STOCK', isin: 'DE0007164600', wkn: '716460', inPortfolio: false }]);
     }
     if (method === 'POST' && path === '/api/price-refresh-jobs') return json({ started: false, reason: 'FRESH' });
+    if (method === 'POST' && path === '/api/portfolios/1/dividend-sync') {
+      const jobId = `dividend-job-${dividendJobs.size + 1}`;
+      dividendJobs.set(jobId, priceJob({ status: 'DONE', done: instruments.length, total: instruments.length, items: instruments.map(item => ({ instrumentId: item.id, status: 'OK' })) }));
+      return json({ jobId }, 202);
+    }
     if (method === 'POST' && path === '/api/portfolios/1/price-fetch-jobs') {
       const { instrumentIds } = request.postDataJSON();
       const jobId = `fixture-job-${priceJobs.size + 1}`;

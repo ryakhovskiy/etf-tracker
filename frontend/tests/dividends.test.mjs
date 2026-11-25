@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { test, afterEach } from 'node:test';
 import { JSDOM } from 'jsdom';
 import React from 'react';
+import { priceJob as dividendJob } from './fixtures/price-job.mjs';
 const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
 for (const key of ['window', 'document', 'HTMLElement', 'SVGElement', 'Node', 'MutationObserver', 'HTMLDialogElement', 'sessionStorage', 'KeyboardEvent', 'MouseEvent']) globalThis[key] = dom.window[key];
 globalThis.self = dom.window;
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
-const { render, screen, fireEvent, waitFor, cleanup, within } = await import('@testing-library/react');
+const { render, screen, fireEvent, waitFor, cleanup, within, act } = await import('@testing-library/react');
 const { AppRouterContext } = await import('next/dist/shared/lib/app-router-context.shared-runtime.js');
 const { SearchParamsContext, PathnameContext } = await import('next/dist/shared/lib/hooks-client-context.shared-runtime.js');
 const { RouterContext } = await import('next/dist/shared/lib/router-context.shared-runtime.js');
@@ -184,11 +185,16 @@ test('clicking an entry opens a popover with its details', async t => {
 });
 
 test('stale data syncs in the background: cached data shows at once, progress is inline, the calendar reloads after the job', async t => {
- let gets = 0; const posted = []; let polls = 0;
+ let gets = 0; const posted = [], polls = [];
+ const progress = dividendJob({ status: 'RUNNING', done: 1, total: 2, items: [] });
+ t.after(() => progress.dispose());
  t.mock.method(globalThis, 'fetch', async (url, init) => {
   if (url.includes('/dividends?')) { gets++; return json(calendar(Y, gets === 1 ? [entry()] : [entry(), entry({ instrumentId: 9, ticker: 'NEW.DE', exDate: `${Y}-06-02` })], { sync: { provider: 'YAHOO', lastSyncedAt: '2026-11-04T13:32:00Z', stale: [9], errors: [], jobId: null } })); }
   if (url.endsWith('/dividend-sync')) { posted.push(JSON.parse(init.body)); return json({ jobId: 'j1' }, 202); }
-  if (url.endsWith('/dividend-sync-jobs/j1')) { polls++; return json(polls === 1 ? { status: 'RUNNING', done: 1, total: 2, items: [] } : { status: 'DONE', done: 2, total: 2, items: [] }); }
+  if (new URL(url, 'http://localhost').pathname.endsWith('/dividend-sync-jobs/j1')) {
+   const since = new URL(url, 'http://localhost').searchParams.get('since'); polls.push(since);
+   return json(await progress.read(since, { signal: init.signal }));
+  }
   throw Error(`Unexpected ${url}`);
  });
  render(tree());
@@ -197,6 +203,8 @@ test('stale data syncs in the background: cached data shows at once, progress is
  await gridHas('ISPA.DE'); // cached entries stay visible during the sync
  assert.equal(screen.getByRole('button', { name: 'Refreshing…' }).disabled, true);
  assert.deepEqual(posted, [{ scope: 'STALE' }]);
+ await waitFor(() => assert.deepEqual(polls, [null, '1']));
+ await act(async () => progress.publish({ status: 'DONE', done: 2 }));
  await gridHas('NEW.DE');
  assert.equal(gets, 2);
  await waitFor(() => assert.equal(screen.getByRole('button', { name: 'Refresh dividends' }).disabled, false));
@@ -212,7 +220,7 @@ test('refresh queues every item, joins a running sync and shows the error banner
    { instrumentId: 2, label: 'MSFT', message: 'Yahoo Finance has no listing for this instrument.', at: '2026-11-05T09:00:00Z', lastSyncedAt: null },
   ] } }));
   if (url.endsWith('/dividend-sync')) { posted.push(JSON.parse(init.body)); return json({ error: { code: 'SYNC_RUNNING', message: 'A dividend sync is already running for this portfolio.', jobId: 'other' } }, 409); }
-  if (url.endsWith('/dividend-sync-jobs/other')) { polls++; return json({ status: 'DONE', done: 3, total: 3, items: [] }); }
+  if (new URL(url, 'http://localhost').pathname.endsWith('/dividend-sync-jobs/other')) { polls++; return json({ version: 1, status: 'DONE', done: 3, total: 3, items: [] }); }
   throw Error(`Unexpected ${url}`);
  });
  render(tree());
@@ -228,18 +236,23 @@ test('refresh queues every item, joins a running sync and shows the error banner
 });
 
 test('a sync already running when the tab opens is followed instead of starting another', async t => {
- let posts = 0, polls = 0;
+ let posts = 0; const polls = [];
+ const progress = dividendJob({ status: 'RUNNING', done: 0, total: 2, items: [] });
+ t.after(() => progress.dispose());
  t.mock.method(globalThis, 'fetch', async (url, init) => {
   if (url.includes('/dividends?')) return json(calendar(Y, [], { sync: { provider: 'YAHOO', lastSyncedAt: null, stale: [1, 2], errors: [], jobId: 'running' } }));
   if (url.endsWith('/dividend-sync')) { posts++; return json({ jobId: 'x' }, 202); }
-  if (url.endsWith('/dividend-sync-jobs/running')) { polls++; return json({ status: 'RUNNING', done: 0, total: 2, items: [] }); }
+  if (new URL(url, 'http://localhost').pathname.endsWith('/dividend-sync-jobs/running')) {
+   const since = new URL(url, 'http://localhost').searchParams.get('since'); polls.push(since);
+   return json(await progress.read(since, { signal: init.signal }));
+  }
   throw Error(`Unexpected ${url}`);
  });
  render(tree());
  await screen.findByText('0/2 instruments');
  assert.ok(screen.getByText('Dividend data not loaded yet · Yahoo Finance'));
  assert.equal(posts, 0);
- assert.ok(polls >= 1);
+ await waitFor(() => assert.deepEqual(polls, [null, '1']));
 });
 
 test('skeleton cards while loading; the tab sits between Transactions and Import', async t => {

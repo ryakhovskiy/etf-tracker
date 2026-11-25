@@ -11,12 +11,12 @@ function fixturePage() {
   return {
     url: () => 'http://localhost/',
     async route(pattern, handler) { routes.push({ pattern, handler }); },
-    request(path) {
+    request(path, { method = 'GET', body } = {}) {
       const url = new URL(path, 'http://localhost').href;
       const route = routes.toReversed().find(({ pattern }) => pattern instanceof RegExp ? pattern.test(url) : url.endsWith(pattern.replace('**', '')));
       assert.ok(route, `No fixture route for ${path}`);
       return route.handler({
-        request: () => ({ url: () => url, method: () => 'GET' }),
+        request: () => ({ url: () => url, method: () => method, postDataJSON: () => body }),
         fulfill: async ({ json }) => json,
       });
     },
@@ -64,4 +64,49 @@ test('general browser fixture holds each current version until a controlled job 
     assert.equal((await page.request('/api/price-fetch-jobs/controlled?since=3')).version, 3);
     assert.deepEqual(unexpected, []);
   } finally { job.dispose(); }
+});
+
+test('dividend browser fixture holds since until progress changes, then answers DONE immediately', async () => {
+  const page = fixturePage();
+  const items = [{ instrumentId: 1, status: 'PENDING' }, { instrumentId: 2, status: 'PENDING' }];
+  const job = priceJob({ status: 'RUNNING', done: 0, total: 2, items });
+  const unexpected = await mockAPI(page, { dividendJobs: new Map([['dividend-controlled', job]]) });
+  try {
+    const first = await page.request('/api/dividend-sync-jobs/dividend-controlled');
+    assert.equal(first.version, 1);
+    assert.equal(first.done, 0);
+    let settled = false;
+    const held = page.request('/api/dividend-sync-jobs/dividend-controlled?since=1').then(value => { settled = true; return value; });
+    await setImmediate();
+    assert.equal(settled, false, 'an unchanged dividend fixture must hold the request');
+    job.publish({ done: 1, items: [{ ...items[0], status: 'OK' }, items[1]] });
+    const progress = await held;
+    assert.equal(progress.version, 2);
+    assert.equal(progress.done, 1);
+    const finished = page.request('/api/dividend-sync-jobs/dividend-controlled?since=2');
+    assert.equal(job.waiting, 1);
+    job.publish({ status: 'DONE', done: 2, items: items.map(item => ({ ...item, status: 'OK' })) });
+    assert.equal((await finished).status, 'DONE');
+    const done = await page.request('/api/dividend-sync-jobs/dividend-controlled?since=3');
+    assert.equal(done.status, 'DONE');
+    assert.equal(done.version, 3);
+    assert.equal(done.done, done.total);
+    assert.equal(job.waiting, 0);
+    assert.deepEqual(unexpected, []);
+  } finally { job.dispose(); }
+});
+
+test('a dividend sync started in the browser fixture yields a versioned completed job', async () => {
+  const page = fixturePage();
+  const jobs = new Map();
+  const unexpected = await mockAPI(page, { dividendJobs: jobs });
+  try {
+    const created = await page.request('/api/portfolios/1/dividend-sync', { method: 'POST', body: { scope: 'ALL' } });
+    const done = await page.request(`/api/dividend-sync-jobs/${created.jobId}`);
+    assert.equal(done.version, 1);
+    assert.equal(done.status, 'DONE');
+    assert.equal(done.done, done.total);
+    assert.equal(done.total, done.items.length);
+    assert.deepEqual(unexpected, []);
+  } finally { for (const job of jobs.values()) job.dispose(); }
 });

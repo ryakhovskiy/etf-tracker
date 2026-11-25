@@ -63,7 +63,7 @@ test('star order, native long-press drag, reload persistence and unstar work acr
     for (const item of [favoriteInstruments[1], favoriteInstruments[0]]) {
       const button = page.getByRole('button', { name: `Add ${item.name} to favorites`, exact: true });
       await button.click();
-      await expect(button).toHaveAttribute('aria-pressed', 'true');
+      await expect(page.getByRole('button', { name: `Remove ${item.name} from favorites`, exact: true })).toHaveAttribute('aria-pressed', 'true');
       await expect.poll(() => fixture.api.ids).toContain(item.instrumentId);
     }
     await page.goto('/');
@@ -77,7 +77,7 @@ test('star order, native long-press drag, reload persistence and unstar work acr
     await page.goto('/portfolios/1/items');
     const remove = page.getByRole('button', { name: `Remove ${favoriteInstruments[0].name} from favorites`, exact: true });
     await remove.click();
-    await expect(remove).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByRole('button', { name: `Add ${favoriteInstruments[0].name} to favorites`, exact: true })).toHaveAttribute('aria-pressed', 'false');
     await expect.poll(() => fixture.api.ids).toEqual([2]);
     await page.goto('/');
     await expectOrder(page, [2]);

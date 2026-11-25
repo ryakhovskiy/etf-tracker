@@ -35,8 +35,8 @@ type priceJob struct {
 	Kind    string `json:"kind,omitempty"`
 	user    string
 	created time.Time
-	// changed is closed (and dropped) by touch to wake the waiters of this job.
-	changed chan struct{}
+	// changed wakes the waiters of this job on every touch.
+	changed jobSignal
 }
 type priceJobs struct {
 	mu      sync.Mutex

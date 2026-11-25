@@ -100,7 +100,7 @@ func awaitRegistered(t *testing.T, h *Handler, job *priceJob) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		h.jobs.mu.Lock()
-		parked := job.changed != nil
+		parked := job.changed.ch != nil
 		h.jobs.mu.Unlock()
 		if parked {
 			return

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"holdings/backend/internal/database"
@@ -13,30 +14,41 @@ import (
 // WriteTimeout is 15 s (cmd/api/main.go), so the answer is always written in time.
 const jobWaitMax = 10 * time.Second
 
-// touch records a change of job and wakes everyone waiting for it. The caller
-// holds j.mu. Waiters take their channel under the same lock that guards the
-// version they compared, so a change cannot slip in between check and wait.
-func (j *priceJobs) touch(job *priceJob) {
-	job.Version++
-	if job.changed != nil {
-		close(job.changed)
-		job.changed = nil
+// jobSignal is the wake-up half of a long-polled job (price and dividend jobs
+// share it). All of its methods are called with the lock that guards the job's
+// version held. A waiter takes its channel under the same lock that guards the
+// version it compared, so a change cannot slip in between check and wait.
+type jobSignal struct{ ch chan struct{} }
+
+// wake releases everyone waiting for the next change.
+func (s *jobSignal) wake() {
+	if s.ch != nil {
+		close(s.ch)
+		s.ch = nil
 	}
 }
 
-// changedChan returns the channel that touch will close. The caller holds j.mu.
-func (j *priceJobs) changedChan(job *priceJob) <-chan struct{} {
-	if job.changed == nil {
-		job.changed = make(chan struct{})
+// wait returns the channel that the next wake closes.
+func (s *jobSignal) wait() <-chan struct{} {
+	if s.ch == nil {
+		s.ch = make(chan struct{})
 	}
-	return job.changed
+	return s.ch
+}
+
+// touch records a change of job and wakes everyone waiting for it. The caller
+// holds j.mu.
+func (j *priceJobs) touch(job *priceJob) {
+	job.Version++
+	job.changed.wake()
 }
 
 // snapshot copies a job for encoding outside the lock. The caller holds j.mu.
 func (job *priceJob) snapshot() priceJob {
 	s := *job
-	s.Items = append([]priceItem(nil), job.Items...)
-	s.changed = nil
+	s.Items = make([]priceItem, len(job.Items)) // never nil: it encodes as []
+	copy(s.Items, job.Items)
+	s.changed = jobSignal{}
 	return s
 }
 
@@ -63,24 +75,39 @@ func parseSince(r *http.Request) (since int64, long bool, err error) {
 // awaitJob returns a snapshot of the user's job, or false when there is none
 // (unknown, someone else's, or finished more than an hour ago). With long set it
 // first waits, at most jobWaitLimit, until the job's version exceeds since or the
-// job is DONE; the wait also ends when the client goes away or the handler closes,
-// and then the current state is returned. No lock is held while waiting.
+// job is DONE; see awaitChange.
 func (h *Handler) awaitJob(ctx context.Context, user, id string, since int64, long bool) (priceJob, bool) {
-	var timeout <-chan time.Time
-	for {
-		h.jobs.mu.Lock()
+	var snap priceJob
+	found := h.awaitChange(ctx, &h.jobs.mu, long, func(long bool) (found, ready bool, wait <-chan struct{}) {
 		j := h.jobs.entries[id]
 		if j == nil || j.user != user || (j.Status == "DONE" && time.Since(j.created) > time.Hour) {
-			h.jobs.mu.Unlock()
-			return priceJob{}, false
+			return false, true, nil
 		}
 		if !long || j.Version > since || j.Status == "DONE" {
-			snap := j.snapshot()
-			h.jobs.mu.Unlock()
-			return snap, true
+			snap = j.snapshot()
+			return true, true, nil
 		}
-		changed := h.jobs.changedChan(j)
-		h.jobs.mu.Unlock()
+		return true, false, j.changed.wait()
+	})
+	return snap, found
+}
+
+// awaitChange is the long-poll loop shared by the job kinds. check runs with mu
+// held and says whether the job exists (found), whether the answer is ready (ready),
+// and otherwise returns the channel that the job's next change closes; when ready
+// it has captured what to answer. While not ready the loop waits, holding no lock,
+// at most jobWaitLimit; the wait also ends when the client goes away or the handler
+// drains or closes, and then check runs once more with long=false so the current
+// state is the answer.
+func (h *Handler) awaitChange(ctx context.Context, mu *sync.Mutex, long bool, check func(long bool) (found, ready bool, wait <-chan struct{})) bool {
+	var timeout <-chan time.Time
+	for {
+		mu.Lock()
+		found, ready, changed := check(long)
+		mu.Unlock()
+		if ready {
+			return found
+		}
 		if timeout == nil {
 			timer := time.NewTimer(h.jobWaitLimit())
 			defer timer.Stop()

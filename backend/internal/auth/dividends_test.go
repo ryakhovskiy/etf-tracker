@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -14,12 +16,10 @@ import (
 	"holdings/backend/internal/marketdata"
 )
 
-// fakeClock starts on Saturday 2026-11-07 12:00 Berlin and only moves when told
-// to (or when the sync job sleeps).
+// fakeClock starts on Saturday 2026-11-07 12:00 Berlin and only moves when told to.
 type fakeClock struct {
-	mu     sync.Mutex
-	now    time.Time
-	sleeps []time.Duration
+	mu  sync.Mutex
+	now time.Time
 }
 
 func newFakeClock() *fakeClock {
@@ -31,13 +31,6 @@ func (c *fakeClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	c.now = c.now.Add(d)
 	c.mu.Unlock()
-}
-func (c *fakeClock) Sleep(ctx context.Context, d time.Duration) error {
-	c.mu.Lock()
-	c.sleeps = append(c.sleeps, d)
-	c.now = c.now.Add(d)
-	c.mu.Unlock()
-	return ctx.Err()
 }
 
 // seriesFX answers ECB time series (one rate per weekday) and counts requests per currency.
@@ -74,7 +67,7 @@ func dividendSetup(t *testing.T) (*Handler, http.Handler, []*http.Cookie, *recor
 	h, handler, cookies, y, _ := yahooSetup(t)
 	clock := newFakeClock()
 	fx := &seriesFX{}
-	h.dividends.now, h.dividends.sleep = clock.Now, clock.Sleep
+	h.dividends.now = clock.Now
 	h.fx.Now, h.fx.Provider = clock.Now, fx
 	return h, handler, cookies, y, clock, fx
 }
@@ -306,53 +299,82 @@ func TestDividendGBXAndUnsupportedCurrency(t *testing.T) {
 	}
 }
 
-// fakeDividends records calls and can fail or block them.
+// fakeDividends records the requests, can fail them, and can hold them until the
+// test lets them go. It counts the requests in flight and remembers the peak.
 type fakeDividends struct {
-	mu      sync.Mutex
-	clock   *fakeClock
-	calls   []string // "id from..to@time"
-	at      []time.Time
-	fail    map[int64]error
-	block   chan struct{}
-	elapsed time.Duration // simulated request time
+	mu       sync.Mutex
+	calls    []string // "id from..to", in the order the requests started
+	fail     map[int64]error
+	block    chan struct{}           // holds every request until closed
+	gate     map[int64]chan struct{} // holds that instrument's request until closed
+	started  chan int64              // receives the id of every request as it starts
+	inflight int
+	peak     int
+	done     []int64 // ids in the order the requests returned
 }
 
 func (f *fakeDividends) Dividends(ctx context.Context, inst marketdata.Instrument, from, to time.Time) (*marketdata.DividendHistory, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, fmt.Sprintf("%d %s..%s", inst.ID, from.Format("2006-01-02"), to.Format("2006-01-02")))
-	f.at = append(f.at, f.clock.Now())
-	block, err := f.block, f.fail[inst.ID]
+	f.inflight++
+	f.peak = max(f.peak, f.inflight)
+	block, gate, err := f.block, f.gate[inst.ID], f.fail[inst.ID]
+	started := f.started
 	f.mu.Unlock()
-	if block != nil {
+	defer func() {
+		f.mu.Lock()
+		f.inflight--
+		f.done = append(f.done, inst.ID)
+		f.mu.Unlock()
+	}()
+	if started != nil {
+		started <- inst.ID
+	}
+	for _, hold := range []chan struct{}{block, gate} {
+		if hold == nil {
+			continue
+		}
 		select {
-		case <-block:
+		case <-hold:
 		case <-ctx.Done(): // a failed test cancels the job on Close
 			return nil, ctx.Err()
 		}
 	}
-	f.clock.Advance(f.elapsed)
 	if err != nil {
 		return nil, err
 	}
 	return &marketdata.DividendHistory{Currency: "EUR", Events: []marketdata.DividendEvent{{ExDate: "2026-04-15", AmountPerShare: "0.5"}}, CloseBefore: map[string]string{"2026-04-15": "50"}, LatestClose: "51", LatestCloseDate: "2026-11-06"}, nil
 }
-func (f *fakeDividends) snapshot() ([]string, []time.Time) {
+
+// snapshot returns the requests so far, sorted by instrument: parallel requests
+// start in any order.
+func (f *fakeDividends) snapshot() []string { return f.snapshotFrom(0) }
+
+// snapshotFrom is snapshot without the first n requests (those of earlier syncs).
+func (f *fakeDividends) snapshotFrom(n int) []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string(nil), f.calls...), append([]time.Time(nil), f.at...)
+	out := append([]string(nil), f.calls[n:]...)
+	sort.Slice(out, func(a, b int) bool {
+		x, _ := strconv.Atoi(strings.Fields(out[a])[0])
+		y, _ := strconv.Atoi(strings.Fields(out[b])[0])
+		return x < y
+	})
+	return out
 }
 
-func TestDividendSyncSpacingRangesAndErrors(t *testing.T) {
+func (f *fakeDividends) peakInflight() int { f.mu.Lock(); defer f.mu.Unlock(); return f.peak }
+
+func TestDividendSyncRangesAndErrors(t *testing.T) {
 	h, handler, cookies, y, clock, _ := dividendSetup(t)
-	fake := &fakeDividends{clock: clock, elapsed: 300 * time.Millisecond}
+	fake := &fakeDividends{}
 	h.dividends.provider = func(string) marketdata.DividendProvider { return fake }
 	path := yahooPortfolio(t, h, 20, 18, 7)
 
 	job := waitDividendJob(t, handler, startDividendSync(t, handler, path, "", cookies), cookies)
-	calls, at := fake.snapshot()
-	// One instrument at a time, at least one second apart: 300 ms request + 700 ms wait.
-	if job.Done != 3 || len(at) != 3 || at[1].Sub(at[0]) != time.Second || at[2].Sub(at[1]) != time.Second || len(clock.sleeps) != 2 || clock.sleeps[0] != 700*time.Millisecond {
-		t.Fatalf("%+v %v %v", job, at, clock.sleeps)
+	calls := fake.snapshot()
+	if job.Done != 3 || len(calls) != 3 {
+		t.Fatalf("%+v %v", job, calls)
 	}
 	// No transactions: the first sync covers 1 January of last year through today.
 	if calls[0] != "7 2025-01-01..2026-11-07" || calls[2] != "20 2025-01-01..2026-11-07" || y.total() != 0 {
@@ -361,15 +383,40 @@ func TestDividendSyncSpacingRangesAndErrors(t *testing.T) {
 
 	// Nothing is stale now: a STALE sync has nothing to do.
 	job = waitDividendJob(t, handler, startDividendSync(t, handler, path, `{"scope":"STALE"}`, cookies), cookies)
-	if calls, _ = fake.snapshot(); job.Total != 0 || job.Status != "DONE" || len(calls) != 3 {
+	if calls = fake.snapshot(); job.Total != 0 || job.Status != "DONE" || len(calls) != 3 {
 		t.Fatalf("%+v", job)
 	}
 	// Eight days later all are stale; a later sync starts 400 days before the last one.
 	clock.Advance(8 * 24 * time.Hour)
 	fake.fail = map[int64]error{7: marketdata.ErrYahooLimit}
-	job = waitDividendJob(t, handler, startDividendSync(t, handler, path, `{"scope":"STALE"}`, cookies), cookies)
-	calls, _ = fake.snapshot()
-	if job.Total != 3 || calls[4] != "18 2025-10-03..2026-11-15" {
+	// Everything is in flight before SAP's 429 comes back, so the 429 skips nobody.
+	fake.gate = map[int64]chan struct{}{7: make(chan struct{}), 18: make(chan struct{}), 20: make(chan struct{})}
+	fake.started = make(chan int64, 16)
+	key := startDividendSync(t, handler, path, `{"scope":"STALE"}`, cookies)
+	for range 3 {
+		select {
+		case <-fake.started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the three requests did not all start")
+		}
+	}
+	// SAP fails first; the others finish afterwards.
+	close(fake.gate[7])
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		fake.mu.Lock()
+		n := len(fake.done)
+		fake.mu.Unlock()
+		if n == 3+1 { // the first sync's three requests, then SAP's
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(fake.gate[18])
+	close(fake.gate[20])
+	job = waitDividendJob(t, handler, key, cookies)
+	calls = fake.snapshot()
+	if job.Total != 3 || len(calls) != 6 || fake.snapshotFrom(3)[1] != "18 2025-10-03..2026-11-15" {
 		t.Fatalf("%+v %v", job, calls)
 	}
 	// A failure keeps the cached events and is reported with the last good sync.
@@ -388,22 +435,23 @@ func TestDividendSyncSpacingRangesAndErrors(t *testing.T) {
 		t.Fatal(cal.Sync.Stale)
 	}
 	// A transaction from 2023 needs data from 2022: every item is stale and starts there.
-	fake.fail = nil
+	fake.fail, fake.gate, fake.started = nil, nil, nil
+	before := len(calls)
 	buy(t, h, path, "2023-02-01", 20, "1")
 	cal = getCalendar(t, handler, path, 2026, cookies)
 	if len(cal.Sync.Stale) != 3 || cal.Bounds.MinYear != 2023 {
 		t.Fatalf("%+v", cal.Sync)
 	}
 	waitDividendJob(t, handler, startDividendSync(t, handler, path, `{"scope":"STALE"}`, cookies), cookies)
-	calls, _ = fake.snapshot()
-	if strings.Join(calls[len(calls)-3:], ",") != "7 2022-01-01..2026-11-15,18 2022-01-01..2026-11-15,20 2022-01-01..2026-11-15" {
+	calls = fake.snapshotFrom(before)
+	if strings.Join(calls, ",") != "7 2022-01-01..2026-11-15,18 2022-01-01..2026-11-15,20 2022-01-01..2026-11-15" {
 		t.Fatal(calls)
 	}
 }
 
 func TestDividendSyncRunsOncePerPortfolio(t *testing.T) {
-	h, handler, cookies, _, clock, _ := dividendSetup(t)
-	fake := &fakeDividends{clock: clock, block: make(chan struct{})}
+	h, handler, cookies, _, _, _ := dividendSetup(t)
+	fake := &fakeDividends{block: make(chan struct{})}
 	h.dividends.provider = func(string) marketdata.DividendProvider { return fake }
 	path := yahooPortfolio(t, h, 20, 18)
 	key := startDividendSync(t, handler, path, "", cookies)

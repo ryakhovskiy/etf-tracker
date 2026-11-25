@@ -6,16 +6,13 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"holdings/backend/internal/database"
 	"holdings/backend/internal/httpapi"
 	"holdings/backend/internal/marketdata"
 )
-
-// dividendSpacing keeps instruments of a sync at least this far apart: Yahoo
-// throttles bursts.
-const dividendSpacing = time.Second
 
 // dividendRefetchDays is how far before the last sync a later sync starts, so
 // the events that form the forecast basis are always refreshed.
@@ -30,13 +27,18 @@ type dividendJobItem struct {
 }
 
 type dividendJob struct {
-	Status    string            `json:"status"` // RUNNING, DONE
-	Done      int               `json:"done"`
-	Total     int               `json:"total"`
-	Items     []dividendJobItem `json:"items"`
+	Status string            `json:"status"` // RUNNING, DONE
+	Done   int               `json:"done"`
+	Total  int               `json:"total"`
+	Items  []dividendJobItem `json:"items"`
+	// Version starts at 1 and grows with every change (see dividendJobs.touch); a
+	// client long-polls with ?since=<version> to be answered when it changes.
+	Version   int64 `json:"version"`
 	user      string
 	portfolio int64
 	created   time.Time
+	// changed wakes the waiters of this job on every touch.
+	changed jobSignal
 }
 
 type dividendJobs struct {
@@ -45,14 +47,28 @@ type dividendJobs struct {
 	running map[int64]string // portfolio -> job key
 }
 
+// touch records a change of job and wakes everyone waiting for it. The caller
+// holds j.mu.
+func (j *dividendJobs) touch(job *dividendJob) {
+	job.Version++
+	job.changed.wake()
+}
+
+// snapshot copies a job for encoding outside the lock. The caller holds j.mu.
+func (job *dividendJob) snapshot() dividendJob {
+	s := *job
+	s.Items = make([]dividendJobItem, len(job.Items)) // never nil: it encodes as []
+	copy(s.Items, job.Items)
+	s.changed = jobSignal{}
+	return s
+}
+
 // dividendSync bundles what the sync job depends on so tests can replace the
 // provider and the clock.
 type dividendSync struct {
 	jobs     *dividendJobs
 	provider func(user string) marketdata.DividendProvider
 	now      func() time.Time
-	sleep    func(context.Context, time.Duration) error
-	spacing  time.Duration
 	ctx      context.Context
 	stop     context.CancelFunc
 }
@@ -63,19 +79,8 @@ func newDividendSync(h *Handler) *dividendSync {
 		jobs:     &dividendJobs{entries: map[string]*dividendJob{}, running: map[int64]string{}},
 		provider: func(user string) marketdata.DividendProvider { return yahooDividends{h: h, user: user} },
 		now:      time.Now,
-		sleep: func(ctx context.Context, d time.Duration) error {
-			t := time.NewTimer(d)
-			defer t.Stop()
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-t.C:
-				return nil
-			}
-		},
-		spacing: dividendSpacing,
-		ctx:     ctx,
-		stop:    stop,
+		ctx:      ctx,
+		stop:     stop,
 	}
 }
 
@@ -125,6 +130,9 @@ func (h *Handler) syncInstrument(ctx context.Context, provider marketdata.Divide
 	const saveFailed = "Could not save dividend data."
 	state, err := h.store.DividendSyncState(ctx, id)
 	if err != nil {
+		if ctx.Err() != nil {
+			return dividendErrorMessage(ctx.Err()) // shutting down: not a storage failure
+		}
 		h.logger.Error("could not read dividend sync state", "instrument", id, "error", err.Error())
 		return saveFailed
 	}
@@ -150,47 +158,74 @@ func (h *Handler) syncInstrument(ctx context.Context, provider marketdata.Divide
 		return msg
 	}
 	if err = h.store.SaveDividends(ctx, id, hist, marketdata.ProviderYahoo, from, today, now); err != nil {
+		if ctx.Err() != nil {
+			return dividendErrorMessage(ctx.Err())
+		}
 		h.logger.Error("could not store dividends", "instrument", id, "error", err.Error())
 		return saveFailed
 	}
 	return ""
 }
 
-// runDividendSync processes the instruments one at a time, at least
-// h.dividends.spacing apart.
+// limitWatch stops the sync from sending once Yahoo has answered 429: the requests
+// in flight finish, and an instrument that has not started fails with the rate-limit
+// error without a request (and is recorded like any other failed fetch).
+type limitWatch struct {
+	marketdata.DividendProvider
+	limited *atomic.Bool
+}
+
+func (w limitWatch) Dividends(ctx context.Context, inst marketdata.Instrument, from, to time.Time) (*marketdata.DividendHistory, error) {
+	if w.limited.Load() {
+		return nil, marketdata.ErrYahooLimit
+	}
+	hist, err := w.DividendProvider.Dividends(ctx, inst, from, to)
+	if errors.Is(err, marketdata.ErrYahooLimit) {
+		w.limited.Store(true)
+	}
+	return hist, err
+}
+
+// runDividendSync syncs the instruments in parallel, at most the Yahoo gateway's
+// concurrency at a time (the gateway enforces the budget and the 429 cool-down).
+// Instruments finish in any order; each one's status is set by its index, and every
+// change bumps the job's version for the long pollers.
 func (h *Handler) runDividendSync(ctx context.Context, key string, job *dividendJob, neededFrom string) {
-	defer h.bg.Done()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
 	d := h.dividends
-	provider := d.provider(job.user)
-	var last time.Time
+	var limited atomic.Bool
+	provider := limitWatch{d.provider(job.user), &limited}
+	d.jobs.mu.Lock()
+	ids := make([]int64, len(job.Items))
 	for i := range job.Items {
-		d.jobs.mu.Lock()
-		id := job.Items[i].InstrumentID
-		d.jobs.mu.Unlock()
-		var msg string
-		if !last.IsZero() {
-			if wait := d.spacing - d.now().Sub(last); wait > 0 {
-				if err := d.sleep(ctx, wait); err != nil {
-					msg = dividendErrorMessage(err)
-				}
-			}
-		}
-		if msg == "" {
-			last = d.now()
-			msg = h.syncInstrument(ctx, provider, id, neededFrom)
-		}
+		ids[i] = job.Items[i].InstrumentID
+	}
+	d.jobs.mu.Unlock()
+	set := func(i int, msg string) {
 		d.jobs.mu.Lock()
 		job.Items[i].Status = "OK"
 		if msg != "" {
 			job.Items[i].Status, job.Items[i].Error = "ERROR", msg
 		}
 		job.Done++
+		d.jobs.touch(job)
 		d.jobs.mu.Unlock()
 	}
+	forEachParallel(ctx, len(ids), h.yahoo.Concurrency(), func(i int) {
+		// forEachParallel may hand out a slot that frees up just as ctx ends: an item
+		// that starts after that is interrupted, whatever the store would answer.
+		if ctx.Err() != nil {
+			set(i, dividendErrorMessage(ctx.Err()))
+			return
+		}
+		set(i, h.syncInstrument(ctx, provider, ids[i], neededFrom))
+	}, func(i int) {
+		set(i, dividendErrorMessage(ctx.Err()))
+	})
 	d.jobs.mu.Lock()
 	job.Status = "DONE"
+	d.jobs.touch(job)
 	if d.jobs.running[job.portfolio] == key {
 		delete(d.jobs.running, job.portfolio)
 	}
@@ -261,7 +296,7 @@ func (h *Handler) registerDividendRoutes(mux *http.ServeMux) {
 		d := h.dividends
 		now := d.now()
 		today := marketdata.BerlinDay(now)
-		job := &dividendJob{Status: "RUNNING", Items: []dividendJobItem{}, user: user, portfolio: id, created: now}
+		job := &dividendJob{Version: 1, Status: "RUNNING", Items: []dividendJobItem{}, user: user, portfolio: id, created: now}
 		for _, it := range snap.Items {
 			if in.Scope == "ALL" || snap.IsStale(it.InstrumentID, now, today) {
 				job.Items = append(job.Items, dividendJobItem{InstrumentID: it.InstrumentID, Status: "PENDING"})
@@ -290,21 +325,45 @@ func (h *Handler) registerDividendRoutes(mux *http.ServeMux) {
 			job.Status = "DONE"
 		} else {
 			d.jobs.running[id] = key
-			h.bg.Add(1)
-			go h.runDividendSync(d.ctx, key, job, snap.NeededFrom(today))
+			if !h.goBackground(func() { h.runDividendSync(d.ctx, key, job, snap.NeededFrom(today)) }) {
+				// Closing: nothing can run any more. The job ends at once.
+				msg := dividendErrorMessage(context.Canceled)
+				for i := range job.Items {
+					job.Items[i].Status, job.Items[i].Error = "ERROR", msg
+				}
+				job.Done, job.Status = job.Total, "DONE"
+				delete(d.jobs.running, id)
+			}
 		}
 		d.jobs.mu.Unlock()
 		httpapi.JSON(w, 202, map[string]string{"jobId": key})
 	}))
+	// Answers at once, or with ?since=<version> when the job has changed since that
+	// version (long polling, see awaitChange). Every answer carries the job's version.
 	mux.HandleFunc("GET /api/dividend-sync-jobs/{jobId}", h.protected(func(w http.ResponseWriter, r *http.Request, user string) {
+		since, long, err := parseSince(r)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
 		d := h.dividends
-		d.jobs.mu.Lock()
-		defer d.jobs.mu.Unlock()
-		j := d.jobs.entries[r.PathValue("jobId")]
-		if j == nil || j.user != user || (j.Status == "DONE" && d.now().Sub(j.created) > time.Hour) {
+		id := r.PathValue("jobId")
+		var snap dividendJob
+		found := h.awaitChange(r.Context(), &d.jobs.mu, long, func(long bool) (found, ready bool, wait <-chan struct{}) {
+			j := d.jobs.entries[id]
+			if j == nil || j.user != user || (j.Status == "DONE" && d.now().Sub(j.created) > time.Hour) {
+				return false, true, nil
+			}
+			if !long || j.Version > since || j.Status == "DONE" {
+				snap = j.snapshot()
+				return true, true, nil
+			}
+			return true, false, j.changed.wait()
+		})
+		if !found {
 			apiError(w, 404, "NOT_FOUND", "Dividend sync job not found.")
 			return
 		}
-		httpapi.JSON(w, 200, j)
+		httpapi.JSON(w, 200, snap)
 	}))
 }

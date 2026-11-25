@@ -148,8 +148,11 @@ func (h *Handler) Close() {
 	h.closed = true
 	h.closeMu.Unlock()
 	h.cancel()
-	h.yahoo.Close()
+	// The dividend sync is cancelled before the Yahoo gateway closes: a sync waiting
+	// on the shared session build wakes with the gateway's cancellation, and must
+	// find its own context done, or it would record a shutdown as a provider failure.
 	h.dividends.stop()
+	h.yahoo.Close()
 	h.bg.Wait()
 	h.av.Close()
 }

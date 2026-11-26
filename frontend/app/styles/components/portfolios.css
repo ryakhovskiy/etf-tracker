@@ -145,6 +145,7 @@
   touch-action: manipulation;
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
+.favorite-tile { color: inherit; text-decoration: none; -webkit-user-drag: none; }
 .favorite-tile:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .favorite-name, .favorite-price, .favorite-change { display: block; min-width: 0; line-height: 1.35; }
 .favorite-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 14px; }

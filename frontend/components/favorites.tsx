@@ -5,7 +5,8 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { api, APIError } from "../lib/api";
 import { dateLabel } from "../lib/performance";
 import { sourceLabel, type SummaryAsOf } from "../lib/portfolio-summary";
@@ -34,13 +35,16 @@ function TileBody({ favorite }: { favorite: Favorite }) {
   </>;
 }
 
-function SortableTile({ favorite, disabled }: { favorite: Favorite; disabled: boolean }) {
+function SortableTile({ favorite, disabled, justDragged }: { favorite: Favorite; disabled: boolean; justDragged: { current: boolean } }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: favorite.instrumentId, disabled });
+  // A tap opens the title's page; a long-press drag that ends on the tile must not.
+  const open = (event: MouseEvent) => { if (justDragged.current || isDragging) event.preventDefault(); };
   return <li ref={setNodeRef} className="favorite-cell" style={{ transform: CSS.Transform.toString(transform), transition }}>
-    <div {...attributes} {...listeners} className={`favorite-tile tile${isDragging ? " is-placeholder" : ""}`} data-testid="favorite-tile" data-instrument-id={favorite.instrumentId}
-      aria-label={favoriteLabel(favorite)} onContextMenu={event => event.preventDefault()}>
+    <Link {...attributes} {...listeners} href={`/instruments/${favorite.instrumentId}`} role={undefined} aria-pressed={undefined} draggable={false} prefetch={false}
+      className={`favorite-tile tile${isDragging ? " is-placeholder" : ""}`} data-testid="favorite-tile" data-instrument-id={favorite.instrumentId}
+      aria-label={favoriteLabel(favorite)} onClick={open} onContextMenu={event => event.preventDefault()}>
       <TileBody favorite={favorite} />
-    </div>
+    </Link>
   </li>;
 }
 
@@ -61,6 +65,9 @@ export function Favorites({ updating, reloadKey = 0, onCountChange }: { updating
   const stale = useRef(false);
   const itemsRef = useRef<Favorite[] | null>(null);
   itemsRef.current = items;
+  // True from the lift until just after the drop: the click that ends a long press is not a tap.
+  const justDragged = useRef(false);
+  const releaseClick = () => { window.setTimeout(() => { justDragged.current = false; }, 250); };
   const notify = useRef(onCountChange); notify.current = onCountChange;
 
   /** Resolves true when the list on screen is the server's current one. */
@@ -92,7 +99,8 @@ export function Favorites({ updating, reloadKey = 0, onCountChange }: { updating
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: ACTIVATION }),
     useSensor(TouchSensor, { activationConstraint: ACTIVATION }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    // Enter opens the tile's page, so only Space lifts a tile (Space or Enter drops it).
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates, keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter"] } }),
   );
 
   const name = (id: unknown) => itemsRef.current?.find(f => f.instrumentId === id)?.name ?? "favorite";
@@ -107,11 +115,12 @@ export function Favorites({ updating, reloadKey = 0, onCountChange }: { updating
   };
 
   const dragStart = ({ active: lifted }: DragStartEvent) => {
+    justDragged.current = true;
     busy.current = true;
     setActive(itemsRef.current?.find(f => f.instrumentId === lifted.id) ?? null);
   };
   const dragEnd = async ({ active: lifted, over }: DragEndEvent) => {
-    setActive(null);
+    setActive(null); releaseClick();
     const before = itemsRef.current;
     const from = before?.findIndex(f => f.instrumentId === lifted.id) ?? -1;
     const to = over ? before?.findIndex(f => f.instrumentId === over.id) ?? -1 : -1;
@@ -135,7 +144,7 @@ export function Favorites({ updating, reloadKey = 0, onCountChange }: { updating
       setNotice(await load() ? "Your favorites changed elsewhere. They were reloaded." : "");
     }
   };
-  const dragCancel = () => { setActive(null); settle(); };
+  const dragCancel = () => { setActive(null); releaseClick(); settle(); };
 
   const asOf = items ? favoritesAsOf(items) : null;
   return <section className="favorites" data-testid="favorites" aria-labelledby="favorites-title">
@@ -151,7 +160,7 @@ export function Favorites({ updating, reloadKey = 0, onCountChange }: { updating
           onDragStart={dragStart} onDragEnd={e => void dragEnd(e)} onDragCancel={dragCancel}>
         <SortableContext items={favoriteIds(items)} strategy={rectSortingStrategy}>
           <ul className="favorites-grid" data-testid="favorites-list" aria-busy={saving || updating}>
-            {items.map(favorite => <SortableTile key={favorite.instrumentId} favorite={favorite} disabled={saving} />)}
+            {items.map(favorite => <SortableTile key={favorite.instrumentId} favorite={favorite} disabled={saving} justDragged={justDragged} />)}
           </ul>
         </SortableContext>
         <DragOverlay>{active && <div className="favorite-tile tile is-lifted" aria-hidden="true"><TileBody favorite={active} /></div>}</DragOverlay>

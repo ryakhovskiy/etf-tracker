@@ -32,6 +32,9 @@ type HistoryPoint struct {
 	Day      string `json:"date"`
 	Close    string `json:"close"`
 	Currency string `json:"currency"`
+	// FetchedAt identifies the SaveHistory call that stored the close (it is
+	// one timestamp per call). Not part of any API response; History only.
+	FetchedAt string `json:"-"`
 }
 
 // SaveHistory upserts daily closes for an instrument.
@@ -66,7 +69,7 @@ func (s *Store) HistoryDay(ctx context.Context, id int64, provider, day string) 
 
 // History returns stored closes in [from, to], ascending.
 func (s *Store) History(ctx context.Context, id int64, provider, from, to string) ([]HistoryPoint, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT day,close_e4,currency FROM price_history WHERE instrument_id=? AND provider=? AND day>=? AND day<=? ORDER BY day", id, provider, from, to)
+	rows, err := s.db.QueryContext(ctx, "SELECT day,close_e4,currency,fetched_at FROM price_history WHERE instrument_id=? AND provider=? AND day>=? AND day<=? ORDER BY day", id, provider, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +78,7 @@ func (s *Store) History(ctx context.Context, id int64, provider, from, to string
 	for rows.Next() {
 		var p HistoryPoint
 		var v int64
-		if err = rows.Scan(&p.Day, &v, &p.Currency); err != nil {
+		if err = rows.Scan(&p.Day, &v, &p.Currency, &p.FetchedAt); err != nil {
 			return nil, err
 		}
 		p.Close = decimalString(v, 4)

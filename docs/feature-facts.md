@@ -251,6 +251,58 @@ ordered; tiles on the portfolio list page follow `position`.
 - Another user's data is never visible: a title the caller does not hold or has
   not starred is `404`, never `403`.
 
+### Ticker detail view
+
+Tapping a favorite tile opens `/instruments/{i}`: the title's price chart in EUR with
+a marker for each of the user's buys, drawn at the **buy price** (green when it is at
+or below that day's close, red when above). The chart reuses the portfolio chart's
+look, period select (shared storage key `holdings:chart-period`) and pan/zoom
+controls. Backend contract:
+
+- `GET /api/instruments/{i}/chart` answers only for an instrument in one of the
+  caller's portfolios; any other (another user's, unknown, malformed) is
+  `404 NOT_FOUND`. No migration.
+- Response `{instrument:{id,name,isin,ticker}, favorite, latest:{priceEur, change:{amount,
+  percent}|null, asOf, reasons[]}, points:[{day,closeEur}], buys:[{day,units,
+  priceEur,portfolioId,portfolioName}], from, to, warning?}`.
+  - `favorite` is whether the caller has starred the title (their own star only).
+  - `latest` is the favorites tile's figure set (same code, same null/`reasons`
+    rules), from the latest stored quote.
+  - `points` are daily closes ascending, `closeEur` with 4 dp. Each close is
+    converted at the **ECB rate of its own day** (`FXService.RatesOn`, the latest
+    publication on or before the day; minor units `GBp`/`GBX`/`ZAc` through the
+    major currency ÷ 100). A day without a usable rate is left out and `warning`
+    is `FX_UNAVAILABLE`. The closes come from `price_history` (provider `YAHOO`).
+  - When the latest quote is dated today (Berlin), its EUR price is appended as the
+    last point (`day` = today), so the line ends at the live price. Stored closes
+    stop at yesterday.
+  - `buys` are every BUY line of the instrument in any of the caller's portfolios,
+    ascending by day, `units` 6 dp and `priceEur` 4 dp as stored. They are not
+    clipped: a buy can be older than `from` when Yahoo's data starts later.
+  - `to` is today. `from` is the earlier of the first buy day and 60 months before
+    today, raised to the first stored close when Yahoo's data starts later.
+- **Cache first.** Stored closes are used when they are confirmed complete over
+  `[from, last weekday before today]`: the series starts at `from` (or the first
+  weekday after it), reaches that last weekday, and every weekday without a close
+  between two closes is a **confirmed closure**, meaning both neighbours were
+  stored by the same Yahoo request (same `fetched_at`; a range request returns
+  every session in between). A weekday missing between closes of different
+  requests is a gap. Otherwise one `YahooGateway.History` request for
+  `[from, yesterday]` is sent and stored (`SaveHistory`). Requests of one title are
+  serialized, and after a successful request the handler does not ask Yahoo for
+  that title with the same or a later `from` again that day (in memory, per
+  process), so titles whose history cannot be complete (younger than the range, a
+  market closure on the last weekday) cost at most one request a day.
+- **Yahoo trouble** (`YAHOO_LIMIT_REACHED`, `YAHOO_AUTH_ERROR`, `YAHOO_UNAVAILABLE`)
+  with stored points still answers `200` with those points and `warning`; failures
+  are not remembered, so the next open retries. Yahoo having no listing or no data
+  for the title counts too (`YAHOO_UNAVAILABLE`) when stored points are shown. With no points at all it is the
+  error itself (`429`/`502`), `FX_UNAVAILABLE` (`502`) when only the rates are
+  missing, or `404 NOT_FOUND` when Yahoo has no listing or data for the title.
+  The in-memory same-day memo is keyed by the listing symbol, and empty stored
+  history is never a hit, so relinking a Yahoo symbol (which deletes the history)
+  fetches the new listing on the next open.
+
 ### Portfolio list summaries
 
 Backend contract (frontend UI facts below). Everything is session-scoped (`401`)
@@ -620,7 +672,7 @@ duplicate lines or stale preview where applicable.
 
 | Area | Routes |
 |---|---|
-| Favorites | `GET /api/favorites`; `PUT/DELETE /api/favorites/{i}`; `PUT /api/favorites/order` |
+| Favorites | `GET /api/favorites`; `PUT/DELETE /api/favorites/{i}`; `PUT /api/favorites/order`; `GET /api/instruments/{i}/chart` (ticker detail view) |
 | Portfolios/items | `GET/POST /api/portfolios`; `GET /api/portfolios/summaries`; `GET/PATCH/DELETE /api/portfolios/{p}`; `GET/POST .../{p}/items`; `DELETE .../{p}/items/{i}`; `PUT /api/users/me/instruments/{i}/pay-delay` |
 | Instruments | `GET /api/instruments/search`; `GET .../search/online` (`provider=av` explicit fallback); `POST /api/instruments` |
 | Transactions | `GET /api/portfolios/{p}/saving-plan`; `GET/POST .../{p}/transactions`; `DELETE .../{p}/transactions/{txId}`; `GET .../{p}/performance` |

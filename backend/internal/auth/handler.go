@@ -47,6 +47,8 @@ type Handler struct {
 	store       *database.Store
 	tokens      *tokenManager
 	logger      *slog.Logger
+	// chart remembers the ticker charts' Yahoo history requests; the zero value works.
+	chart tickerChartState
 	// clock drives the summary refresh decisions (freshness and throttle); nil means time.Now.
 	clock func() time.Time
 }
@@ -124,6 +126,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerYahooRoutes(mux)
 	h.registerSummaryRoutes(mux)
 	h.registerFavoriteRoutes(mux)
+	h.registerTickerChartRoutes(mux)
 	h.registerDividendRoutes(mux)
 	mux.HandleFunc("GET /auth/google", h.googleLogin)
 	mux.HandleFunc("GET /auth/google/callback", h.googleCallback)

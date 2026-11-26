@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { api, APIError } from "../lib/api";
 import { instrumentColor } from "../lib/colors";
-import { IconStar } from "./icons";
+import { StarToggle } from "./star-toggle";
 import { dayLabel, money } from "../lib/dividends";
 import { usePortfolioUpdates } from "./portfolio-updates";
 
@@ -64,12 +64,6 @@ function DelayInput({ item, onSaved }: { item: PortfolioItemOverview; onSaved: (
   </div>;
 }
 
-function StarToggle({ item, onToggle }: { item: PortfolioItemOverview; onToggle: (item: PortfolioItemOverview) => void }) {
-  const on = !!item.favorite;
-  return <button type="button" className={`star-toggle ghost${on ? " is-on" : ""}`} data-testid="favorite-toggle" aria-pressed={on}
-    aria-label={on ? `Remove ${item.name} from favorites` : `Add ${item.name} to favorites`} onClick={() => onToggle(item)}><IconStar size={20} filled={on} /></button>;
-}
-
 /** The items already in the portfolio, with their latest stored quote and the
  * user's pay-date delay (one value per instrument across all portfolios). */
 export function PortfolioHoldings({ id }: { id: number }) {
@@ -119,7 +113,7 @@ export function PortfolioHoldings({ id }: { id: number }) {
     {starError && <p className="error" role="alert">{starError}</p>}
     {items === null ? (!error && <p className="muted" role="status">Loading items…</p>) : items.length === 0 ? <p className="selection-empty">No items in this portfolio yet.</p> :
       <ul className="item-tiles">{items.map(item => <li key={item.instrumentId} className="item-tile tile" data-testid="portfolio-item" aria-label={`${item.ticker} ${item.name}`} style={{ "--stripe": instrumentColor(item.instrumentId) } as CSSProperties}>
-        <div className="item-head"><div className="item-title"><strong className="item-ticker">{item.ticker}</strong><span className="item-name">{item.name}</span></div><div className="item-head-side"><span className={`pill ${item.type === "ETF" ? "pill-etf" : "pill-stock"}`}>{item.type === "ETF" ? "ETF" : "Stock"}</span><StarToggle item={item} onToggle={i => void toggleStar(i)} /></div></div>
+        <div className="item-head"><div className="item-title"><strong className="item-ticker">{item.ticker}</strong><span className="item-name">{item.name}</span></div><div className="item-head-side"><span className={`pill ${item.type === "ETF" ? "pill-etf" : "pill-stock"}`}>{item.type === "ETF" ? "ETF" : "Stock"}</span><StarToggle name={item.name} on={!!item.favorite} onToggle={() => void toggleStar(item)} /></div></div>
         <dl className="item-facts">
           <div><dt>ISIN</dt><dd className="num">{item.isin ?? "—"}</dd></div>
           <div><dt>Current price</dt><dd className="price-cell">{item.latestQuote ? <>{money(item.latestQuote.priceEur)} <span className="muted">({dayLabel(item.latestQuote.quoteDate)})</span></> : <span className="muted" title="No stored quote yet.">–</span>}</dd></div>

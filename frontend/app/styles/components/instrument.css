@@ -1,0 +1,29 @@
+/* ---------- Ticker page: header, quote line and the buy markers on the shared chart card ---------- */
+.instrument-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 12px 0 8px; }
+.instrument-title { min-width: 0; }
+.instrument-title h1 { margin: 0; overflow-wrap: anywhere; }
+.instrument-title p { margin: 4px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+.instrument-quote { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 16px; }
+.instrument-price { font-family: var(--font-figure); font-size: clamp(26px, 6vw, 34px); font-weight: 650; line-height: 1.15; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.instrument-change { font-family: var(--font-figure); font-size: 15px; font-weight: 550; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.instrument-warning { margin: 0 0 12px; font-size: 13px; }
+
+.period-change { margin: 0 0 12px; font-family: var(--font-figure); font-size: 15px; font-weight: 550; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.period-change-range { color: var(--text-muted); font-weight: 400; font-size: 12px; }
+
+.ticker-plot { position: relative; }
+/* The marker takes its colour from the performance tone class: green at or below the close, red above it. */
+.buy-marker { cursor: pointer; outline: none; }
+.buy-marker:focus-visible path { stroke: var(--focus-ring); stroke-width: 2.5; }
+.buy-tooltip-anchor { position: absolute; z-index: 2; pointer-events: none; transform: translate(-50%, calc(-100% - 14px)); width: max-content; max-width: min(240px, calc(100% - 8px)); }
+.buy-tooltip-anchor.is-below { transform: translate(-50%, 14px); }
+.buy-tooltip-anchor .buy-tooltip { max-width: 100%; }
+.chart-tooltip i.buy-swatch { width: 0; height: 0; border-radius: 0; border: 5px solid transparent; border-top: 0; border-bottom: 9px solid currentColor; margin-right: 6px; background: none; }
+.chart-legend i.buy-legend { width: 0; height: 0; border-radius: 0; border: 6px solid transparent; border-top: 0; border-bottom: 10px solid currentColor; background: none; }
+html[data-theme^="tech-"] .chart-legend i.buy-legend { border-radius: 0; }
+
+@media (max-width: 640px) {
+  .instrument-head { margin-top: 8px; }
+  .instrument-quote { margin-bottom: 12px; }
+  .period-change { padding: 0 8px; margin-bottom: 8px; }
+}

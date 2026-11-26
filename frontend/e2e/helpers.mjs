@@ -94,6 +94,7 @@ export async function assertNoOverflow(page, label) {
       if (rect.width <= 0 || rect.height <= 0 || (rect.left >= -1 && rect.right <= viewportWidth + 1)) continue;
       let hidden = false;
       let scrollsInsideViewport = false;
+      let clippedInsideSvgViewport = false;
       for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
         const style = getComputedStyle(ancestor);
         if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) hidden = true;
@@ -111,10 +112,16 @@ export async function assertNoOverflow(page, label) {
         // The scroll container itself must fit. An oversized scroll container
         // is page overflow and is reported in its own iteration.
         const ancestorBounds = ancestor.getBoundingClientRect();
+        // Zoomed SVG paths keep their full mathematical bounds. A fitting SVG
+        // viewport with real overflow clipping limits what can be painted;
+        // unlike clipped HTML text, this is the intended chart viewport.
+        if (ancestor !== element && ancestor instanceof SVGSVGElement
+          && /^(hidden|clip)$/.test(style.overflowX)
+          && ancestorBounds.left >= -1 && ancestorBounds.right <= viewportWidth + 1) clippedInsideSvgViewport = true;
         if (ancestor !== element && /^(auto|scroll)$/.test(style.overflowX)
           && ancestorBounds.left >= -1 && ancestorBounds.right <= viewportWidth + 1) scrollsInsideViewport = true;
       }
-      if (!hidden && !scrollsInsideViewport) {
+      if (!hidden && !scrollsInsideViewport && !clippedInsideSvgViewport) {
         offenders.push({ selector: `${element.parentElement ? `${selector(element.parentElement)} > ` : ''}${selector(element)}`, left: Math.round(rect.left * 100) / 100, right: Math.round(rect.right * 100) / 100, width: Math.round(rect.width * 100) / 100 });
       }
     }

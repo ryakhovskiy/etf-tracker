@@ -22,3 +22,16 @@ test('overflow guard rejects zoomed or clipped overflow and allows a contained h
   await page.setContent(fixture('.container{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}'));
   await assertNoOverflow(page, 'zero-area clip-path fixture');
 });
+
+test('overflow guard respects SVG viewport clipping while rejecting visible paths and oversized SVG roots', async ({ page }) => {
+  const width = page.viewportSize().width;
+  const fixture = (overflow, svgWidth = width) => `<meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:0}</style><svg width="${svgWidth}" height="100" style="overflow:${overflow}"><g><rect x="-160" y="0" width="${width + 320}" height="50"/></g></svg>`;
+  await page.setContent(fixture('hidden'));
+  await assertNoOverflow(page, 'clipped SVG chart fixture');
+  await page.setContent(fixture('clip'));
+  await assertNoOverflow(page, 'clip SVG chart fixture');
+  await page.setContent(fixture('visible'));
+  await expect(assertNoOverflow(page, 'unclipped SVG chart fixture')).rejects.toThrow(/svg|rect/);
+  await page.setContent(fixture('hidden', width + 160));
+  await expect(assertNoOverflow(page, 'oversized SVG root fixture')).rejects.toThrow(/svg/);
+});

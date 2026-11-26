@@ -30,7 +30,7 @@ export default defineConfig({
   projects: [
     { name: 'mobile', testIgnore: ['**/boundary.spec.mjs', '**/pwa/**'], use: { viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true } },
     { name: 'desktop', testIgnore: ['**/boundary.spec.mjs', '**/pwa/**'], use: { viewport: { width: 1280, height: 800 } } },
-    { name: 'mobile-narrow', testMatch: ['**/boundary.spec.mjs', '**/portfolio-summaries.spec.mjs', '**/favorites.spec.mjs'], use: { viewport: { width: 360, height: 812 }, isMobile: true, hasTouch: true } },
+    { name: 'mobile-narrow', testMatch: ['**/boundary.spec.mjs', '**/portfolio-summaries.spec.mjs', '**/favorites.spec.mjs', '**/ticker.spec.mjs'], use: { viewport: { width: 360, height: 812 }, isMobile: true, hasTouch: true } },
     // These require next build/start or Docker, never the owned dev server.
     // Ordinary projects retain serviceWorkers:'block', including with an URL.
     ...(externalURL ? [360, 375, 1280].map(width => ({

@@ -20,7 +20,7 @@ async function dragFavorite(page, { touch }) {
     const client = await page.context().newCDPSession(page);
     try {
       await client.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...start, id: 1 }] });
-      await expect(source).toHaveAttribute('aria-pressed', 'true');
+      await expect(page.getByText(/Picked up favorite .*Position 1 of/)).toBeAttached();
       for (let step = 1; step <= 10; step++) await client.send('Input.dispatchTouchEvent', {
         type: 'touchMove', touchPoints: [{ x: start.x + (end.x - start.x) * step / 10, y: start.y + (end.y - start.y) * step / 10, id: 1 }],
       });
@@ -29,7 +29,7 @@ async function dragFavorite(page, { touch }) {
   } else {
     await page.mouse.move(start.x, start.y);
     await page.mouse.down();
-    await expect(source).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByText(/Picked up favorite .*Position 1 of/)).toBeAttached();
     await page.mouse.move(end.x, end.y, { steps: 10 });
     await page.mouse.up();
   }
@@ -70,6 +70,7 @@ test('star order, native long-press drag, reload persistence and unstar work acr
     await expectOrder(page, [2, 1]);
     await dragFavorite(page, { touch: testInfo.project.use.hasTouch === true });
     await expectOrder(page, [1, 2]);
+    await expect(page).toHaveURL(/\/$/);
     await expect.poll(() => fixture.api.ids).toEqual([1, 2]);
     expect(fixture.api.calls.filter(call => call.path.endsWith('/order')).map(call => call.body)).toEqual([{ instrumentIds: [1, 2] }]);
     await page.reload();
@@ -99,6 +100,7 @@ test('keyboard reorder announces positions and persists the resulting order', as
     await page.keyboard.press('Space');
     await expectOrder(page, [2, 1]);
     await expect.poll(() => fixture.api.ids).toEqual([2, 1]);
+    await expect(page).toHaveURL(/\/$/);
     await page.reload();
     await expectOrder(page, [2, 1]);
     expect(fixture.unexpected).toEqual([]);
@@ -124,6 +126,7 @@ test('a quick touch swipe on a favorite scrolls without reordering', async ({ pa
       await client.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     } finally { await client.detach(); }
     await expect.poll(() => page.evaluate(() => scrollY)).toBeLessThan(before - 20);
+    await expect(page).toHaveURL(/\/$/);
     await expectOrder(page, [1, 2, 3, 4]);
     expect(fixture.api.calls.filter(call => call.method === 'PUT')).toEqual([]);
   } finally { fixture.dispose(); }

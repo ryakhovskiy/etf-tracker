@@ -12,7 +12,10 @@ globalThis.requestAnimationFrame = dom.window.requestAnimationFrame.bind(dom.win
 globalThis.cancelAnimationFrame = dom.window.cancelAnimationFrame.bind(dom.window);
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: dom.window.navigator });
 HTMLElement.prototype.scrollIntoView = function () {};
-const { render, screen, fireEvent, waitFor, cleanup, within, act } = await import('@testing-library/react');
+const { render, screen, fireEvent, waitFor, cleanup, within, act, configure } = await import('@testing-library/react');
+// The full suite runs many JSDOM files in parallel. Poll for the observable UI
+// result without treating a loaded event loop as a failed save or reload.
+configure({ asyncUtilTimeout: 5000 });
 const { Favorites } = await import('../components/favorites.tsx');
 const { PortfolioHoldings } = await import('../components/portfolio-holdings.tsx');
 const { PortfolioUpdatesProvider } = await import('../components/portfolio-updates.tsx');
@@ -51,7 +54,7 @@ async function keyboardMove({ drop = true } = {}) {
   const tile = screen.getAllByTestId('favorite-tile')[0];
   tile.focus();
   fireEvent.keyDown(tile, { key: ' ', code: 'Space' });
-  await waitFor(() => assert.equal(tile.getAttribute('aria-pressed'), 'true'));
+  await waitFor(() => assert.match(document.body.textContent, /Picked up favorite .*Position 1 of/));
   fireEvent.keyDown(document, { key: 'ArrowRight', code: 'ArrowRight' });
   await waitFor(() => assert.match(document.body.textContent, /Moved .*position 2/));
   fireEvent.keyDown(document, { key: drop ? ' ' : 'Escape', code: drop ? 'Space' : 'Escape' });
@@ -73,7 +76,8 @@ test('favorites format decimal strings with de-DE rounding, tones, accessible ch
   assert.doesNotMatch(text(within(flat).getByTestId('favorite-change')), /[▲▼+−]/);
   for (const tile of [negative, positive, flat]) {
     assert.match(text(within(tile).getByTestId('favorite-change')), /Change vs previous close:/);
-    assert.equal(tile.getAttribute('role'), 'button');
+    assert.equal(tile.tagName, 'A');
+    assert.equal(tile.getAttribute('href'), `/instruments/${tile.getAttribute('data-instrument-id')}`);
     assert.equal(tile.getAttribute('aria-roledescription'), 'sortable');
     assert.equal(tile.tabIndex, 0);
   }

@@ -172,3 +172,38 @@ func TestCreateTransactionRejectsMissingQuoteID(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSaveQuoteDuplicateNeverMovesFetchTimeBackwards(t *testing.T) {
+	s := featureStore(t)
+	ctx := context.Background()
+	t1 := time.Date(2026, 11, 3, 16, 0, 0, 0, time.UTC)
+	t2, t3 := t1.Add(5*time.Minute), t1.Add(10*time.Minute)
+	fetchedAt := func() time.Time {
+		t.Helper()
+		got, err := s.latestQuotes(ctx, []int64{1})
+		if err != nil || got[1] == nil {
+			t.Fatal(got, err)
+		}
+		return got[1].FetchedAt
+	}
+	// The later fetch (t2) is saved first, then a slower one that fetched at t1.
+	late, slow := baseQuote(t2), baseQuote(t1)
+	for _, q := range []*md.Quote{&late, &slow} {
+		if err := s.SaveQuote(ctx, q, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if slow.ID != late.ID || quoteRows(t, s, 1) != 1 || !fetchedAt().Equal(t2) {
+		t.Fatalf("fetch time went backwards: id %d/%d rows %d at %v", late.ID, slow.ID, quoteRows(t, s, 1), fetchedAt())
+	}
+	// An equal fetch time is a no-op, a later one still moves forward.
+	same, newer := baseQuote(t2), baseQuote(t3)
+	for _, q := range []*md.Quote{&same, &newer} {
+		if err := s.SaveQuote(ctx, q, ""); err != nil || q.ID != late.ID {
+			t.Fatalf("%+v %v", q, err)
+		}
+	}
+	if !fetchedAt().Equal(t3) || quoteRows(t, s, 1) != 1 {
+		t.Fatalf("not bumped: %v", fetchedAt())
+	}
+}

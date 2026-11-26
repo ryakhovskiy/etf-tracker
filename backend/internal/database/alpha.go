@@ -275,7 +275,7 @@ func (s *Store) SaveQuote(ctx context.Context, q *marketdata.Quote, symbol strin
 		fetched := q.FetchedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
 		// An identical quote (every stored price field equal, NULL-safe) to the
 		// instrument's newest row, in the order latestQuotes uses, is not stored
-		// again: the row's fetch time is bumped so freshness checks and "fetched"
+		// again: the row's fetch time is moved forward (never back) so freshness checks and "fetched"
 		// labels still see the check. A newer row of another provider or a changed
 		// FX rate makes the incoming quote a different row.
 		var newestID int64
@@ -285,7 +285,10 @@ func (s *Store) SaveQuote(ctx context.Context, q *marketdata.Quote, symbol strin
 			return err
 		}
 		if err == nil && same {
-			if _, err = c.ExecContext(ctx, "UPDATE price_quotes SET fetched_at=? WHERE id=?", fetched, newestID); err != nil {
+			// Only forward: a slower concurrent fetch carrying an older fetch time (or a
+			// cached one) must not move freshness backwards. The format is fixed-width,
+			// so the text comparison is chronological.
+			if _, err = c.ExecContext(ctx, "UPDATE price_quotes SET fetched_at=? WHERE id=? AND fetched_at<?", fetched, newestID, fetched); err != nil {
 				return err
 			}
 			q.ID = newestID

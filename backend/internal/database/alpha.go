@@ -272,7 +272,26 @@ func (s *Store) SaveQuote(ctx context.Context, q *marketdata.Quote, symbol strin
 			}
 			prevRate = v
 		}
-		res, err := c.ExecContext(ctx, `INSERT INTO price_quotes(instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,fx_rate_date,quote_date,fetched_at,provider,quote_time,fx_source,prev_close_e4,prev_fx_rate_e8,prev_close_date) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, q.InstrumentID, p, orig, q.Currency, rate, q.FXRateDate, q.QuoteDate, q.FetchedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"), provider, quoteTime, fxSource, prevClose, prevRate, prevDate)
+		fetched := q.FetchedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00")
+		// An identical quote (every stored price field equal, NULL-safe) to the
+		// instrument's newest row, in the order latestQuotes uses, is not stored
+		// again: the row's fetch time is bumped so freshness checks and "fetched"
+		// labels still see the check. A newer row of another provider or a changed
+		// FX rate makes the incoming quote a different row.
+		var newestID int64
+		var same bool
+		err = c.QueryRowContext(ctx, `SELECT id, provider IS ? AND orig_currency IS ? AND orig_price_e4 IS ? AND price_eur_e4 IS ? AND fx_rate_e8 IS ? AND fx_rate_date IS ? AND fx_source IS ? AND quote_date IS ? AND quote_time IS ? AND prev_close_e4 IS ? AND prev_fx_rate_e8 IS ? AND prev_close_date IS ? FROM price_quotes WHERE instrument_id=? ORDER BY quote_date DESC,fetched_at DESC,id DESC LIMIT 1`, provider, q.Currency, orig, p, rate, q.FXRateDate, fxSource, q.QuoteDate, quoteTime, prevClose, prevRate, prevDate, q.InstrumentID).Scan(&newestID, &same)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err == nil && same {
+			if _, err = c.ExecContext(ctx, "UPDATE price_quotes SET fetched_at=? WHERE id=?", fetched, newestID); err != nil {
+				return err
+			}
+			q.ID = newestID
+			return nil
+		}
+		res, err := c.ExecContext(ctx, `INSERT INTO price_quotes(instrument_id,price_eur_e4,orig_price_e4,orig_currency,fx_rate_e8,fx_rate_date,quote_date,fetched_at,provider,quote_time,fx_source,prev_close_e4,prev_fx_rate_e8,prev_close_date) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, q.InstrumentID, p, orig, q.Currency, rate, q.FXRateDate, q.QuoteDate, fetched, provider, quoteTime, fxSource, prevClose, prevRate, prevDate)
 		if err != nil {
 			return err
 		}

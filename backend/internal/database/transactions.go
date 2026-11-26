@@ -147,6 +147,19 @@ func (s *Store) CreateTransaction(ctx context.Context, user string, id int64, in
 			if member == 0 {
 				return invalidField(fmt.Sprintf("lines.%d.instrumentId", i), "Instrument must be a portfolio item.")
 			}
+			if l.QuoteID != 0 {
+				// A draft's quote may have been removed (for example by a cleanup of
+				// duplicate quotes). Fail instead of silently storing NULL original
+				// price and FX. A quote of another instrument, or one whose price the
+				// user edited, still just yields no provenance, as before.
+				var known int
+				if err := conn.QueryRowContext(ctx, "SELECT COUNT(*) FROM price_quotes WHERE id=?", l.QuoteID).Scan(&known); err != nil {
+					return err
+				}
+				if known == 0 {
+					return invalidField(fmt.Sprintf("lines.%d.quoteId", i), "The price quote no longer exists. Fetch the price again.")
+				}
+			}
 			var count int
 			if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM transaction_lines l JOIN transactions t ON t.id=l.transaction_id WHERE t.portfolio_id=? AND t.trade_date=? AND l.instrument_id=? AND l.quantity_e6=? AND l.price_eur_e4=?`, id, in.Date, l.InstrumentID, l.q, l.p).Scan(&count); err != nil {
 				return err

@@ -65,7 +65,7 @@ export function Favorites({ updating, reloadKey = 0, onCountChange }: { updating
   const stale = useRef(false);
   const itemsRef = useRef<Favorite[] | null>(null);
   itemsRef.current = items;
-  // True from the lift until just after the drop: the click that ends a long press is not a tap.
+  // True from a pointer lift until just after the drop: the click that ends a long press is not a tap.
   const justDragged = useRef(false);
   const releaseClick = () => { window.setTimeout(() => { justDragged.current = false; }, 250); };
   const notify = useRef(onCountChange); notify.current = onCountChange;
@@ -114,8 +114,10 @@ export function Favorites({ updating, reloadKey = 0, onCountChange }: { updating
     onDragCancel: () => "Reordering cancelled.",
   };
 
-  const dragStart = ({ active: lifted }: DragStartEvent) => {
-    justDragged.current = true;
+  const dragStart = ({ active: lifted, activatorEvent }: DragStartEvent) => {
+    // Only a pointer drag ends in a stray click. A keyboard drop cancels its own Enter keydown, and a
+    // later Enter must open the tile at once.
+    justDragged.current = !(activatorEvent instanceof KeyboardEvent);
     busy.current = true;
     setActive(itemsRef.current?.find(f => f.instrumentId === lifted.id) ?? null);
   };

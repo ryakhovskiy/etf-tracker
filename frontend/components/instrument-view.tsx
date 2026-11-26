@@ -11,7 +11,7 @@ import { StarToggle } from "./star-toggle";
 import { TickerChart } from "./ticker-chart";
 import { useAccount } from "./use-account";
 
-type State = { status: "loading" } | { status: "missing" } | { status: "error"; message: string } | { status: "ready"; chart: InstrumentChart };
+type State = { status: "loading" } | { status: "missing" } | { status: "empty"; message: string } | { status: "error"; message: string } | { status: "ready"; chart: InstrumentChart };
 
 /** The page of one title: header (name, price, day change, star) and the price chart with the user's buys. */
 export function InstrumentView({ id }: { id: string }) {
@@ -36,7 +36,12 @@ export function InstrumentView({ id }: { id: string }) {
         // The answer says whether the title is starred; only an answer without the flag needs the favorites list.
         if (typeof chart.favorite === "boolean") setFavorite(chart.favorite); else void loadFavorite();
       })
-      .catch((e: unknown) => { if (active) setState((e as APIError).status === 404 ? { status: "missing" } : { status: "error", message: (e as Error).message }); });
+      .catch((e: unknown) => {
+        if (!active) return;
+        const { status, code, message } = e as APIError;
+        // Only NOT_FOUND means "not yours"; an own title without any stored price history has its own code.
+        setState(code === "NO_PRICE_HISTORY" ? { status: "empty", message } : status === 404 ? { status: "missing" } : { status: "error", message });
+      });
     return () => { active = false; };
   }, [id]);
 
@@ -60,6 +65,7 @@ export function InstrumentView({ id }: { id: string }) {
       {account.error && <p className="error" role="alert">{account.error}</p>}
       {state.status === "loading" && <p className="muted" role="status">Loading chart…</p>}
       {state.status === "missing" && <p className="error" role="alert" data-testid="instrument-not-found">This title is not in your portfolios.</p>}
+      {state.status === "empty" && <p className="muted" role="status" data-testid="instrument-no-history">{state.message}</p>}
       {state.status === "error" && <p className="error" role="alert">Could not load the chart. {state.message}</p>}
       {state.status === "ready" && <Ready chart={state.chart} favorite={favorite} onToggle={() => void toggle()} starError={starError} />}
     </main>

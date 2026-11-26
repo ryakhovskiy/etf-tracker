@@ -15,11 +15,12 @@ type Group = { day: string; markers: Marker[]; x: number; y: number };
 export function BuyTooltip({ id, day, markers }: { id?: string; day: string; markers: Marker[] }) {
   return <div className="chart-tooltip buy-tooltip" role="tooltip" id={id} data-testid="buy-tooltip">
     <strong>{dateLabel(day)}</strong>
-    {markers.map(({ buy, tone }, i) => <p key={i}><i className={`buy-swatch performance-${tone}`}/>Bought {units(buy.units)} units at {euro(buy.priceEur)} · {buy.portfolioName}</p>)}
+    {markers.map(({ buy, tone }, i) => <p key={i}><i className={`buy-swatch performance-${tone}`}/>Bought {unitsLabel(buy.units)} at {euro(buy.priceEur)} · {buy.portfolioName}</p>)}
   </div>;
 }
 
-export const buyLabel = (buy: ChartBuy) => `Buy ${dateLabel(buy.day)}: ${units(buy.units)} units at ${euro(buy.priceEur)} (${buy.portfolioName})`;
+const unitsLabel = (value: string) => `${units(value)} ${value === "1" || /^1\.0*$/.test(value) ? "unit" : "units"}`;
+export const buyLabel = (buy: ChartBuy) => `Buy ${dateLabel(buy.day)}: ${unitsLabel(buy.units)} at ${euro(buy.priceEur)} (${buy.portfolioName})`;
 
 const TRIANGLE = "M0 -8 L8 6 L-8 6 Z";
 
@@ -71,7 +72,7 @@ export function TickerChart({ chart }: { chart: InstrumentChart }) {
   const last = Math.max(dayMs(chart.to), first);
   const bounds: ChartRange = [first, last === first ? first + chartDay - 1 : last];
   const hidden = chart.buys.length - buyMarkers(chart.points, chart.buys).length;
-  return <ChartShell title={`Price in € · ${chart.instrument.name}`} bounds={bounds} plotLabel="Price chart" helpId="ticker-chart-help"
+  return <ChartShell title="Price in € and your buys" bounds={bounds} plotLabel="Price chart" helpId="ticker-chart-help"
     summary={({ range }) => <PeriodChange chart={chart} range={range}/>}
     footer={<div className="chart-legend" role="group" aria-label="Chart legend"><span><i className="buy-legend performance-positive"/>Buy at or below the day's close</span><span><i className="buy-legend performance-negative"/>Buy above the day's close</span>{hidden > 0 && <span>{hidden} {hidden === 1 ? "buy is" : "buys are"} older than the first stored price and not shown</span>}</div>}>
     {({ range, dragging }) => chart.points.length ? <TickerPlot chart={chart} domain={range} dragging={dragging}/> : <div className="chart-empty" role="status">No prices stored for this title yet.</div>}

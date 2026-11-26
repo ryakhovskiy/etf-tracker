@@ -24,6 +24,7 @@ html[data-theme^="tech-"] .chart-legend i.buy-legend { border-radius: 0; }
 
 @media (max-width: 640px) {
   .instrument-head { margin-top: 8px; }
+  .instrument-title h1 { font-size: 22px; line-height: 1.25; }
   .instrument-quote { margin-bottom: 12px; }
   .period-change { padding: 0 8px; margin-bottom: 8px; }
 }

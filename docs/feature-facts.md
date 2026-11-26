@@ -182,6 +182,10 @@ Item removal is API-only and rejects items with transactions (`ITEM_HAS_TRANSACT
 - Current valuation uses newest shared quote by quote date/fetch time, unless a
   purchase is later. Fallback reasons: `NO_SYMBOL`, `NO_QUOTE`, `PURCHASE_NEWER`.
   Any fallback makes it partial; no usable quote makes `current=null`.
+- Identical consecutive quotes are not stored again: when every stored price field
+  equals the instrument's newest row (NULL-safe), that row's fetch time is updated
+  instead. Migration 00019 removed existing runs of duplicates once, keeping the newest
+  fetch of each run.
 - Quote date range/fetch time and item sources persist across reloads. Fetch current
   value estimates cost first and reuses price jobs; AV budget-limited requests use
   `priority: "HOLDINGS_VALUE"` to prioritize larger holdings.

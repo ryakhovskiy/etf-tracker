@@ -23,14 +23,14 @@ const stamp = day => Date.parse(`${day}T00:00:00Z`);
 const text = element => element.textContent.replace(/\u00a0/g, ' ');
 const json = (body, status = 200) => new Response(status === 204 ? null : JSON.stringify(body), { status });
 
-function mockView(t, chart, { status = 200, pending, favorite = true, rejectStar = false } = {}) {
+function mockView(t, chart, { status = 200, errorCode = 'NOT_FOUND', pending, favorite = true, rejectStar = false } = {}) {
   const api = favoritesAPI(favorite ? [1, 2] : [2]);
   t.mock.method(globalThis, 'fetch', async (url, init = {}) => {
     const path = new URL(url, 'http://localhost/').pathname;
     if (path === '/auth/me') return json({ name: 'QA Investor', email: 'qa@example.invalid' });
     if (path === '/api/instruments/1/chart') {
       if (pending) await pending.promise;
-      return json(status === 404 ? { error: { code: 'NOT_FOUND', message: 'Instrument not found.' } } : chart, status);
+      return json(status === 404 ? { error: { code: errorCode, message: errorCode === 'NO_PRICE_HISTORY' ? 'There is no price history for this instrument.' : 'Instrument not found.' } } : chart, status);
     }
     if (rejectStar && path === '/api/favorites/1') return json({ error: { code: 'INTERNAL', message: 'Storage unavailable.' } }, 500);
     const result = api.handle(path, init.method ?? 'GET', init.body ? JSON.parse(init.body) : undefined);
@@ -146,6 +146,17 @@ test('404 shows the portfolio-scoped empty state and a working back link', async
   assert.match(text(await screen.findByTestId('instrument-not-found')), /not in your portfolios/i);
   assert.equal(screen.getByRole('link', { name: 'All portfolios' }).getAttribute('href'), '/');
   assert.ok(screen.queryByTestId('instrument-price') === null);
+});
+
+test('NO_PRICE_HISTORY identifies an owned title without history instead of claiming it is outside the portfolios', async t => {
+  mockView(t, tickerChart(), { status: 404, errorCode: 'NO_PRICE_HISTORY' });
+  mountView();
+  const state = await screen.findByTestId('instrument-no-history');
+  assert.equal(state.getAttribute('role'), 'status');
+  assert.equal(text(state), 'There is no price history for this instrument.');
+  assert.ok(screen.queryByTestId('instrument-not-found') === null);
+  assert.ok(screen.queryByTestId('instrument-price') === null);
+  assert.equal(screen.getByRole('link', { name: 'All portfolios' }).getAttribute('href'), '/');
 });
 
 test('star controls persist removal and addition through the public favorites API', async t => {

@@ -179,3 +179,19 @@ test('a title outside the user portfolios shows a 404 state with a back link', a
     expect(fixture.unexpected).toEqual([]);
   } finally { fixture.dispose(); }
 });
+
+test('an owned title with no price history has its own empty state and back link', async ({ page }) => {
+  const fixture = await mockTicker(page, { status: 404, errorCode: 'NO_PRICE_HISTORY' });
+  try {
+    await page.goto('/instruments/1');
+    await expect(page.getByTestId('instrument-no-history')).toHaveText('There is no price history for this instrument.');
+    await expect(page.getByTestId('instrument-no-history')).toHaveAttribute('role', 'status');
+    await expect(page.getByTestId('instrument-not-found')).toHaveCount(0);
+    await expect(page.getByTestId('instrument-price')).toHaveCount(0);
+    await expect(page.getByTestId('favorite-toggle')).toHaveCount(0);
+    await assertNoOverflow(page, 'owned ticker without history');
+    await page.getByRole('link', { name: 'All portfolios', exact: true }).click();
+    await expect(page).toHaveURL(/\/$/);
+    expect(fixture.unexpected).toEqual([]);
+  } finally { fixture.dispose(); }
+});

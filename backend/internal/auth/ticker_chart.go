@@ -234,7 +234,7 @@ func (h *Handler) registerTickerChartRoutes(mux *http.ServeMux) {
 			case yahooErr != nil && !noListing:
 				marketError(w, yahooErr)
 			default:
-				apiError(w, 404, "NOT_FOUND", "There is no price history for this instrument.")
+				apiError(w, 404, "NO_PRICE_HISTORY", "There is no price history for this instrument.")
 			}
 			return
 		}

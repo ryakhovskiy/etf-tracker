@@ -290,6 +290,14 @@ func TestTickerChartScoping(t *testing.T) {
 	if res, _ := e.get(t, 18, 200); !res.Favorite {
 		t.Fatal("starred by the caller")
 	}
+	// A held title without any history is a different 404 from a title that is not held.
+	e.y.series = map[string]chartSeries{}
+	if _, err := e.h.store.AddItems(ctx, "google-user-1", e.pid, []int64{1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := e.get(t, 1, 404); code != "NO_PRICE_HISTORY" {
+		t.Fatalf("held title without history: %s", code)
+	}
 	// A foreign buy of a shared instrument never shows.
 	chartBuy(t, e.h, "foreign", 2, 18, "2026-11-03", "1", "50.00", "50.00")
 	if res, _ := e.get(t, 18, 200); len(res.Buys) != 0 {
@@ -556,7 +564,7 @@ func TestTickerChartFailedFetchIsRetriedAndRecovers(t *testing.T) {
 func TestTickerChartWithoutAnyPointsIsAnError(t *testing.T) {
 	e := chartSetup(t)
 	// Yahoo does not know the symbol: no stored data, nothing to warn about.
-	if _, code := e.get(t, 18, 404); code != "NOT_FOUND" {
+	if _, code := e.get(t, 18, 404); code != "NO_PRICE_HISTORY" {
 		t.Fatal(code)
 	}
 	e.y.fail = 429

@@ -298,7 +298,8 @@ controls. Backend contract:
   are not remembered, so the next open retries. Yahoo having no listing or no data
   for the title counts too (`YAHOO_UNAVAILABLE`) when stored points are shown. With no points at all it is the
   error itself (`429`/`502`), `FX_UNAVAILABLE` (`502`) when only the rates are
-  missing, or `404 NOT_FOUND` when Yahoo has no listing or data for the title.
+  missing, or `404 NO_PRICE_HISTORY` when Yahoo has no listing or data for the title
+  (a held title; `NOT_FOUND` stays reserved for "not in your portfolios").
   The in-memory same-day memo is keyed by the listing symbol, and empty stored
   history is never a hit, so relinking a Yahoo symbol (which deletes the history)
   fetches the new listing on the next open.

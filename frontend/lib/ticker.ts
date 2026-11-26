@@ -15,6 +15,8 @@ export type InstrumentChart = {
   buys: ChartBuy[];
   from: string;
   to: string;
+  /** Whether the title is one of the user's favorites. Older answers lack it. */
+  favorite?: boolean;
   /** Set when Yahoo could not be asked: the stored points are still shown. */
   warning?: string;
 };

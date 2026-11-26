@@ -26,13 +26,17 @@ export function InstrumentView({ id }: { id: string }) {
   useEffect(() => {
     let active = true;
     setState({ status: "loading" }); setFavorite(null); setStarError("");
-    api<InstrumentChart>(`/api/instruments/${encodeURIComponent(id)}/chart`)
-      .then(chart => { if (active) setState({ status: "ready", chart }); })
-      .catch((e: unknown) => { if (active) setState((e as APIError).status === 404 ? { status: "missing" } : { status: "error", message: (e as Error).message }); });
-    // The chart answer does not say whether the title is starred: the favorites list does.
-    api<FavoritesResponse>("/api/favorites")
+    const loadFavorite = () => api<FavoritesResponse>("/api/favorites")
       .then(list => { if (active) setFavorite(list.favorites.some(f => String(f.instrumentId) === id)); })
       .catch(() => { /* Without the list the star stays disabled; the chart still works. */ });
+    api<InstrumentChart>(`/api/instruments/${encodeURIComponent(id)}/chart`)
+      .then(chart => {
+        if (!active) return;
+        setState({ status: "ready", chart });
+        // The answer says whether the title is starred; only an answer without the flag needs the favorites list.
+        if (typeof chart.favorite === "boolean") setFavorite(chart.favorite); else void loadFavorite();
+      })
+      .catch((e: unknown) => { if (active) setState((e as APIError).status === 404 ? { status: "missing" } : { status: "error", message: (e as Error).message }); });
     return () => { active = false; };
   }, [id]);
 

@@ -94,7 +94,11 @@ export const axisPrice = (decimals: number) => (value: number) => `${new Decimal
 
 /** The warning code from the API as a sentence. The stored prices are still on screen. */
 export function chartWarning(code: string) {
-  if (code === "FX_UNAVAILABLE") return "Some days are missing because no euro exchange rate was available for them. Showing the prices that could be converted.";
-  return code === "YAHOO_UNAVAILABLE" || code === "" ? "Yahoo is not reachable right now, so the newest prices may be missing. Showing the stored prices."
-    : `Yahoo did not answer (${code}). Showing the stored prices.`;
+  switch (code) {
+    case "FX_UNAVAILABLE": return "Some days are missing because no euro exchange rate was available for them. Showing the prices that could be converted.";
+    case "YAHOO_LIMIT_REACHED": return "Yahoo's request limit is reached for now, so the newest prices may be missing. Showing the stored prices.";
+    case "YAHOO_AUTH_ERROR": return "Yahoo refused the request, so the newest prices may be missing. Showing the stored prices.";
+    case "": case "YAHOO_UNAVAILABLE": return "Yahoo is not reachable right now, so the newest prices may be missing. Showing the stored prices.";
+    default: return `Yahoo did not answer (${code}). Showing the stored prices.`;
+  }
 }

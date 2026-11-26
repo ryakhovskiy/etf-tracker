@@ -2,7 +2,7 @@ name: holdings
 
 services:
   backend:
-    image: kryakhovskiy/etracker-backend:latest
+#    image: kryakhovskiy/etracker-backend:latest
     build:
       context: ./backend
       secrets:
@@ -25,7 +25,7 @@ services:
     init: true
 
   frontend:
-    image: kryakhovskiy/etracker-frontend:latest
+#    image: kryakhovskiy/etracker-frontend:latest
     build:
       context: ./frontend
     ports:
